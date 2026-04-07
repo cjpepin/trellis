@@ -1,0 +1,482 @@
+@import "@fontsource/dm-sans/400.css";
+@import "@fontsource/dm-sans/500.css";
+@import "@fontsource/dm-sans/700.css";
+@import "@fontsource/fraunces/400.css";
+@import "@fontsource/fraunces/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --trellis-bg: #0f0f0f;
+  --trellis-surface: #171717;
+  --trellis-surface-2: #1f1f1f;
+  --trellis-sidebar: #111111;
+  --trellis-border: #2a2a2a;
+  --trellis-text: #e8e3d9;
+  --trellis-text-muted: #7a7570;
+  --trellis-text-faint: #3d3a36;
+  --trellis-accent: #c8a96e;
+  --trellis-accent-dim: #8a7248;
+  --trellis-accent-hover: #e8c88e;
+  --trellis-success: #5a8a5a;
+  --trellis-warning: #c8a96e;
+  --trellis-error: #a05050;
+  --trellis-node: #c8a96e;
+  --trellis-node-hover: #e8c88e;
+  --trellis-edge: #2a2a2a;
+  --trellis-edge-hover: #4a4a4a;
+  --trellis-input-bg: #111111;
+  --trellis-accent-surface: #1a1611;
+  --trellis-selected-surface: #18140f;
+  --trellis-overlay-surface: rgba(16, 16, 16, 0.95);
+  --trellis-chip-surface: #121212;
+  --trellis-code-surface: #17120d;
+  --trellis-selection: rgba(200, 169, 110, 0.24);
+  --trellis-bg-glow: rgba(200, 169, 110, 0.08);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.01);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(200, 169, 110, 0.16),
+    0 12px 40px rgba(0, 0, 0, 0.35);
+  --trellis-font-display: "Fraunces", Georgia, serif;
+  --trellis-font-body: "DM Sans", system-ui, sans-serif;
+  --trellis-font-mono: "JetBrains Mono", monospace;
+  --trellis-text-xs: 11px;
+  --trellis-text-sm: 13px;
+  --trellis-text-base: 15px;
+  --trellis-text-lg: 18px;
+  --trellis-text-xl: 24px;
+  --trellis-text-2xl: 32px;
+}
+
+:root[data-theme="light"] {
+  --trellis-bg: #f4efe4;
+  --trellis-surface: #fbf7f0;
+  --trellis-surface-2: #f7f1e6;
+  --trellis-sidebar: #efe7d7;
+  --trellis-border: #d7c8b1;
+  --trellis-text: #30271c;
+  --trellis-text-muted: #746552;
+  --trellis-text-faint: #a19179;
+  --trellis-accent: #a46e25;
+  --trellis-accent-dim: #7a541f;
+  --trellis-accent-hover: #c18634;
+  --trellis-success: #447048;
+  --trellis-warning: #a46e25;
+  --trellis-error: #8f4040;
+  --trellis-node: #b58136;
+  --trellis-node-hover: #cf9850;
+  --trellis-edge: #cfbfa7;
+  --trellis-edge-hover: #b59f82;
+  --trellis-input-bg: #fffdf8;
+  --trellis-accent-surface: #f1e2c9;
+  --trellis-selected-surface: #eddcc0;
+  --trellis-overlay-surface: rgba(244, 239, 228, 0.94);
+  --trellis-chip-surface: #efe5d4;
+  --trellis-code-surface: #eadcc5;
+  --trellis-selection: rgba(164, 110, 37, 0.2);
+  --trellis-bg-glow: rgba(164, 110, 37, 0.09);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.55);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(164, 110, 37, 0.1),
+    0 6px 18px rgba(103, 82, 47, 0.1);
+}
+
+:root[data-theme="nature"] {
+  --trellis-bg: #121814;
+  --trellis-surface: #1a241d;
+  --trellis-surface-2: #223128;
+  --trellis-sidebar: #172019;
+  --trellis-border: #324337;
+  --trellis-text: #e5edde;
+  --trellis-text-muted: #98a592;
+  --trellis-text-faint: #5d6c61;
+  --trellis-accent: #9fbc74;
+  --trellis-accent-dim: #748954;
+  --trellis-accent-hover: #bed991;
+  --trellis-success: #7cbc7a;
+  --trellis-warning: #cbb56f;
+  --trellis-error: #b96a63;
+  --trellis-node: #9fbc74;
+  --trellis-node-hover: #bed991;
+  --trellis-edge: #314136;
+  --trellis-edge-hover: #4c6152;
+  --trellis-input-bg: #111813;
+  --trellis-accent-surface: #293623;
+  --trellis-selected-surface: #2f3f28;
+  --trellis-overlay-surface: rgba(18, 24, 20, 0.94);
+  --trellis-chip-surface: #202b23;
+  --trellis-code-surface: #263127;
+  --trellis-selection: rgba(159, 188, 116, 0.24);
+  --trellis-bg-glow: rgba(159, 188, 116, 0.12);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.02);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(159, 188, 116, 0.15),
+    0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+:root[data-theme="high-contrast"] {
+  --trellis-bg: #000000;
+  --trellis-surface: #111111;
+  --trellis-surface-2: #1a1a1a;
+  --trellis-sidebar: #080808;
+  --trellis-border: #f5f5f5;
+  --trellis-text: #ffffff;
+  --trellis-text-muted: #e8e8e8;
+  --trellis-text-faint: #bdbdbd;
+  --trellis-accent: #ffd400;
+  --trellis-accent-dim: #d7b200;
+  --trellis-accent-hover: #ffe45a;
+  --trellis-success: #7dff8a;
+  --trellis-warning: #ffd400;
+  --trellis-error: #ff8080;
+  --trellis-node: #ffd400;
+  --trellis-node-hover: #ffe45a;
+  --trellis-edge: #d9d9d9;
+  --trellis-edge-hover: #ffffff;
+  --trellis-input-bg: #050505;
+  --trellis-accent-surface: #2a2300;
+  --trellis-selected-surface: #332b00;
+  --trellis-overlay-surface: rgba(0, 0, 0, 0.96);
+  --trellis-chip-surface: #111111;
+  --trellis-code-surface: #171300;
+  --trellis-selection: rgba(255, 212, 0, 0.32);
+  --trellis-bg-glow: rgba(255, 212, 0, 0.12);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.03);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(255, 212, 0, 0.22),
+    0 12px 32px rgba(0, 0, 0, 0.42);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-trellis-border;
+  }
+
+  html,
+  body,
+  #root {
+    @apply h-full bg-trellis-bg text-trellis-text antialiased;
+  }
+
+  body {
+    font-family: var(--trellis-font-body);
+    background-image:
+      radial-gradient(circle at top, var(--trellis-bg-glow), transparent 34%),
+      linear-gradient(180deg, var(--trellis-bg-sheen), transparent 18%);
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+
+  ::selection {
+    background: var(--trellis-selection);
+  }
+}
+
+@layer components {
+  .trellis-panel {
+    @apply rounded-panel border border-trellis-border bg-trellis-surface shadow-inset;
+  }
+
+  .trellis-elevated {
+    @apply rounded-panel border border-trellis-border bg-trellis-surface-2;
+    box-shadow: var(--trellis-elevated-shadow);
+  }
+
+  .trellis-input {
+    @apply w-full rounded-field border border-trellis-border px-4 py-3 text-sm text-trellis-text outline-none transition placeholder:text-trellis-faint focus:border-trellis-accent;
+    background: var(--trellis-input-bg);
+  }
+
+  .trellis-scrollbar {
+    scrollbar-color: rgba(200, 169, 110, 0.24) transparent;
+  }
+
+  .trellis-sidebar {
+    background: var(--trellis-sidebar);
+  }
+
+  .trellis-accent-button,
+  .trellis-accent-surface {
+    background: var(--trellis-accent-surface);
+  }
+
+  .trellis-selected-surface {
+    background: var(--trellis-selected-surface);
+  }
+
+  .trellis-overlay-surface {
+    background: var(--trellis-overlay-surface);
+  }
+
+  .trellis-chip-surface {
+    background: var(--trellis-chip-surface);
+  }
+
+  .trellis-code-surface {
+    background: var(--trellis-code-surface);
+  }
+
+  .trellis-rich-text {
+    @apply max-w-none;
+  }
+
+  .trellis-rich-text a {
+    @apply underline decoration-from-font underline-offset-[0.22em];
+    text-decoration-color: color-mix(in srgb, var(--trellis-accent) 36%, transparent);
+  }
+
+  .trellis-rich-text h1,
+  .trellis-rich-text h2,
+  .trellis-rich-text h3 {
+    font-family: var(--trellis-font-display);
+    color: var(--trellis-text);
+  }
+
+  .trellis-rich-text h1 {
+    @apply text-3xl;
+  }
+
+  .trellis-rich-text h2 {
+    @apply text-2xl;
+  }
+
+  .trellis-rich-text h3 {
+    @apply text-xl;
+  }
+
+  .trellis-rich-text p,
+  .trellis-rich-text ul,
+  .trellis-rich-text ol,
+  .trellis-rich-text pre,
+  .trellis-rich-text blockquote {
+    @apply my-4;
+  }
+
+  .trellis-rich-text ul {
+    @apply list-disc pl-6;
+  }
+
+  .trellis-rich-text ol {
+    @apply list-decimal pl-6;
+  }
+
+  .trellis-rich-text code {
+    @apply rounded-tag px-1.5 py-0.5 font-mono text-trellis-accent;
+    background: var(--trellis-code-surface);
+  }
+
+  .trellis-rich-text pre {
+    @apply overflow-x-auto rounded-panel p-4;
+    background: var(--trellis-code-surface);
+  }
+
+  .trellis-rich-text pre code {
+    @apply bg-transparent p-0;
+  }
+
+  .trellis-rich-text blockquote {
+    @apply border-l-2 pl-4 text-trellis-muted;
+    border-color: var(--trellis-accent);
+  }
+
+  .trellis-rich-text hr {
+    @apply my-6 border-trellis-border;
+  }
+
+  .trellis-rich-text table {
+    @apply my-6 w-full border-collapse overflow-hidden rounded-panel;
+  }
+
+  .trellis-rich-text th,
+  .trellis-rich-text td {
+    @apply border border-trellis-border px-3 py-2 align-top text-sm;
+  }
+
+  .trellis-rich-text th {
+    @apply text-left font-medium text-trellis-text;
+    background: color-mix(in srgb, var(--trellis-surface-2) 86%, transparent);
+  }
+
+  .trellis-rich-text img {
+    @apply my-6 rounded-panel border border-trellis-border;
+  }
+
+  .trellis-chat-copy {
+    @apply text-[15px] leading-7 text-trellis-text;
+  }
+
+  .trellis-chat-copy > :first-child {
+    @apply mt-0;
+  }
+
+  .trellis-chat-copy > :last-child {
+    @apply mb-0;
+  }
+
+  .trellis-chat-copy h1 {
+    @apply text-2xl;
+  }
+
+  .trellis-chat-copy h2 {
+    @apply text-xl;
+  }
+
+  .trellis-chat-copy h3 {
+    @apply text-lg;
+  }
+
+  /* Wiki note body: max-width column only — the route’s trellis-panel is the single card surface. */
+  .trellis-document-page {
+    @apply mx-auto w-full max-w-[860px];
+  }
+
+  .trellis-document-meta {
+    @apply text-[11px] uppercase tracking-[0.18em] text-trellis-faint;
+  }
+
+  .trellis-document-title {
+    font-family: var(--trellis-font-body);
+    @apply text-[2.35rem] font-semibold tracking-[-0.04em] text-trellis-text sm:text-[2.8rem];
+    line-height: 1.02;
+  }
+
+  .trellis-document-title-hitbox {
+    @apply inline-block w-full max-w-full px-1 py-0.5 -mx-1;
+  }
+
+  .trellis-document-title-input {
+    font: inherit;
+    @apply w-full max-w-full bg-transparent p-0 text-trellis-text;
+    @apply border-0 border-b border-trellis-border pb-1 outline-none transition;
+    @apply focus-visible:border-trellis-accent focus-visible:ring-0;
+  }
+
+  .trellis-document-content {
+    @apply pt-8 text-[16px] leading-8 text-trellis-text;
+  }
+
+  .trellis-document-content > :first-child {
+    @apply mt-0;
+  }
+
+  .trellis-document-content h1,
+  .trellis-document-content h2,
+  .trellis-document-content h3 {
+    font-family: var(--trellis-font-body);
+    letter-spacing: -0.03em;
+  }
+
+  .trellis-document-content h1 {
+    @apply mt-10 text-[2rem] font-semibold;
+    line-height: 1.08;
+  }
+
+  .trellis-document-content h2 {
+    @apply mt-9 text-[1.45rem] font-semibold;
+    line-height: 1.18;
+  }
+
+  .trellis-document-content h3 {
+    @apply mt-8 text-[1.15rem] font-semibold;
+    line-height: 1.3;
+  }
+
+  .trellis-document-content p,
+  .trellis-document-content ul,
+  .trellis-document-content ol,
+  .trellis-document-content pre,
+  .trellis-document-content blockquote,
+  .trellis-document-content table {
+    @apply my-5;
+  }
+
+  .trellis-document-content ul,
+  .trellis-document-content ol {
+    @apply pl-7;
+  }
+
+  .trellis-document-content li + li {
+    @apply mt-2;
+  }
+
+  .trellis-document-content blockquote {
+    @apply rounded-panel border-l-4 px-5 py-4;
+    background: color-mix(in srgb, var(--trellis-surface-2) 88%, transparent);
+  }
+
+  .trellis-document-content code {
+    @apply rounded-[8px] px-2 py-1 text-[0.9em];
+  }
+
+  .trellis-document-content pre {
+    @apply rounded-[18px] px-5 py-5;
+  }
+
+  .trellis-document-content.ProseMirror {
+    min-height: 60vh;
+  }
+
+  .trellis-document-content.ProseMirror:focus {
+    outline: none;
+  }
+
+  .trellis-note-preview {
+    @apply text-sm leading-7;
+  }
+
+  .trellis-markdown-blocks {
+    @apply flex flex-col gap-3;
+  }
+
+  .trellis-markdown-block {
+    @apply rounded-[16px] border border-transparent transition;
+  }
+
+  .trellis-markdown-block:hover:not(.is-active) {
+    border-color: color-mix(in srgb, var(--trellis-accent) 12%, transparent);
+    background: color-mix(in srgb, var(--trellis-surface-2) 82%, transparent);
+  }
+
+  .trellis-markdown-block.is-active {
+    border-color: color-mix(in srgb, var(--trellis-accent) 26%, transparent);
+    background: color-mix(in srgb, var(--trellis-accent-surface) 86%, transparent);
+  }
+
+  .trellis-markdown-block-render {
+    @apply rounded-[16px] px-3 py-2;
+  }
+
+  .trellis-markdown-block-render > :first-child {
+    @apply mt-0;
+  }
+
+  .trellis-markdown-block-render > :last-child {
+    @apply mb-0;
+  }
+
+  .trellis-markdown-placeholder {
+    @apply px-3 py-2 text-sm text-trellis-faint;
+  }
+
+  .trellis-markdown-textarea {
+    @apply min-h-[44px] w-full resize-none rounded-[16px] border-0 bg-transparent px-3 py-2 font-mono text-sm leading-7 text-trellis-text outline-none placeholder:text-trellis-faint;
+  }
+}

@@ -1,0 +1,16 @@
+appId: com.trellis.app
+productName: Trellis
+directories:
+  output: dist-electron
+files:
+  - dist/**
+  - dist-electron/**
+  - package.json
+mac:
+  category: public.app-category.productivity
+  hardenedRuntime: true
+win:
+  target: nsis
+linux:
+  target: AppImage
+
