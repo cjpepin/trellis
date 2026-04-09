@@ -1,0 +1,592 @@
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ReactElement
+} from "react";
+import type { Editor } from "@tiptap/core";
+import { Color } from "@tiptap/extension-color";
+import { TableKit } from "@tiptap/extension-table/kit";
+import { TextStyle } from "@tiptap/extension-text-style";
+import StarterKit from "@tiptap/starter-kit";
+import { EditorContent, useEditor } from "@tiptap/react";
+import { WikiAwareLink } from "@/components/wiki/wikiAwareLink";
+import { WikiNoteLinkAutocomplete } from "@/components/wiki/WikiNoteLinkAutocomplete";
+import {
+  Bold,
+  Code,
+  Heading1,
+  Heading2,
+  Heading3,
+  Italic,
+  Link2,
+  List,
+  ListOrdered,
+  Minus,
+  Quote,
+  Redo2,
+  Strikethrough,
+  Table,
+  Trash2,
+  Type,
+  Underline,
+  Undo2
+} from "lucide-react";
+import { renderWikiMarkdown } from "@/lib/markdown";
+import { htmlToMarkdown } from "@/lib/htmlToMarkdown";
+import { cn } from "@/lib/utils";
+import { ListboxSelect } from "@/components/ListboxSelect";
+import { WikiLinkEditBubble } from "@/components/wiki/WikiLinkEditBubble";
+
+const WIKI_TEXT_COLORS: Array<{ label: string; value: string }> = [
+  { label: "Default", value: "" },
+  { label: "Accent", value: "#c8a96e" },
+  { label: "Muted", value: "#9a9185" },
+  { label: "Soft red", value: "#c97a6b" },
+  { label: "Soft green", value: "#8fb87a" },
+  { label: "Soft blue", value: "#7a9cc8" }
+];
+
+interface WikiNoteSummary {
+  slug: string;
+  title: string;
+}
+
+function isWikiInternalHref(href: unknown): href is string {
+  return typeof href === "string" && href.startsWith("#/wiki?note=");
+}
+
+interface Props {
+  noteSlug: string;
+  markdown: string;
+  existingSlugs: string[];
+  /** Titles for [[…]] autocomplete and missing-link hints */
+  wikiNotes?: WikiNoteSummary[];
+  className?: string;
+  onOpenNote?: (slug: string, options?: { linkText?: string }) => void;
+  onSave?: (markdown: string, slug: string) => void;
+}
+
+function toolbarButtonClass(active: boolean): string {
+  return cn(
+    "inline-flex items-center gap-1 rounded-field border px-2 py-1.5 text-trellis-text transition",
+    active
+      ? "trellis-selected-surface border-trellis-accent/30"
+      : "border-transparent bg-trellis-surface-2 hover:border-trellis-accent/25"
+  );
+}
+
+function WikiEditorToolbar({
+  editor,
+  onOpenLinkBubble
+}: {
+  editor: Editor | null;
+  onOpenLinkBubble: () => void;
+}): JSX.Element | null {
+  const [, tick] = useReducer((n: number) => n + 1, 0);
+  const textColorFieldId = useId();
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    const refresh = (): void => {
+      tick();
+    };
+
+    editor.on("selectionUpdate", refresh);
+    editor.on("transaction", refresh);
+
+    return () => {
+      editor.off("selectionUpdate", refresh);
+      editor.off("transaction", refresh);
+    };
+  }, [editor]);
+
+  if (!editor) {
+    return null;
+  }
+
+  const instance = editor;
+  const textStyle = instance.getAttributes("textStyle") as { color?: string };
+  const currentColor = typeof textStyle.color === "string" ? textStyle.color : "";
+  const colorSelectValue = WIKI_TEXT_COLORS.some((o) => o.value === currentColor)
+    ? currentColor
+    : "";
+
+  const linkHref = instance.getAttributes("link").href;
+  const isWikiInternalLink = instance.isActive("link") && isWikiInternalHref(linkHref);
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-1 bg-transparent px-1.5 py-1.5"
+      role="toolbar"
+      aria-label="Note formatting"
+    >
+      <div className="flex flex-wrap items-center gap-0.5">
+        <button
+          type="button"
+          className={toolbarButtonClass(false)}
+          aria-label="Undo"
+          onClick={() => editor.chain().focus().undo().run()}
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(false)}
+          aria-label="Redo"
+          onClick={() => editor.chain().focus().redo().run()}
+        >
+          <Redo2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <span className="mx-0.5 h-5 w-px bg-trellis-border/80" aria-hidden />
+
+      <div className="flex flex-wrap items-center gap-0.5">
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("bold"))}
+          aria-label="Bold"
+          aria-pressed={editor.isActive("bold")}
+          onClick={() => editor.chain().focus().toggleBold().run()}
+        >
+          <Bold className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("italic"))}
+          aria-label="Italic"
+          aria-pressed={editor.isActive("italic")}
+          onClick={() => editor.chain().focus().toggleItalic().run()}
+        >
+          <Italic className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("underline"))}
+          aria-label="Underline"
+          aria-pressed={editor.isActive("underline")}
+          onClick={() => editor.chain().focus().toggleUnderline().run()}
+        >
+          <Underline className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("strike"))}
+          aria-label="Strikethrough"
+          aria-pressed={editor.isActive("strike")}
+          onClick={() => editor.chain().focus().toggleStrike().run()}
+        >
+          <Strikethrough className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("code"))}
+          aria-label="Inline code"
+          aria-pressed={editor.isActive("code")}
+          onClick={() => editor.chain().focus().toggleCode().run()}
+        >
+          <Code className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <span className="mx-0.5 h-5 w-px bg-trellis-border/80" aria-hidden />
+
+      <div className="flex flex-wrap items-center gap-0.5">
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("heading", { level: 1 }))}
+          aria-label="Heading 1"
+          aria-pressed={editor.isActive("heading", { level: 1 })}
+          onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+        >
+          <Heading1 className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("heading", { level: 2 }))}
+          aria-label="Heading 2"
+          aria-pressed={editor.isActive("heading", { level: 2 })}
+          onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+        >
+          <Heading2 className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("heading", { level: 3 }))}
+          aria-label="Heading 3"
+          aria-pressed={editor.isActive("heading", { level: 3 })}
+          onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+        >
+          <Heading3 className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(
+            editor.isActive("paragraph") && !editor.isActive("heading")
+          )}
+          aria-label="Body text"
+          aria-pressed={editor.isActive("paragraph") && !editor.isActive("heading")}
+          onClick={() => editor.chain().focus().setParagraph().run()}
+        >
+          <Type className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <span className="mx-0.5 h-5 w-px bg-trellis-border/80" aria-hidden />
+
+      <div className="flex flex-wrap items-center gap-0.5">
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("bulletList"))}
+          aria-label="Bullet list"
+          aria-pressed={editor.isActive("bulletList")}
+          onClick={() => editor.chain().focus().toggleBulletList().run()}
+        >
+          <List className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("orderedList"))}
+          aria-label="Numbered list"
+          aria-pressed={editor.isActive("orderedList")}
+          onClick={() => editor.chain().focus().toggleOrderedList().run()}
+        >
+          <ListOrdered className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("blockquote"))}
+          aria-label="Quote"
+          aria-pressed={editor.isActive("blockquote")}
+          onClick={() => editor.chain().focus().toggleBlockquote().run()}
+        >
+          <Quote className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("codeBlock"))}
+          aria-label="Code block"
+          aria-pressed={editor.isActive("codeBlock")}
+          onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+        >
+          <span className="font-mono text-[11px]">{`{ }`}</span>
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(false)}
+          aria-label="Horizontal rule"
+          onClick={() => editor.chain().focus().setHorizontalRule().run()}
+        >
+          <Minus className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <span className="mx-0.5 h-5 w-px bg-trellis-border/80" aria-hidden />
+
+      <div className="flex flex-wrap items-center gap-0.5">
+        <button
+          type="button"
+          className={toolbarButtonClass(editor.isActive("link") && !isWikiInternalLink)}
+          aria-label={
+            isWikiInternalLink
+              ? "Wiki links are edited as text"
+              : editor.isActive("link")
+                ? "Edit web link"
+                : "Add web link"
+          }
+          title={
+            isWikiInternalLink
+              ? "Wiki links use [[note title]] in the text. Use the Link control for https addresses only."
+              : editor.isActive("link")
+                ? "Edit web link"
+                : "Add https link"
+          }
+          aria-pressed={editor.isActive("link") && !isWikiInternalLink}
+          onClick={() => {
+            editor.chain().focus().run();
+            if (isWikiInternalLink) {
+              return;
+            }
+            onOpenLinkBubble();
+          }}
+        >
+          <Link2 className="h-3.5 w-3.5" />
+          <span className="text-[11px] uppercase tracking-[0.12em]">Link</span>
+        </button>
+
+        <ListboxSelect
+          id={textColorFieldId}
+          variant="compact"
+          ariaLabel="Text color"
+          className="max-w-[7.5rem] self-center"
+          options={WIKI_TEXT_COLORS.map((opt) => ({ id: opt.value, label: opt.label }))}
+          value={colorSelectValue}
+          listboxAriaLabel="Text color"
+          onSelect={(value) => {
+            if (value === "") {
+              editor.chain().focus().unsetColor().run();
+              return;
+            }
+
+            editor.chain().focus().setColor(value).run();
+          }}
+        />
+      </div>
+
+      <span className="mx-0.5 h-5 w-px bg-trellis-border/80" aria-hidden />
+
+      <div className="flex flex-wrap items-center gap-0.5">
+        <button
+          type="button"
+          className={toolbarButtonClass(false)}
+          aria-label="Insert table"
+          onClick={() =>
+            editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+          }
+        >
+          <Table className="h-3.5 w-3.5" />
+        </button>
+        {editor.isActive("table") ? (
+          <button
+            type="button"
+            className={toolbarButtonClass(false)}
+            aria-label="Delete table"
+            onClick={() => editor.chain().focus().deleteTable().run()}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export function WikiRichTextEditor({
+  noteSlug,
+  markdown,
+  existingSlugs,
+  wikiNotes = [],
+  className,
+  onOpenNote,
+  onSave
+}: Props): ReactElement {
+  const [manualLinkOpen, setManualLinkOpen] = useState(false);
+  const rendered = useMemo(
+    () => renderWikiMarkdown(markdown, new Set(existingSlugs)),
+    [existingSlugs, markdown]
+  );
+
+  const saveTimerRef = useRef<number | null>(null);
+  const pendingMarkdownRef = useRef<string | null>(null);
+  const pendingSlugRef = useRef<string | null>(null);
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+
+  const scheduleSave = useCallback((html: string) => {
+    if (!onSaveRef.current) {
+      return;
+    }
+
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+    }
+
+    const md = htmlToMarkdown(html);
+    pendingMarkdownRef.current = md;
+    pendingSlugRef.current = noteSlug;
+
+    saveTimerRef.current = window.setTimeout(() => {
+      const markdownToSave = pendingMarkdownRef.current;
+      const slug = pendingSlugRef.current;
+      pendingMarkdownRef.current = null;
+      pendingSlugRef.current = null;
+      saveTimerRef.current = null;
+
+      if (markdownToSave !== null && slug) {
+        onSaveRef.current?.(markdownToSave, slug);
+      }
+    }, 500);
+  }, [noteSlug]);
+
+  const extensions = useMemo(
+    () => [
+      StarterKit.configure({
+        heading: {
+          levels: [1, 2, 3]
+        },
+        link: false
+      }),
+      WikiAwareLink.configure({
+        openOnClick: false,
+        autolink: true,
+        HTMLAttributes: {}
+      }),
+      TableKit.configure({
+        table: { resizable: false }
+      }),
+      TextStyle,
+      Color.configure({
+        types: ["textStyle"]
+      })
+    ],
+    []
+  );
+
+  const existingSlugSet = useMemo(() => new Set(existingSlugs), [existingSlugs]);
+
+  const editor = useEditor({
+    immediatelyRender: false,
+    extensions,
+    content: rendered.html,
+    editorProps: {
+      attributes: {
+        class: cn(
+          "trellis-rich-text min-h-[12rem] max-w-none px-2 py-2 text-sm leading-7 text-trellis-text outline-none",
+          className
+        )
+      }
+    },
+    onUpdate({ editor: instance }) {
+      scheduleSave(instance.getHTML());
+    }
+  });
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    if (editor.isFocused) {
+      return;
+    }
+
+    editor.commands.setContent(rendered.html, {
+      emitUpdate: false
+    });
+  }, [editor, rendered.html]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+      }
+
+      const pendingMd = pendingMarkdownRef.current;
+      const slug = pendingSlugRef.current;
+      pendingMarkdownRef.current = null;
+      pendingSlugRef.current = null;
+
+      if (pendingMd !== null && slug) {
+        onSaveRef.current?.(pendingMd, slug);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    const ed = editor;
+
+    function closeBubbleIfWikiLink(): void {
+      if (!manualLinkOpen) {
+        return;
+      }
+
+      if (ed.isActive("link") && isWikiInternalHref(ed.getAttributes("link").href)) {
+        setManualLinkOpen(false);
+      }
+    }
+
+    ed.on("selectionUpdate", closeBubbleIfWikiLink);
+    ed.on("transaction", closeBubbleIfWikiLink);
+    return () => {
+      ed.off("selectionUpdate", closeBubbleIfWikiLink);
+      ed.off("transaction", closeBubbleIfWikiLink);
+    };
+  }, [editor, manualLinkOpen]);
+
+  const openLinkBubbleAfterSelection = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setManualLinkOpen(true);
+      });
+    });
+  }, []);
+
+  return (
+    <div
+      className="trellis-panel isolate flex flex-col"
+      onClick={(event) => {
+        const target = event.target;
+
+        if (!(target instanceof HTMLElement)) {
+          return;
+        }
+
+        const link = target.closest("a");
+
+        if (!link) {
+          return;
+        }
+
+        const href = link.getAttribute("href");
+
+        if (href?.startsWith("#/wiki?note=")) {
+          event.preventDefault();
+
+          if (onOpenNote && (event.metaKey || event.ctrlKey)) {
+            const slug = decodeURIComponent(href.replace("#/wiki?note=", ""));
+            const linkText = link.textContent?.trim();
+            onOpenNote(slug, { linkText });
+            return;
+          }
+
+          return;
+        }
+
+        if (href?.startsWith("http")) {
+          if (event.metaKey || event.ctrlKey) {
+            event.preventDefault();
+            void window.trellis.shell.openExternal(href);
+            return;
+          }
+
+          event.preventDefault();
+          openLinkBubbleAfterSelection();
+        }
+      }}
+    >
+      <div className="sticky top-0 z-20 shrink-0 border-b border-trellis-border bg-trellis-surface shadow-[0_1px_0_var(--trellis-border)]">
+        <WikiEditorToolbar
+          editor={editor}
+          onOpenLinkBubble={() => {
+            setManualLinkOpen(true);
+          }}
+        />
+      </div>
+      <WikiLinkEditBubble
+        editor={editor}
+        manualOpen={manualLinkOpen}
+        onManualOpenChange={setManualLinkOpen}
+      />
+      <WikiNoteLinkAutocomplete
+        editor={editor}
+        notes={wikiNotes}
+        existingSlugs={existingSlugSet}
+      />
+      <div className="relative z-0 min-w-0 bg-trellis-surface">
+        <EditorContent editor={editor} />
+      </div>
+    </div>
+  );
+}

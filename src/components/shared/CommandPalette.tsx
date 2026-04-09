@@ -1,11 +1,24 @@
 import { Command } from "cmdk";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import type { WorkspaceInfo } from "@electron/ipc/types";
 import { useUiStore } from "@/store/uiStore";
 import { useWikiStore } from "@/store/wikiStore";
 import { useChatStore } from "@/store/chatStore";
 
-export function CommandPalette() {
+interface Props {
+  workspace: WorkspaceInfo;
+  workspaces: WorkspaceInfo[];
+  onSwitchWorkspace: (workspaceId: WorkspaceInfo["id"]) => Promise<void>;
+  onResetPreview?: () => Promise<void>;
+}
+
+export function CommandPalette({
+  workspace,
+  workspaces,
+  onSwitchWorkspace,
+  onResetPreview
+}: Props) {
   const navigate = useNavigate();
   const open = useUiStore((state) => state.commandPaletteOpen);
   const setOpen = useUiStore((state) => state.setCommandPaletteOpen);
@@ -95,6 +108,37 @@ export function CommandPalette() {
               >
                 Copy note as markdown
               </Command.Item>
+            </Command.Group>
+
+            <Command.Separator className="my-2 h-px bg-trellis-border" />
+
+            <Command.Group heading="Workspace" className="px-2 py-1 text-xs text-trellis-faint">
+              {workspaces.map((item) => (
+                <Command.Item
+                  key={item.id}
+                  disabled={item.id === workspace.id}
+                  className="rounded-field px-3 py-2 text-sm text-trellis-text aria-selected:bg-trellis-surface data-[disabled=true]:text-trellis-faint"
+                  onSelect={() => {
+                    if (item.id !== workspace.id) {
+                      void onSwitchWorkspace(item.id);
+                    }
+                    setOpen(false);
+                  }}
+                >
+                  Switch to {item.isPreview ? "preview" : "personal"}
+                </Command.Item>
+              ))}
+              {workspace.canReset && onResetPreview && (
+                <Command.Item
+                  className="rounded-field px-3 py-2 text-sm text-trellis-text aria-selected:bg-trellis-surface"
+                  onSelect={() => {
+                    void onResetPreview();
+                    setOpen(false);
+                  }}
+                >
+                  Reset preview workspace
+                </Command.Item>
+              )}
             </Command.Group>
 
             <Command.Separator className="my-2 h-px bg-trellis-border" />

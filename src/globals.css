@@ -9,6 +9,16 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  .app-region-drag {
+    -webkit-app-region: drag;
+  }
+
+  .app-region-no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
+
 :root {
   --trellis-bg: #0f0f0f;
   --trellis-surface: #171717;
@@ -84,7 +94,7 @@
     0 6px 18px rgba(103, 82, 47, 0.1);
 }
 
-:root[data-theme="nature"] {
+:root[data-theme="nature-dark"] {
   --trellis-bg: #121814;
   --trellis-surface: #1a241d;
   --trellis-surface-2: #223128;
@@ -115,6 +125,105 @@
   --trellis-elevated-shadow:
     0 0 0 1px rgba(159, 188, 116, 0.15),
     0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+:root[data-theme="nature-light"] {
+  --trellis-bg: #eef2eb;
+  --trellis-surface: #f6f9f3;
+  --trellis-surface-2: #ecf3e6;
+  --trellis-sidebar: #e8efe0;
+  --trellis-border: #c4d2b6;
+  --trellis-text: #1c2618;
+  --trellis-text-muted: #4a5c40;
+  --trellis-text-faint: #6f8065;
+  --trellis-accent: #4a6b38;
+  --trellis-accent-dim: #3a5630;
+  --trellis-accent-hover: #5d8248;
+  --trellis-success: #3a6840;
+  --trellis-warning: #8a7a3a;
+  --trellis-error: #a05048;
+  --trellis-node: #4a6b38;
+  --trellis-node-hover: #5d8248;
+  --trellis-edge: #b8c9a8;
+  --trellis-edge-hover: #9db88a;
+  --trellis-input-bg: #fdfffa;
+  --trellis-accent-surface: #e2edd8;
+  --trellis-selected-surface: #d8e6cb;
+  --trellis-overlay-surface: rgba(246, 249, 243, 0.94);
+  --trellis-chip-surface: #e4ebe0;
+  --trellis-code-surface: #e8f0e2;
+  --trellis-selection: rgba(74, 107, 56, 0.2);
+  --trellis-bg-glow: rgba(74, 107, 56, 0.08);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.45);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(74, 107, 56, 0.12),
+    0 6px 18px rgba(60, 80, 50, 0.08);
+}
+
+:root[data-theme="ocean-dark"] {
+  --trellis-bg: #0c1418;
+  --trellis-surface: #121d24;
+  --trellis-surface-2: #18262f;
+  --trellis-sidebar: #0f181e;
+  --trellis-border: #2a3f4d;
+  --trellis-text: #e4eef4;
+  --trellis-text-muted: #8fabbf;
+  --trellis-text-faint: #4d6475;
+  --trellis-accent: #5eb5d8;
+  --trellis-accent-dim: #3d8fb5;
+  --trellis-accent-hover: #7ec9e8;
+  --trellis-success: #5cbf8f;
+  --trellis-warning: #d4b56f;
+  --trellis-error: #e07a7a;
+  --trellis-node: #5eb5d8;
+  --trellis-node-hover: #7ec9e8;
+  --trellis-edge: #2f4a5c;
+  --trellis-edge-hover: #3d5f78;
+  --trellis-input-bg: #0a1216;
+  --trellis-accent-surface: #152a35;
+  --trellis-selected-surface: #1a3342;
+  --trellis-overlay-surface: rgba(12, 20, 24, 0.94);
+  --trellis-chip-surface: #142028;
+  --trellis-code-surface: #16242d;
+  --trellis-selection: rgba(94, 181, 216, 0.28);
+  --trellis-bg-glow: rgba(94, 181, 216, 0.1);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.02);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(94, 181, 216, 0.18),
+    0 12px 32px rgba(0, 0, 0, 0.32);
+}
+
+:root[data-theme="ocean-light"] {
+  --trellis-bg: #f0f4f8;
+  --trellis-surface: #f7fafc;
+  --trellis-surface-2: #e8eef4;
+  --trellis-sidebar: #e3ebf3;
+  --trellis-border: #c5d0db;
+  --trellis-text: #1a2332;
+  --trellis-text-muted: #4a5d70;
+  --trellis-text-faint: #7a8c9c;
+  --trellis-accent: #2b6a9e;
+  --trellis-accent-dim: #1f5080;
+  --trellis-accent-hover: #3a82c4;
+  --trellis-success: #2d7a55;
+  --trellis-warning: #b8860b;
+  --trellis-error: #b04040;
+  --trellis-node: #2b6a9e;
+  --trellis-node-hover: #3a82c4;
+  --trellis-edge: #a8b8c8;
+  --trellis-edge-hover: #8fa3b8;
+  --trellis-input-bg: #feffff;
+  --trellis-accent-surface: #dce8f2;
+  --trellis-selected-surface: #cddfea;
+  --trellis-overlay-surface: rgba(247, 250, 252, 0.94);
+  --trellis-chip-surface: #e4ecf4;
+  --trellis-code-surface: #e0eaf2;
+  --trellis-selection: rgba(43, 106, 158, 0.2);
+  --trellis-bg-glow: rgba(43, 106, 158, 0.07);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.5);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(43, 106, 158, 0.1),
+    0 6px 18px rgba(40, 70, 100, 0.08);
 }
 
 :root[data-theme="high-contrast"] {
@@ -200,6 +309,12 @@
     box-shadow: var(--trellis-elevated-shadow);
   }
 
+  /** Chat composer: lighter shadow than `.trellis-elevated` */
+  .trellis-chat-composer {
+    @apply rounded-panel border border-trellis-border bg-trellis-surface-2;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+
   .trellis-input {
     @apply w-full rounded-field border border-trellis-border px-4 py-3 text-sm text-trellis-text outline-none transition placeholder:text-trellis-faint focus:border-trellis-accent;
     background: var(--trellis-input-bg);
@@ -238,9 +353,45 @@
     @apply max-w-none;
   }
 
-  .trellis-rich-text a {
+  .trellis-rich-text a,
+  .trellis-link {
     @apply underline decoration-from-font underline-offset-[0.22em];
     text-decoration-color: color-mix(in srgb, var(--trellis-accent) 36%, transparent);
+  }
+
+  .trellis-rich-text a[href^="#/wiki?note="],
+  .trellis-link.trellis-link-internal {
+    color: var(--trellis-accent);
+    text-decoration-style: solid;
+  }
+
+  .trellis-rich-text a[href^="#/wiki?note="]:hover,
+  .trellis-link.trellis-link-internal:hover {
+    color: var(--trellis-accent-hover);
+  }
+
+  .trellis-rich-text a[href^="http"],
+  .trellis-link[href^="http"] {
+    color: var(--trellis-text-muted);
+    text-decoration-style: dotted;
+    text-decoration-color: color-mix(in srgb, var(--trellis-text-muted) 45%, transparent);
+  }
+
+  .trellis-rich-text a[href^="http"]:hover,
+  .trellis-link[href^="http"]:hover {
+    color: var(--trellis-text);
+    text-decoration-color: color-mix(in srgb, var(--trellis-text) 40%, transparent);
+  }
+
+  .trellis-link.trellis-link-missing {
+    color: var(--trellis-text-muted);
+    text-decoration-style: dashed;
+    text-decoration-color: color-mix(in srgb, var(--trellis-text-muted) 36%, transparent);
+  }
+
+  .trellis-link.trellis-link-missing:hover {
+    color: var(--trellis-accent);
+    text-decoration-color: color-mix(in srgb, var(--trellis-accent) 34%, transparent);
   }
 
   .trellis-rich-text h1,
@@ -345,7 +496,7 @@
 
   /* Wiki note body: max-width column only — the route’s trellis-panel is the single card surface. */
   .trellis-document-page {
-    @apply mx-auto w-full max-w-[860px];
+    @apply mx-auto w-full max-w-[920px];
   }
 
   .trellis-document-meta {
@@ -370,7 +521,7 @@
   }
 
   .trellis-document-content {
-    @apply pt-8 text-[16px] leading-8 text-trellis-text;
+    @apply pt-4 text-[16px] leading-8 text-trellis-text;
   }
 
   .trellis-document-content > :first-child {

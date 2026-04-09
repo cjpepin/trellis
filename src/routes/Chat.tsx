@@ -1,13 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { defaultChatModel, type AppSettings, type MessageRecord } from "@electron/ipc/types";
+import {
+  defaultChatModel,
+  type AppSettings,
+  type WorkspaceInfo,
+  type ChatAttachment,
+  type MessageRecord,
+  type QueueSessionExtractionResult
+} from "@electron/ipc/types";
+import { ChatVaultSelect } from "@/components/chat/ChatVaultSelect";
 import { InputBar } from "@/components/chat/InputBar";
 import { MessageList } from "@/components/chat/MessageList";
-import { extractTranscript, type ChatNoteReference } from "@/lib/api";
+import {
+  getOptionalExtractionCloudConfig,
+  type ChatNoteReference
+} from "@/lib/api";
 import { canUseChatModel } from "@/lib/chatModels";
 import { selectRelevantReferenceSlugs } from "@/lib/chatReferences";
-import { buildExtractionIndex } from "@/lib/extractionIndex";
-import { useApplyExtraction } from "@/hooks/useApplyExtraction";
+import {
+  formatMessageForApi,
+  toChatAttachments,
+  type PendingChatAttachment
+} from "@/lib/chatAttachments";
 import { useStream } from "@/hooks/useStream";
 import { getActiveVault, getVaultById } from "@/lib/settings";
 import { useAuthStore } from "@/store/authStore";
@@ -17,18 +31,20 @@ import { useWikiStore } from "@/store/wikiStore";
 
 interface Props {
   settings: AppSettings;
+  workspace: WorkspaceInfo;
   onUpdateSettings: (settings: AppSettings) => Promise<void>;
+  onSwitchWorkspace: (workspaceId: WorkspaceInfo["id"]) => Promise<void>;
 }
 
-export function Chat({ settings, onUpdateSettings }: Props) {
+export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace }: Props) {
   const chatColumnClassName = "max-w-[1020px]";
   const navigate = useNavigate();
   const [draft, setDraft] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<PendingChatAttachment[]>([]);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const accessToken = useAuthStore((state) => state.accessToken);
   const authStatus = useAuthStore((state) => state.status);
   const subscriptionTier = useAuthStore((state) => state.subscriptionTier);
-  const graph = useWikiStore((state) => state.graph);
   const notes = useWikiStore((state) => state.notes);
   const setNote = useWikiStore((state) => state.setNote);
   const setActiveNote = useWikiStore((state) => state.setActiveNote);
@@ -47,20 +63,19 @@ export function Chat({ settings, onUpdateSettings }: Props) {
   const setMessageMeta = useChatStore((state) => state.setMessageMeta);
   const clearMessageMeta = useChatStore((state) => state.clearMessageMeta);
   const pushToast = useUiStore((state) => state.pushToast);
-  const applyExtraction = useApplyExtraction();
   const streamAssistant = useStream({
     accessToken,
     model: activeModel
   });
-  const extractionQueue = useRef<Set<string>>(new Set());
   const previousSessionId = useRef<string | null>(activeSessionId);
   const activeVault = getActiveVault(settings);
+  const isPreviewWorkspace = workspace.localOnly;
+  const chatDisabled = isPreviewWorkspace || authStatus !== "authenticated";
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) ?? null,
     [activeSessionId, sessions]
   );
   const existingSlugs = useMemo(() => notes.map((note) => note.slug), [notes]);
-  const extractionIndex = useMemo(() => buildExtractionIndex(graph), [graph]);
   const currentMessages = useMemo(
     () => (activeSessionId ? messagesBySession[activeSessionId] ?? [] : []),
     [activeSessionId, messagesBySession]
@@ -91,6 +106,7 @@ export function Chat({ settings, onUpdateSettings }: Props) {
   useEffect(() => {
     setEditingMessageId(null);
     setDraft("");
+    setPendingAttachments([]);
   }, [activeSessionId]);
 
   useEffect(() => {
@@ -101,79 +117,42 @@ export function Chat({ settings, onUpdateSettings }: Props) {
     setActiveModel(defaultChatModel);
   }, [activeModel, setActiveModel, subscriptionTier]);
 
-  const runExtraction = useCallback(
-    async (sessionId: string) => {
-      if (!accessToken || extractionQueue.current.has(sessionId)) {
-        return;
-      }
-
-      const messages = useChatStore.getState().messagesBySession[sessionId] ?? [];
-      const usableMessages = messages.filter(
-        (message) => useChatStore.getState().messageMetaById[message.id]?.status !== "failed"
-      );
-      const lastExtracted = useChatStore.getState().lastExtractedMessageCount[sessionId] ?? 0;
-      const extractionStartIndex = lastExtracted > 0 ? Math.max(0, lastExtracted - 2) : 0;
-      const extractionMessages = usableMessages.slice(extractionStartIndex);
-
-      if (usableMessages.length < 2 || usableMessages.length === lastExtracted) {
-        return;
-      }
-
-      extractionQueue.current.add(sessionId);
-      const session = useChatStore.getState().sessions.find((item) => item.id === sessionId);
-
+  const queueExtraction = useCallback(
+    async (
+      sessionId: string,
+      trigger: "idle" | "session-switch",
+      options?: { force?: boolean }
+    ): Promise<QueueSessionExtractionResult | null> => {
       try {
-        const response = await extractTranscript({
-          accessToken,
+        return await window.trellis.extraction.queueSession({
           sessionId,
-          transcript: extractionMessages.map((message) => ({
-            role: message.role,
-            content: message.content
-          })),
-          index: extractionIndex
-        });
-
-        await applyExtraction(response, {
-          sessionId,
-          messageCount: usableMessages.length,
-          vaultId: session?.vaultId
+          trigger,
+          mode: settings.extraction.mode,
+          cloud: getOptionalExtractionCloudConfig(accessToken),
+          preferredLocalModelId: settings.extraction.preferredLocalModelId ?? undefined,
+          force: options?.force ?? false
         });
       } catch (error) {
         pushToast({
           title:
             error instanceof Error
               ? error.message
-              : "Trellis couldn’t update the wiki for that session.",
+              : "Trellis couldn’t queue background note processing for that session.",
           tone: "warning"
         });
-      } finally {
-        extractionQueue.current.delete(sessionId);
+        return null;
       }
     },
-    [accessToken, applyExtraction, extractionIndex, pushToast]
+    [accessToken, pushToast, settings.extraction.mode, settings.extraction.preferredLocalModelId]
   );
 
   useEffect(() => {
     if (previousSessionId.current && previousSessionId.current !== activeSessionId) {
-      void runExtraction(previousSessionId.current);
+      void queueExtraction(previousSessionId.current, "session-switch");
     }
 
     previousSessionId.current = activeSessionId;
-  }, [activeSessionId, runExtraction]);
-
-  useEffect(() => {
-    if (!activeSessionId || isStreaming || currentMessages.length < 2) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      void runExtraction(activeSessionId);
-    }, 60_000);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [activeSessionId, currentMessages.length, isStreaming, runExtraction]);
+  }, [activeSessionId, queueExtraction]);
 
   const loadNote = useCallback(
     async (slug: string, vaultId: string) => {
@@ -243,8 +222,9 @@ export function Chat({ settings, onUpdateSettings }: Props) {
 
   function buildRetryTranscript(
     sessionId: string,
-    targetMessageId?: string,
-    nextContent?: string
+    targetMessageId: string | undefined,
+    nextContent: string | undefined,
+    nextAttachments: ChatAttachment[] | undefined
   ): {
     baseMessages: MessageRecord[];
     userMessage: MessageRecord;
@@ -258,7 +238,8 @@ export function Chat({ settings, onUpdateSettings }: Props) {
         role: "user",
         content: nextContent ?? "",
         createdAt: Date.now(),
-        tokens: null
+        tokens: null,
+        ...(nextAttachments && nextAttachments.length > 0 ? { attachments: nextAttachments } : {})
       };
 
       return {
@@ -284,6 +265,14 @@ export function Chat({ settings, onUpdateSettings }: Props) {
       content: nextContent ?? targetMessage.content,
       createdAt: Date.now()
     };
+
+    if (nextAttachments !== undefined) {
+      if (nextAttachments.length > 0) {
+        updatedUserMessage.attachments = nextAttachments;
+      } else {
+        delete updatedUserMessage.attachments;
+      }
+    }
     const baseMessages = [...sessionMessages.slice(0, targetIndex), updatedUserMessage];
 
     return {
@@ -292,7 +281,11 @@ export function Chat({ settings, onUpdateSettings }: Props) {
     };
   }
 
-  async function sendMessage(value: string, targetMessageId?: string): Promise<void> {
+  async function sendMessage(
+    value: string,
+    targetMessageId?: string,
+    attachmentPayload?: ChatAttachment[]
+  ): Promise<void> {
     let optimisticUserMessage: MessageRecord | null = null;
     let sessionId = activeSessionId;
     const sessionVaultId = activeSession?.vaultId || activeVault.id;
@@ -308,7 +301,12 @@ export function Chat({ settings, onUpdateSettings }: Props) {
         upsertSession(session);
       }
 
-      const { baseMessages, userMessage } = buildRetryTranscript(sessionId, targetMessageId, value);
+      const { baseMessages, userMessage } = buildRetryTranscript(
+        sessionId,
+        targetMessageId,
+        value,
+        attachmentPayload
+      );
       optimisticUserMessage = userMessage;
       replaceSessionMessages(sessionId, baseMessages);
       clearMessageMeta(userMessage.id);
@@ -323,7 +321,7 @@ export function Chat({ settings, onUpdateSettings }: Props) {
         sessionId,
         baseMessages.map((message) => ({
           role: message.role,
-          content: message.content
+          content: formatMessageForApi(message)
         })),
         references
       );
@@ -343,11 +341,13 @@ export function Chat({ settings, onUpdateSettings }: Props) {
         sessionId,
         messages: nextMessages
       });
+      setPendingAttachments([]);
       const updatedSession = await window.trellis.db.updateSession({
         id: sessionId,
         model: activeModel
       });
       upsertSession(updatedSession);
+      void queueExtraction(sessionId, "idle");
     } catch (error) {
       if (optimisticUserMessage && sessionId) {
         setMessageMeta(optimisticUserMessage.id, {
@@ -363,7 +363,95 @@ export function Chat({ settings, onUpdateSettings }: Props) {
   }
 
   async function handleSubmit(value: string): Promise<void> {
-    await sendMessage(value, editingMessageId ?? undefined);
+    const trimmed = value.trim();
+    const payload = toChatAttachments(pendingAttachments);
+
+    if (!trimmed && payload.length === 0) {
+      return;
+    }
+
+    await sendMessage(trimmed, editingMessageId ?? undefined, payload);
+  }
+
+  async function handleAttachFile(): Promise<void> {
+    if (pendingAttachments.length >= 12) {
+      pushToast({
+        title: "You can attach up to 12 items per message.",
+        tone: "warning"
+      });
+      return;
+    }
+
+    try {
+      const result = await window.trellis.chat.pickAttachment();
+
+      if (!result) {
+        return;
+      }
+
+      setPendingAttachments((current) => [
+        ...current,
+        {
+          clientId: crypto.randomUUID(),
+          kind: "file",
+          label: result.name,
+          text: result.text
+        }
+      ]);
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not read that file.",
+        tone: "warning"
+      });
+    }
+  }
+
+  async function handleAttachLink(): Promise<void> {
+    if (pendingAttachments.length >= 12) {
+      pushToast({
+        title: "You can attach up to 12 items per message.",
+        tone: "warning"
+      });
+      return;
+    }
+
+    const raw = window.prompt("Paste a public https URL to clip");
+
+    if (raw === null) {
+      return;
+    }
+
+    const url = raw.trim();
+
+    if (!url) {
+      return;
+    }
+
+    try {
+      const draftUrl = new URL(url);
+
+      if (draftUrl.protocol !== "https:" && draftUrl.protocol !== "http:") {
+        throw new Error("Use an http or https URL.");
+      }
+
+      const clipped = await window.trellis.ingest.clipUrl({ url: draftUrl.toString() });
+
+      setPendingAttachments((current) => [
+        ...current,
+        {
+          clientId: crypto.randomUUID(),
+          kind: "url",
+          label: clipped.title,
+          text: clipped.content,
+          sourceUrl: clipped.sourcePath
+        }
+      ]);
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not clip that URL.",
+        tone: "warning"
+      });
+    }
   }
 
   function handleEditMessage(messageId: string): void {
@@ -375,6 +463,12 @@ export function Chat({ settings, onUpdateSettings }: Props) {
 
     setEditingMessageId(messageId);
     setDraft(message.content);
+    setPendingAttachments(
+      (message.attachments ?? []).map((attachment) => ({
+        ...attachment,
+        clientId: crypto.randomUUID()
+      }))
+    );
   }
 
   async function handleRetryMessage(messageId: string): Promise<void> {
@@ -384,26 +478,102 @@ export function Chat({ settings, onUpdateSettings }: Props) {
       return;
     }
 
-    await sendMessage(message.content, messageId);
+    await sendMessage(message.content, messageId, message.attachments);
   }
 
   function cancelEditing(): void {
     setEditingMessageId(null);
     setDraft("");
+    setPendingAttachments([]);
   }
 
   function handleStartNewChat(): void {
     setEditingMessageId(null);
     setDraft("");
+    setPendingAttachments([]);
     setActiveSession(null);
     navigate("/chat");
   }
 
+  async function handleAddVault(): Promise<void> {
+    const entered = window.prompt("Name for the new vault", "");
+
+    if (entered === null) {
+      return;
+    }
+
+    const trimmed = entered.trim();
+
+    if (!trimmed) {
+      pushToast({
+        title: "Enter a name for the vault.",
+        tone: "warning"
+      });
+      return;
+    }
+
+    try {
+      const selectedPath = await window.trellis.vault.selectDirectory();
+
+      if (!selectedPath) {
+        return;
+      }
+
+      if (settings.vaults.some((vault) => vault.path === selectedPath)) {
+        pushToast({
+          title: "That folder is already in your vault list.",
+          tone: "warning"
+        });
+        return;
+      }
+
+      const nextVault = {
+        id: crypto.randomUUID(),
+        name: trimmed,
+        path: selectedPath
+      };
+
+      await onUpdateSettings({
+        ...settings,
+        vaults: [...settings.vaults, nextVault],
+        activeVaultId: nextVault.id
+      });
+
+      pushToast({
+        title: `${trimmed} added.`,
+        tone: "success"
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not add that vault.",
+        tone: "error"
+      });
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
-      {authStatus !== "authenticated" && (
+      {(isPreviewWorkspace || authStatus !== "authenticated") && (
         <div className={`trellis-accent-surface mx-auto mt-6 w-full ${chatColumnClassName} rounded-panel border border-trellis-accent/20 px-4 py-3 text-sm text-trellis-text`}>
-          Sign in from Settings to start chatting with Trellis and grow what you know.
+          {isPreviewWorkspace ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                Preview stays local and browseable. Switch to your personal workspace for live
+                cloud chat.
+              </span>
+              <button
+                type="button"
+                className="rounded-full border border-trellis-accent/25 px-3 py-1.5 text-xs text-trellis-accent transition hover:border-trellis-accent/45"
+                onClick={() => {
+                  void onSwitchWorkspace("personal");
+                }}
+              >
+                Switch to personal
+              </button>
+            </div>
+          ) : (
+            "Sign in from Settings to start chatting with Trellis and grow what you know."
+          )}
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -424,41 +594,17 @@ export function Chat({ settings, onUpdateSettings }: Props) {
         />
       </div>
       <div className="trellis-overlay-surface border-t border-trellis-border px-5 py-4 backdrop-blur">
-        {!activeSessionId && (
-          <div className={`mx-auto mb-4 flex w-full ${chatColumnClassName} items-center justify-between gap-4 rounded-field border border-trellis-border bg-trellis-surface px-4 py-3`}>
-            <div>
-              <p className="text-sm text-trellis-text">New conversation vault</p>
-              <p className="mt-1 text-xs text-trellis-muted">
-                This conversation will update notes in {activeVault.name}.
-              </p>
-            </div>
-            <select
-              value={activeVault.id}
-              className="trellis-input max-w-[220px]"
-              onChange={(event) => {
-                void onUpdateSettings({
-                  ...settings,
-                  activeVaultId: event.target.value
-                });
-              }}
-            >
-              {settings.vaults.map((vault) => (
-                <option key={vault.id} value={vault.id}>
-                  {vault.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
         {editingMessage && (
           <div className={`mx-auto mb-4 w-full ${chatColumnClassName} rounded-field border border-trellis-accent/20 bg-trellis-surface px-4 py-3 text-sm text-trellis-text`}>
             Editing an earlier message will regenerate the conversation from that point.
           </div>
         )}
-        <div className={`mx-auto flex w-full ${chatColumnClassName} flex-col gap-3 sm:flex-row sm:items-end`}>
-          <div className="min-w-0 flex-1">
+        <div
+          className={`mx-auto flex w-full ${chatColumnClassName} flex-col gap-3 sm:flex-row sm:items-end`}
+        >
+          <div className="min-w-0 w-full flex-1 sm:min-w-0">
             <InputBar
-              disabled={authStatus !== "authenticated"}
+              disabled={chatDisabled}
               isStreaming={isStreaming}
               model={activeModel}
               subscriptionTier={subscriptionTier}
@@ -469,26 +615,58 @@ export function Chat({ settings, onUpdateSettings }: Props) {
               onCancel={editingMessage ? cancelEditing : undefined}
               onSelectModel={setActiveModel}
               onSubmit={handleSubmit}
+              pendingAttachments={pendingAttachments}
+              onRemoveAttachment={(clientId) => {
+                setPendingAttachments((current) =>
+                  current.filter((attachment) => attachment.clientId !== clientId)
+                );
+              }}
+              onAttachFile={() => {
+                void handleAttachFile();
+              }}
+              onAttachLink={() => {
+                void handleAttachLink();
+              }}
             />
           </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-full border border-trellis-border bg-trellis-surface px-3 py-2 text-sm text-trellis-text transition hover:border-trellis-accent/35 hover:text-trellis-accent"
-            onClick={handleStartNewChat}
-          >
-            New chat
-          </button>
+          <div className="flex w-full max-w-[200px] shrink-0 flex-col gap-2 self-end sm:w-auto">
+            {!activeSessionId && (
+              <ChatVaultSelect
+                vaults={settings.vaults}
+                activeVaultId={settings.activeVaultId}
+                disabled={chatDisabled}
+                onSelectVault={(vaultId) => {
+                  void onUpdateSettings({
+                    ...settings,
+                    activeVaultId: vaultId
+                  });
+                }}
+                onAddVault={handleAddVault}
+              />
+            )}
+            <button
+              type="button"
+              className="w-full shrink-0 rounded-full border border-trellis-border bg-trellis-surface px-3 py-2 text-center text-sm text-trellis-text transition hover:border-trellis-accent/35 hover:text-trellis-accent"
+              onClick={handleStartNewChat}
+            >
+              New chat
+            </button>
+          </div>
         </div>
         {sessions.length > 0 && currentMessages.length > 0 && (
-          <p className={`mx-auto mt-3 ${chatColumnClassName} text-xs text-trellis-muted`}>
-            {activeSession && (
-              <>
-                This conversation is writing to {getVaultById(settings, activeSession.vaultId).name}.{" "}
-              </>
-            )}
-            After 60 seconds of inactivity, Trellis will extract durable notes from this
-            session and update your graph in the background.
-          </p>
+          <div
+            className={`mx-auto mt-3 w-full ${chatColumnClassName} text-xs text-trellis-muted`}
+          >
+            <p className="min-w-0">
+              {activeSession && (
+                <>
+                  This conversation is writing to {getVaultById(settings, activeSession.vaultId).name}.{" "}
+                </>
+              )}
+              After each assistant reply, Trellis turns this chat into durable notes and
+              updates your graph in the background.
+            </p>
+          </div>
         )}
       </div>
     </div>

@@ -1,29 +1,14 @@
 import type { ChatModel, MessageRecord, NoteSummary } from "@electron/ipc/types";
+import type {
+  ExtractionContextNote,
+  ExtractionIndexEntry,
+  ExtractionResponse,
+  ExtractionUpdate
+} from "@shared/extraction/contracts";
+import type { ExtractionCloudConfig, ExtractionMode } from "@electron/ipc/types";
 import { getSupabase, hasSupabaseConfig } from "./supabase";
 
-export interface ExtractionIndexEntry {
-  slug: string;
-  title: string;
-  tags: string[];
-  isPlaceholder?: boolean;
-}
-
-export interface ExtractionUpdate {
-  file: string;
-  action: "create" | "update" | "append";
-  title: string;
-  content: string;
-  tags: string[];
-  type: "concept" | "entity" | "source-summary" | "synthesis";
-  linkedTo: string[];
-  sources?: number;
-  url?: string;
-}
-
-export interface ExtractionResponse {
-  updates: ExtractionUpdate[];
-  sessionTitle: string;
-}
+export type { ExtractionIndexEntry, ExtractionResponse, ExtractionUpdate };
 
 export interface IngestProgress {
   step: "reading" | "extracting" | "updating" | "done" | "error";
@@ -49,10 +34,13 @@ interface StreamChatInput {
 }
 
 interface ExtractInput {
-  accessToken: string;
+  accessToken: string | null;
   transcript: Array<Pick<MessageRecord, "role" | "content">>;
   sessionId?: string;
   index: ExtractionIndexEntry[];
+  relatedNotes?: ExtractionContextNote[];
+  mode?: ExtractionMode;
+  preferredLocalModelId?: string | null;
 }
 
 interface IngestExtractInput extends ExtractInput {
@@ -67,6 +55,33 @@ interface EdgeFunctionErrorPayload {
   code?: string;
   error?: string;
   message?: string;
+}
+
+export function getOptionalExtractionCloudConfig(
+  accessToken: string | null
+): ExtractionCloudConfig | undefined {
+  const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
+
+  if (!publishableKey || !supabaseUrl) {
+    return undefined;
+  }
+
+  return {
+    functionsBaseUrl: `${supabaseUrl}/functions/v1`,
+    publishableKey,
+    accessToken
+  };
+}
+
+function getExtractionCloudConfig(accessToken: string | null): ExtractionCloudConfig {
+  const config = getOptionalExtractionCloudConfig(accessToken);
+
+  if (!config) {
+    throw new Error("Cloud features are not configured for this build yet.");
+  }
+
+  return config;
 }
 
 function getFunctionsBaseUrl(): string {
@@ -254,68 +269,48 @@ export async function streamChat(input: StreamChatInput): Promise<void> {
 }
 
 export async function extractTranscript(input: ExtractInput): Promise<ExtractionResponse> {
-  const accessToken = await resolveAccessToken(input.accessToken);
-  const response = await fetch(`${getFunctionsBaseUrl()}/extract`, {
-    method: "POST",
-    headers: getFunctionHeaders(accessToken),
-    body: JSON.stringify({
-      transcript: input.transcript,
-      sessionId: input.sessionId,
-      index: input.index
-    })
+  const accessToken = await resolveAccessToken(input.accessToken ?? "");
+  const result = await window.trellis.extraction.run({
+    mode: input.mode,
+    cloud: getOptionalExtractionCloudConfig(accessToken),
+    transcript: input.transcript,
+    sessionId: input.sessionId,
+    index: input.index,
+    relatedNotes: input.relatedNotes ?? [],
+    preferredLocalModelId: input.preferredLocalModelId ?? undefined
   });
 
-  if (!response.ok) {
-    throw await readErrorResponse(response, "Extraction request failed.");
-  }
-
-  return (await response.json()) as ExtractionResponse;
+  return result.response;
 }
 
 export async function extractIngestedSource(
   input: IngestExtractInput
 ): Promise<ExtractionResponse> {
-  const accessToken = await resolveAccessToken(input.accessToken);
-  const response = await fetch(`${getFunctionsBaseUrl()}/extract`, {
-    method: "POST",
-    headers: getFunctionHeaders(accessToken),
-    body: JSON.stringify({
-      stream: true,
-      index: input.index,
-      sourceType: input.sourceType,
-      sourceTitle: input.sourceTitle,
-      sourcePath: input.sourcePath,
-      sourceContent: input.sourceContent,
-      transcript: [
-        {
-          role: "user",
-          content: input.sourceContent
-        }
-      ]
-    })
+  const accessToken = await resolveAccessToken(input.accessToken ?? "");
+  input.onProgress({
+    step: "extracting",
+    message: "Shaping concepts…"
   });
-
-  if (!response.ok) {
-    throw await readErrorResponse(response, "Ingest extraction failed.");
-  }
-
-  let finalPayload: ExtractionResponse | null = null;
-
-  await readSseStream(response, {
-    onEvent: (type, payload) => {
-      if (type === "status") {
-        input.onProgress(JSON.parse(payload) as IngestProgress);
-      } else if (type === "done") {
-        finalPayload = JSON.parse(payload) as ExtractionResponse;
-      } else if (type === "error") {
-        throw new Error(payload);
+  const result = await window.trellis.extraction.run({
+    mode: input.mode,
+    cloud: getOptionalExtractionCloudConfig(accessToken),
+    index: input.index,
+    sourceType: input.sourceType,
+    sourceTitle: input.sourceTitle,
+    sourcePath: input.sourcePath,
+    sourceContent: input.sourceContent,
+    relatedNotes: input.relatedNotes ?? [],
+    preferredLocalModelId: input.preferredLocalModelId ?? undefined,
+    transcript: [
+      {
+        role: "user",
+        content: input.sourceContent
       }
-    }
+    ]
   });
-
-  if (!finalPayload) {
-    throw new Error("Ingest extraction completed without a final payload.");
-  }
-
-  return finalPayload;
+  input.onProgress({
+    step: "updating",
+    message: `Updating ${result.response.updates.length} notes…`
+  });
+  return result.response;
 }

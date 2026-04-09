@@ -3,6 +3,12 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import electron from "vite-plugin-electron/simple";
 
+const projectAliases = {
+  "@": path.resolve(__dirname, "src"),
+  "@electron": path.resolve(__dirname, "electron"),
+  "@shared": path.resolve(__dirname, "shared")
+};
+
 export default defineConfig({
   plugins: [
     react(),
@@ -10,10 +16,19 @@ export default defineConfig({
       main: {
         entry: "electron/main.ts",
         vite: {
+          resolve: {
+            alias: projectAliases
+          },
           build: {
             outDir: "dist-electron",
             rollupOptions: {
-              external: ["jsdom", "canvas", "@mozilla/readability", "@electric-sql/pglite"],
+              external: [
+                "jsdom",
+                "canvas",
+                "@mozilla/readability",
+                "@electric-sql/pglite",
+                "node-llama-cpp"
+              ],
               output: {
                 entryFileNames: "main.js"
               }
@@ -24,6 +39,9 @@ export default defineConfig({
       preload: {
         input: "electron/preload.ts",
         vite: {
+          resolve: {
+            alias: projectAliases
+          },
           build: {
             outDir: "dist-electron",
             rollupOptions: {
@@ -37,10 +55,7 @@ export default defineConfig({
     })
   ],
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "src"),
-      "@electron": path.resolve(__dirname, "electron")
-    }
+    alias: projectAliases
   },
   build: {
     outDir: "dist",

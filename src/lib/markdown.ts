@@ -2,6 +2,38 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { slugifyNoteTitle } from "./noteReferences";
 
+let wikiSpanColorHookInstalled = false;
+
+function ensureWikiSpanColorSanitizeHook(): void {
+  if (wikiSpanColorHookInstalled) {
+    return;
+  }
+
+  wikiSpanColorHookInstalled = true;
+
+  DOMPurify.addHook("uponSanitizeAttribute", (node, data) => {
+    if (data.attrName !== "style") {
+      return;
+    }
+
+    if (node.nodeName !== "SPAN") {
+      data.keepAttr = false;
+      return;
+    }
+
+    const value = (data.attrValue ?? "").trim().toLowerCase();
+
+    if (!value.startsWith("color:")) {
+      data.keepAttr = false;
+      return;
+    }
+
+    if (value.includes("url(") || value.includes("expression")) {
+      data.keepAttr = false;
+    }
+  });
+}
+
 export interface MarkdownRenderResult {
   html: string;
   links: string[];
@@ -30,16 +62,18 @@ export function renderWikiMarkdown(
     }
 
     links.push(slug);
-    const ghostClass = existingSlugs.has(slug)
-      ? "text-trellis-accent hover:text-[var(--trellis-accent-hover)]"
-      : "text-trellis-text-muted hover:text-trellis-accent";
+    const linkClass = existingSlugs.has(slug)
+      ? "trellis-link trellis-link-internal"
+      : "trellis-link trellis-link-internal trellis-link-missing";
 
-    return `<a href="#/wiki?note=${slug}" class="${ghostClass} transition">${escapeHtml(title)}</a>`;
+    return `<a href="#/wiki?note=${slug}" class="${linkClass}">${escapeHtml(title)}</a>`;
   });
   const html = marked.parse(preprocessed, {
     breaks: true,
     gfm: true
   }) as string;
+
+  ensureWikiSpanColorSanitizeHook();
 
   return {
     html: DOMPurify.sanitize(html),

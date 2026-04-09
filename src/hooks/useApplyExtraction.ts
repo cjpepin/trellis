@@ -1,8 +1,10 @@
 import { useCallback } from "react";
+import { prepareExtractionWrite } from "@electron/lib/extraction/guardrails";
+import { buildExtractionIndex } from "@/lib/extractionIndex";
 import { useChatStore } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
 import { useWikiStore } from "@/store/wikiStore";
-import type { ExtractionResponse } from "@/lib/api";
+import type { ExtractionResponse, ExtractionUpdate } from "@/lib/api";
 
 interface ApplyOptions {
   sessionId?: string;
@@ -10,62 +12,73 @@ interface ApplyOptions {
   vaultId?: string;
 }
 
-function slugFromFileName(fileName: string): string {
-  return fileName.replace(/\.md$/i, "");
-}
-
-function mergeTags(existingTags: string[], nextTags: string[]): string[] {
-  return [...new Set([...existingTags, ...nextTags])];
+function isWritableUpdate(
+  update: ExtractionUpdate
+): update is ExtractionUpdate & {
+  operation: "create" | "append" | "rewrite";
+} {
+  return update.operation !== "noop";
 }
 
 export function useApplyExtraction() {
   const replaceIndex = useWikiStore((state) => state.replaceIndex);
+  const graph = useWikiStore((state) => state.graph);
   const upsertSession = useChatStore((state) => state.upsertSession);
   const markExtracted = useChatStore((state) => state.markExtracted);
   const pushToast = useUiStore((state) => state.pushToast);
 
   return useCallback(
     async (response: ExtractionResponse, options: ApplyOptions = {}) => {
-      for (const update of response.updates) {
-        const slug = slugFromFileName(update.file);
+      const appliedUpdates = response.updates.filter(isWritableUpdate);
+      const appliedOps: Array<{ file: string; action: "create" | "append" | "rewrite" }> = [];
+      const extractionIndex = buildExtractionIndex(graph);
+      let appliedUpdateCount = 0;
+
+      for (const update of appliedUpdates) {
         let existingNote: Awaited<ReturnType<typeof window.trellis.vault.readNote>> | null = null;
 
         try {
-          existingNote = await window.trellis.vault.readNote(slug, options.vaultId);
+          existingNote = await window.trellis.vault.readNote(update.targetSlug, options.vaultId);
         } catch {
           existingNote = null;
         }
 
-        const nextContent =
-          update.action === "append" && existingNote
-            ? [existingNote.content.trim(), update.content.trim()].filter(Boolean).join("\n\n")
-            : update.content;
-        const nextTitle = existingNote?.title ?? update.title;
-        const nextTags = existingNote ? mergeTags(existingNote.tags, update.tags) : update.tags;
-        const nextSources = existingNote
-          ? existingNote.sources + (update.sources ?? 0)
-          : (update.sources ?? 1);
+        const preparedWrite = prepareExtractionWrite({
+          update,
+          existingNote,
+          index: extractionIndex
+        });
+
+        if (!preparedWrite) {
+          continue;
+        }
 
         await window.trellis.vault.writeNote({
           vaultId: options.vaultId,
-          slug,
-          title: nextTitle,
-          content: nextContent,
+          slug: preparedWrite.slug,
+          title: preparedWrite.title,
+          content: preparedWrite.content,
           frontmatter: {
-            tags: nextTags,
-            type: existingNote?.type ?? update.type,
-            sources: nextSources,
-            url: update.url
+            tags: preparedWrite.tags,
+            type: preparedWrite.type,
+            sources: preparedWrite.sources,
+            url: preparedWrite.url
           }
+        });
+
+        appliedUpdateCount += 1;
+        appliedOps.push({
+          file: `${preparedWrite.slug}.md`,
+          action: preparedWrite.operation
         });
       }
 
-      if (response.updates.length > 0) {
+      if (appliedUpdateCount > 0) {
         await window.trellis.db.recordWikiOps(
-          response.updates.map((update) => ({
+          appliedOps.map((operation) => ({
             sessionId: options.sessionId,
-            file: update.file,
-            action: update.action
+            file: operation.file,
+            action: operation.action
           }))
         );
       }
@@ -78,11 +91,12 @@ export function useApplyExtraction() {
         const snapshot = await window.trellis.vault.listIndex(options.vaultId);
         replaceIndex({
           notes: snapshot.notes,
+          folders: snapshot.folders,
           graph: snapshot.graph
         });
       }
 
-      if (response.updates.length > 0 && options.sessionId && response.sessionTitle) {
+      if (appliedUpdateCount > 0 && options.sessionId && response.sessionTitle) {
         const updatedSession = await window.trellis.db.updateSession({
           id: options.sessionId,
           title: response.sessionTitle
@@ -94,13 +108,13 @@ export function useApplyExtraction() {
         markExtracted(options.sessionId, options.messageCount);
       }
 
-      if (response.updates.length > 0) {
+      if (appliedUpdateCount > 0) {
         pushToast({
-          title: `✦ ${response.updates.length} notes updated`,
+          title: `✦ ${appliedUpdateCount} notes updated`,
           tone: "success"
         });
       }
     },
-    [markExtracted, pushToast, replaceIndex, upsertSession]
+    [graph, markExtracted, pushToast, replaceIndex, upsertSession]
   );
 }

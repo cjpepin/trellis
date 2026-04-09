@@ -1,7 +1,6 @@
 import {
   buildChatSystemPrompt,
   extractionPrompt,
-  sessionTitlePrompt,
   type ChatPromptReference
 } from "./prompts.ts";
 import {
@@ -9,6 +8,23 @@ import {
   getChatModelProvider,
   type ChatModel
 } from "./chat-models.ts";
+import {
+  buildExtractionCorpus,
+  buildExtractionUserMessage
+} from "../../../shared/extraction/buildPrompt.ts";
+import {
+  extractionFeatureFlagNames,
+  parseBooleanFlag
+} from "../../../shared/extraction/config.ts";
+import {
+  parseExtractionResponseJson
+} from "../../../shared/extraction/validate.ts";
+import type {
+  ExtractionContextNote,
+  ExtractionIndexEntry as ExtractionIndexNote,
+  ExtractionResponse as ExtractionPayload,
+  ExtractionUpdate
+} from "../../../shared/extraction/contracts.ts";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -17,31 +33,30 @@ export interface ChatMessage {
 
 export interface ChatReference extends ChatPromptReference {}
 
-export interface ExtractionIndexNote {
-  slug: string;
-  title: string;
-  tags: string[];
-  isPlaceholder?: boolean;
-}
-
-export interface ExtractionUpdate {
-  file: string;
-  action: "create" | "update" | "append";
-  title: string;
-  content: string;
-  tags: string[];
-  type: "concept" | "entity" | "source-summary" | "synthesis";
-  linkedTo: string[];
-  sources?: number;
-  url?: string;
-}
-
-export interface ExtractionPayload {
-  updates: ExtractionUpdate[];
-  sessionTitle: string;
-}
-
 class ChatGenerationError extends Error {}
+
+function readEnvironmentValue(name: string): string | undefined {
+  const deno = (globalThis as { Deno?: { env?: { get: (key: string) => string | undefined } } })
+    .Deno;
+
+  if (deno?.env) {
+    return deno.env.get(name);
+  }
+
+  if (typeof process !== "undefined" && process.env) {
+    const value = process.env[name];
+    return typeof value === "string" ? value : undefined;
+  }
+
+  return undefined;
+}
+
+function isHeuristicExtractionFallbackEnabled(): boolean {
+  return parseBooleanFlag(
+    readEnvironmentValue(extractionFeatureFlagNames.heuristicFallback),
+    true
+  );
+}
 
 const stopWords = new Set([
   "about",
@@ -212,6 +227,18 @@ function shouldExtractKnowledge(corpus: string, sourceType?: "pdf" | "web" | "te
   return true;
 }
 
+const CHAT_ATTACHMENT_CONTEXT_MARKER = "\n\n---\n\n## Attached context";
+
+function stripAttachmentContextForTitle(content: string): string {
+  const idx = content.indexOf(CHAT_ATTACHMENT_CONTEXT_MARKER);
+
+  if (idx === -1) {
+    return content;
+  }
+
+  return content.slice(0, idx).trim();
+}
+
 function deriveSessionTitle(messages: ChatMessage[]): string {
   const lastUserMessage = [...messages]
     .reverse()
@@ -221,10 +248,16 @@ function deriveSessionTitle(messages: ChatMessage[]): string {
     return "New Conversation";
   }
 
-  const keywords = extractKeywords(lastUserMessage);
+  const withoutAttachments = stripAttachmentContextForTitle(lastUserMessage);
+  const body =
+    withoutAttachments.length === 0 || withoutAttachments === "(No message text.)"
+      ? "Attached context"
+      : withoutAttachments;
+
+  const keywords = extractKeywords(body);
 
   if (keywords.length === 0) {
-    return titleCase(lastUserMessage.split(/\s+/).slice(0, 6).join(" "));
+    return titleCase(body.split(/\s+/).slice(0, 6).join(" "));
   }
 
   return titleCase(keywords.slice(0, 3).join(" "));
@@ -235,7 +268,7 @@ async function callOpenAi(
   references: ChatReference[],
   model: ChatModel
 ): Promise<string> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  const apiKey = readEnvironmentValue("OPENAI_API_KEY");
   const modelLabel = getChatModelLabel(model);
 
   if (!apiKey) {
@@ -295,7 +328,7 @@ async function callAnthropic(
   references: ChatReference[],
   model: ChatModel
 ): Promise<string> {
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  const apiKey = readEnvironmentValue("ANTHROPIC_API_KEY");
   const modelLabel = getChatModelLabel(model);
 
   if (!apiKey) {
@@ -433,10 +466,10 @@ async function callExtractionLLM(
   systemPrompt: string,
   userMessage: string
 ): Promise<string | null> {
-  const openAiKey = Deno.env.get("OPENAI_API_KEY");
+  const openAiKey = readEnvironmentValue("OPENAI_API_KEY");
 
   if (openAiKey) {
-    const model = Deno.env.get("OPENAI_EXTRACTION_MODEL") ?? "gpt-4o-mini";
+    const model = readEnvironmentValue("OPENAI_EXTRACTION_MODEL") ?? "gpt-4o-mini";
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -460,8 +493,8 @@ async function callExtractionLLM(
     }
   }
 
-  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-  const anthropicModel = Deno.env.get("ANTHROPIC_EXTRACTION_MODEL") ??
+  const anthropicKey = readEnvironmentValue("ANTHROPIC_API_KEY");
+  const anthropicModel = readEnvironmentValue("ANTHROPIC_EXTRACTION_MODEL") ??
     "claude-3-5-haiku-latest";
 
   if (anthropicKey && anthropicModel) {
@@ -498,71 +531,20 @@ function parseExtractionResponse(
     sourcePath?: string;
   }
 ): ExtractionPayload | null {
-  try {
-    const cleaned = raw
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim();
-
-    const parsed = JSON.parse(cleaned) as Record<string, unknown>;
-
-    if (!Array.isArray(parsed.updates)) {
-      return null;
-    }
-
-    const indexBySlug = new Map(index.map((note) => [note.slug, note]));
-    const existingNoteSlugs = new Set(
-      index.filter((note) => !note.isPlaceholder).map((note) => note.slug)
-    );
-
-    const updates: ExtractionUpdate[] = (parsed.updates as Record<string, unknown>[])
-      .filter((u) =>
-        typeof u.file === "string" &&
-        typeof u.title === "string" &&
-        typeof u.content === "string"
-      )
-      .map((u) => {
-        const file = String(u.file).endsWith(".md")
-          ? String(u.file)
-          : `${String(u.file)}.md`;
-        const slug = file.replace(/\.md$/i, "");
-        const matchedIndexNote = indexBySlug.get(slug);
-        const action = existingNoteSlugs.has(slug)
-          ? (u.action === "append" ? "append" : "update")
-          : (matchedIndexNote ? "create" : "create");
-
-        return {
-          file,
-          action,
-          title: matchedIndexNote?.title ?? String(u.title),
-          content: String(u.content),
-          tags: Array.isArray(u.tags)
-            ? (u.tags as unknown[]).filter((t): t is string => typeof t === "string").slice(0, 6)
-            : [],
-          type: (["concept", "entity", "source-summary", "synthesis"].includes(String(u.type))
-            ? String(u.type)
-            : "concept") as ExtractionUpdate["type"],
-          linkedTo: Array.isArray(u.linkedTo)
-            ? (u.linkedTo as unknown[]).filter((l): l is string => typeof l === "string")
-            : [],
-          sources: input.sourceType ? 1 : 0,
-          url: input.sourceType === "web" ? input.sourcePath : undefined
-        };
-      });
-
-    const sessionTitle = typeof parsed.sessionTitle === "string"
-      ? parsed.sessionTitle.slice(0, 60)
-      : "Untitled Session";
-
-    return { updates, sessionTitle };
-  } catch {
-    return null;
-  }
+  return parseExtractionResponseJson(raw, {
+    index,
+    sourceType:
+      input.sourceType === "pdf" || input.sourceType === "text" || input.sourceType === "web"
+        ? input.sourceType
+        : undefined,
+    sourcePath: input.sourcePath
+  }).value;
 }
 
-function extractKnowledgeHeuristic(input: {
+export function extractKnowledgeHeuristic(input: {
   transcript: ChatMessage[];
   index: ExtractionIndexNote[];
+  relatedNotes?: ExtractionContextNote[];
   sourceType?: "pdf" | "web" | "text";
   sourceTitle?: string;
   sourcePath?: string;
@@ -600,12 +582,11 @@ function extractKnowledgeHeuristic(input: {
       )
     )
     .slice(0, 4)
-    .map((note) => `${note.slug}.md`);
+    .map((note) => note.title);
   const bullets = buildBulletPoints(corpus);
   const noteType = input.sourceType ? "source-summary" : "concept";
   const summary = splitSentences(corpus).slice(0, 2).join(" ");
   const titleForLinks = linkedTo
-    .map((file) => file.replace(/\.md$/i, "").split("-").map(titleCase).join(" "))
     .map((title) => `- [[${title}]]`)
     .join("\n");
 
@@ -631,13 +612,22 @@ function extractKnowledgeHeuristic(input: {
 
   const updates: ExtractionUpdate[] = [
     {
-      file: `${slug}.md`,
-      action: existing ? "append" : "create",
-      title: primaryTitle,
-      content: primaryContent,
+      operation: existing ? "append" : "create",
+      targetSlug: slug,
+      targetTitle: primaryTitle,
+      targetType: noteType,
+      summary: summary || primaryTitle,
+      body: primaryContent,
       tags: keywords.slice(0, 4),
-      type: noteType,
-      linkedTo,
+      links: linkedTo,
+      evidence: [
+        {
+          kind: input.sourceType ? "source" : "transcript",
+          ref: input.sourcePath ?? (input.sourceType ?? "transcript"),
+          summary: summary || primaryTitle
+        }
+      ],
+      confidence: existing ? 0.66 : 0.61,
       sources: input.sourceType ? 1 : 0,
       url: input.sourceType === "web" ? input.sourcePath : undefined
     }
@@ -652,40 +642,21 @@ function extractKnowledgeHeuristic(input: {
 export async function extractKnowledge(input: {
   transcript: ChatMessage[];
   index: ExtractionIndexNote[];
+  relatedNotes?: ExtractionContextNote[];
   sourceType?: "pdf" | "web" | "text";
   sourceTitle?: string;
   sourcePath?: string;
   sourceContent?: string;
+}, options?: {
+  allowHeuristicFallback?: boolean;
 }): Promise<ExtractionPayload> {
-  const corpus =
-    input.sourceContent ||
-    input.transcript
-      .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
-      .join("\n\n");
+  const corpus = buildExtractionCorpus(input);
 
   if (!shouldExtractKnowledge(corpus, input.sourceType)) {
     return { updates: [], sessionTitle: deriveSessionTitle(input.transcript) };
   }
 
-  const indexBlock = input.index.length > 0
-    ? input.index
-        .map(
-          (n) =>
-            `- ${n.title} (${n.slug}.md) [${n.tags.join(", ")}]${n.isPlaceholder ? " {placeholder target}" : ""}`
-        )
-        .join("\n")
-    : "(empty wiki)";
-
-  const userMessage = [
-    "## Current Wiki Index",
-    indexBlock,
-    "",
-    input.sourceType ? `## Source (${input.sourceType})` : "## Conversation Transcript",
-    input.sourceTitle ? `Title: ${input.sourceTitle}` : "",
-    input.sourcePath ? `Path: ${input.sourcePath}` : "",
-    "",
-    corpus.slice(0, 12000)
-  ].filter((line) => line !== undefined).join("\n");
+  const userMessage = buildExtractionUserMessage(input);
 
   const llmResult = await callExtractionLLM(extractionPrompt, userMessage);
 
@@ -707,5 +678,11 @@ export async function extractKnowledge(input: {
     }
   }
 
-  return extractKnowledgeHeuristic(input);
+  if (options?.allowHeuristicFallback ?? isHeuristicExtractionFallbackEnabled()) {
+    return extractKnowledgeHeuristic(input);
+  }
+
+  throw new Error(
+    "Cloud extraction returned no valid structured output and heuristic fallback is disabled."
+  );
 }

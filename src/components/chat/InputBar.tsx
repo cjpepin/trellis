@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Check, ChevronsUpDown, Lock, RotateCcw, Sparkles } from "lucide-react";
+import {
+  ArrowUpRight,
+  Check,
+  ChevronsUpDown,
+  Link2,
+  Lock,
+  Paperclip,
+  RotateCcw,
+  Sparkles,
+  X
+} from "lucide-react";
 import type { ChatModel, NoteSummary } from "@electron/ipc/types";
+import type { PendingChatAttachment } from "@/lib/chatAttachments";
 import {
   canUseChatModel,
   chatModelOptions,
-  getChatModelOption,
-  getChatModelProviderLabel
+  getChatModelOption
 } from "@/lib/chatModels";
 import {
   getSlashCommandMatch,
@@ -25,6 +35,10 @@ interface Props {
   onCancel?: () => void;
   onSelectModel: (model: ChatModel) => void;
   onSubmit: (value: string) => Promise<void>;
+  pendingAttachments: PendingChatAttachment[];
+  onRemoveAttachment: (clientId: string) => void;
+  onAttachFile: () => void;
+  onAttachLink: () => void;
 }
 
 export function InputBar({
@@ -38,7 +52,11 @@ export function InputBar({
   onChange,
   onCancel,
   onSelectModel,
-  onSubmit
+  onSubmit,
+  pendingAttachments,
+  onRemoveAttachment,
+  onAttachFile,
+  onAttachLink
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
@@ -47,19 +65,6 @@ export function InputBar({
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const selectedModel = useMemo(() => getChatModelOption(model), [model]);
   const canUsePremiumModels = subscriptionTier === "pro";
-  const modelSections = useMemo(
-    () => [
-      {
-        label: "OpenAI",
-        options: chatModelOptions.filter((option) => option.provider === "openai")
-      },
-      {
-        label: "Claude",
-        options: chatModelOptions.filter((option) => option.provider === "anthropic")
-      }
-    ],
-    []
-  );
 
   useEffect(() => {
     if (!textareaRef.current) {
@@ -147,10 +152,12 @@ export function InputBar({
     });
   }
 
+  const canSend = value.trim().length > 0 || pendingAttachments.length > 0;
+
   async function handleSubmit() {
     const nextValue = value.trim();
 
-    if (!nextValue || disabled || isStreaming) {
+    if (!canSend || disabled || isStreaming) {
       return;
     }
 
@@ -158,10 +165,37 @@ export function InputBar({
   }
 
   return (
-    <div className="trellis-elevated w-full px-3 pb-2.5 pt-2">
+    <div className="trellis-chat-composer w-full px-3 pb-2.5 pt-2">
       <div className="flex items-start gap-2.5">
         <Sparkles className="mt-2 h-4 w-4 text-trellis-accent" />
         <div className="relative flex-1">
+          {pendingAttachments.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {pendingAttachments.map((attachment) => (
+                <span
+                  key={attachment.clientId}
+                  className="inline-flex max-w-[200px] items-center gap-1 rounded-full border border-trellis-border bg-trellis-surface-2 pl-2.5 pr-1 py-0.5 text-[11px] text-trellis-muted"
+                >
+                  {attachment.kind === "url" ? (
+                    <Link2 className="h-3 w-3 shrink-0 text-trellis-accent" aria-hidden />
+                  ) : (
+                    <Paperclip className="h-3 w-3 shrink-0 text-trellis-accent" aria-hidden />
+                  )}
+                  <span className="min-w-0 truncate text-trellis-text">{attachment.label}</span>
+                  <button
+                    type="button"
+                    className="rounded-full p-0.5 text-trellis-faint transition hover:bg-trellis-surface hover:text-trellis-text"
+                    aria-label={`Remove ${attachment.label}`}
+                    onClick={() => {
+                      onRemoveAttachment(attachment.clientId);
+                    }}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             value={value}
@@ -198,7 +232,7 @@ export function InputBar({
                 }
               }
 
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
                 void handleSubmit();
               }
@@ -243,10 +277,10 @@ export function InputBar({
         </div>
         <button
           type="button"
-          disabled={disabled || value.trim().length === 0 || isStreaming}
+          disabled={disabled || !canSend || isStreaming}
           className={cn(
             "mt-1.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition",
-            disabled || value.trim().length === 0 || isStreaming
+            disabled || !canSend || isStreaming
               ? "border-trellis-border text-trellis-faint"
               : "trellis-accent-surface border-trellis-accent/35 text-trellis-accent hover:border-trellis-accent"
           )}
@@ -258,9 +292,36 @@ export function InputBar({
         </button>
       </div>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2.5">
-        <div className="flex min-w-0 items-center gap-2">
-          <p className="text-xs text-trellis-muted">
-            Type <code>/</code> to link a note. Enter adds a new line. Cmd/Ctrl+Enter sends.
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              disabled={disabled || isStreaming}
+              className="rounded-full border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text disabled:opacity-40"
+              title="Attach file"
+              aria-label="Attach file"
+              onClick={() => {
+                onAttachFile();
+              }}
+            >
+              <Paperclip className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              disabled={disabled || isStreaming}
+              className="rounded-full border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text disabled:opacity-40"
+              title="Attach link"
+              aria-label="Attach link from URL"
+              onClick={() => {
+                onAttachLink();
+              }}
+            >
+              <Link2 className="h-4 w-4" />
+            </button>
+          </div>
+          <p className="min-w-0 text-xs text-trellis-muted">
+            Type <code>/</code> for notes. Attach files or links for context (linked notes can use
+            them). Enter sends · Shift+Enter newline.
           </p>
           {onCancel && (
             <button
@@ -285,98 +346,83 @@ export function InputBar({
             <button
               type="button"
               disabled={disabled}
-              className="trellis-accent-button flex items-center gap-2 rounded-full border px-3 py-1 text-left text-xs transition hover:border-trellis-accent/50 disabled:cursor-not-allowed disabled:border-trellis-border disabled:text-trellis-faint"
+              className="trellis-accent-button flex max-w-[200px] items-center gap-2 rounded-full border px-3 py-1.5 text-left text-xs transition hover:border-trellis-accent/50 disabled:cursor-not-allowed disabled:border-trellis-border disabled:text-trellis-faint"
               onClick={() => {
                 setModelMenuOpen((current) => !current);
               }}
             >
-              <div className="min-w-0">
-                <p className="truncate text-[10px] uppercase tracking-[0.18em] text-trellis-faint">
-                  {getChatModelProviderLabel(model)}
-                </p>
-                <p className="truncate text-xs text-trellis-text">{selectedModel.label}</p>
-              </div>
+              <span className="min-w-0 truncate text-trellis-text">{selectedModel.label}</span>
               <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-trellis-muted" />
             </button>
             {modelMenuOpen && (
               <div className="trellis-elevated absolute bottom-full right-0 z-30 mb-3 w-[340px] overflow-hidden">
-                <div className="border-b border-trellis-border px-4 py-3">
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint">
-                    Model
-                  </p>
-                  <p className="mt-2 text-xs leading-6 text-trellis-muted">
+                <div className="border-b border-trellis-border px-3 py-2">
+                  <p className="text-xs leading-5 text-trellis-muted">
                     {canUsePremiumModels
-                      ? "All popular OpenAI and Claude models are available on this account."
-                      : "Free tier includes the faster lower-cost models. Upgrade to unlock premium options."}
+                      ? "All models on this account."
+                      : "Trial includes fast models; upgrade for premium."}
                   </p>
                 </div>
                 <div className="max-h-[360px] overflow-y-auto px-2 py-2">
-                  {modelSections.map((section) => (
-                    <div key={section.label} className="mb-3 last:mb-0">
-                      <p className="px-2 py-1 text-[11px] uppercase tracking-[0.16em] text-trellis-faint">
-                        {section.label}
-                      </p>
-                      <div className="space-y-1">
-                        {section.options.map((option) => {
-                          const isSelected = option.id === model;
-                          const isAccessible = canUseChatModel(option.id, subscriptionTier);
+                  <div className="space-y-1">
+                    {chatModelOptions.map((option) => {
+                      const isSelected = option.id === model;
+                      const isAccessible = canUseChatModel(option.id, subscriptionTier);
 
-                          return (
-                            <button
-                              key={option.id}
-                              type="button"
-                              disabled={!isAccessible}
-                              className={cn(
-                                "flex w-full items-start gap-3 rounded-field px-3 py-2 text-left transition",
-                                isSelected
-                                  ? "trellis-selected-surface"
-                                  : "hover:bg-trellis-surface",
-                                !isAccessible && "cursor-not-allowed opacity-70"
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          disabled={!isAccessible}
+                          className={cn(
+                            "flex w-full items-start gap-3 rounded-field px-3 py-2 text-left transition",
+                            isSelected
+                              ? "trellis-selected-surface"
+                              : "hover:bg-trellis-surface",
+                            !isAccessible && "cursor-not-allowed opacity-70"
+                          )}
+                          onClick={() => {
+                            if (!isAccessible) {
+                              return;
+                            }
+
+                            onSelectModel(option.id);
+                            setModelMenuOpen(false);
+                          }}
+                        >
+                          <div className="flex min-w-0 flex-1 items-start gap-3">
+                            <div className="pt-1">
+                              {isSelected ? (
+                                <Check className="h-4 w-4 text-trellis-accent" />
+                              ) : isAccessible ? (
+                                <div className="h-2 w-2 rounded-full bg-trellis-accent/60" />
+                              ) : (
+                                <Lock className="h-4 w-4 text-trellis-faint" />
                               )}
-                              onClick={() => {
-                                if (!isAccessible) {
-                                  return;
-                                }
-
-                                onSelectModel(option.id);
-                                setModelMenuOpen(false);
-                              }}
-                            >
-                              <div className="flex min-w-0 flex-1 items-start gap-3">
-                                <div className="pt-1">
-                                  {isSelected ? (
-                                    <Check className="h-4 w-4 text-trellis-accent" />
-                                  ) : isAccessible ? (
-                                    <div className="h-2 w-2 rounded-full bg-trellis-accent/60" />
-                                  ) : (
-                                    <Lock className="h-4 w-4 text-trellis-faint" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm text-trellis-text">{option.label}</p>
+                                <span
+                                  className={cn(
+                                    "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]",
+                                    option.tier === "cheap"
+                                      ? "border-trellis-border text-trellis-muted"
+                                      : "border-trellis-accent/25 text-trellis-accent"
                                   )}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <p className="text-sm text-trellis-text">{option.label}</p>
-                                    <span
-                                      className={cn(
-                                        "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]",
-                                        option.tier === "cheap"
-                                          ? "border-trellis-border text-trellis-muted"
-                                          : "border-trellis-accent/25 text-trellis-accent"
-                                      )}
-                                    >
-                                      {option.tier === "cheap" ? "Fast" : "Premium"}
-                                    </span>
-                                  </div>
-                                  <p className="mt-1 text-xs leading-5 text-trellis-muted">
-                                    {option.summary}
-                                  </p>
-                                </div>
+                                >
+                                  {option.tier === "cheap" ? "Fast" : "Premium"}
+                                </span>
                               </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
+                              <p className="mt-1 text-xs leading-5 text-trellis-muted">
+                                {option.summary}
+                              </p>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             )}

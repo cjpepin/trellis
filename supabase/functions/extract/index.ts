@@ -1,6 +1,7 @@
 import { assertEntitlement, incrementUsage, requireUser } from "../_shared/auth.ts";
 import { corsHeaders } from "../_shared/http.ts";
 import { extractKnowledge, type ChatMessage } from "../_shared/models.ts";
+import type { ExtractionContextNote } from "../../../shared/extraction/contracts.ts";
 
 const encoder = new TextEncoder();
 
@@ -13,6 +14,7 @@ function parseRequest(body: unknown): {
   stream: boolean;
   transcript: ChatMessage[];
   index: Array<{ slug: string; title: string; tags: string[]; isPlaceholder?: boolean }>;
+  relatedNotes: ExtractionContextNote[];
   sessionId?: string;
   sourceType?: "pdf" | "web" | "text";
   sourceTitle?: string;
@@ -59,6 +61,19 @@ function parseRequest(body: unknown): {
             isPlaceholder: note.isPlaceholder === true
           }))
       : [],
+    relatedNotes: Array.isArray(input.relatedNotes)
+      ? input.relatedNotes.filter(
+          (note): note is ExtractionContextNote =>
+            typeof note === "object" &&
+            note !== null &&
+            typeof (note as Record<string, unknown>).slug === "string" &&
+            typeof (note as Record<string, unknown>).title === "string" &&
+            Array.isArray((note as Record<string, unknown>).tags) &&
+            typeof (note as Record<string, unknown>).headingPath === "string" &&
+            typeof (note as Record<string, unknown>).content === "string" &&
+            typeof (note as Record<string, unknown>).score === "number"
+        )
+      : [],
     sourceType:
       input.sourceType === "pdf" || input.sourceType === "web" || input.sourceType === "text"
         ? input.sourceType
@@ -87,6 +102,7 @@ Deno.serve(async (request) => {
     const result = await extractKnowledge({
       transcript: parsed.transcript,
       index: parsed.index,
+      relatedNotes: parsed.relatedNotes,
       sourceType: parsed.sourceType,
       sourceTitle: parsed.sourceTitle,
       sourcePath: parsed.sourcePath,

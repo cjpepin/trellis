@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { FileUp, Globe, LoaderCircle } from "lucide-react";
+import type { AppSettings, WorkspaceInfo } from "@electron/ipc/types";
 import { extractIngestedSource, type IngestProgress } from "@/lib/api";
 import { buildExtractionIndex } from "@/lib/extractionIndex";
 import { useApplyExtraction } from "@/hooks/useApplyExtraction";
@@ -7,7 +8,12 @@ import { useAuthStore } from "@/store/authStore";
 import { useUiStore } from "@/store/uiStore";
 import { useWikiStore } from "@/store/wikiStore";
 
-export function Ingest() {
+interface Props {
+  settings: AppSettings;
+  workspace: WorkspaceInfo;
+}
+
+export function Ingest({ settings, workspace }: Props) {
   const [url, setUrl] = useState("");
   const [progress, setProgress] = useState<IngestProgress[]>([]);
   const [isWorking, setIsWorking] = useState(false);
@@ -25,14 +31,6 @@ export function Ingest() {
     sourcePath: string;
     sourceType: "pdf" | "web" | "text";
   }): Promise<void> {
-    if (!accessToken) {
-      pushToast({
-        title: "Sign in before importing sources.",
-        tone: "warning"
-      });
-      return;
-    }
-
     setProgress([
       {
         step: "reading",
@@ -42,10 +40,17 @@ export function Ingest() {
     setIsWorking(true);
 
     try {
+      const relatedNotes = await window.trellis.retrieval.searchNotes({
+        query: draft.content,
+        limit: 6
+      });
       const response = await extractIngestedSource({
         accessToken,
         index: extractionIndex,
         transcript: [],
+        relatedNotes,
+        mode: settings.extraction.mode,
+        preferredLocalModelId: settings.extraction.preferredLocalModelId,
         sourceType: draft.sourceType,
         sourceTitle: draft.title,
         sourcePath: draft.sourcePath,
@@ -130,6 +135,14 @@ export function Ingest() {
           </p>
         </div>
 
+        {workspace.localOnly && (
+          <div className="trellis-accent-surface rounded-panel border border-trellis-accent/20 px-5 py-4 text-sm text-trellis-text">
+            Preview workspace keeps ingest local. If your on-device note processor is not ready,
+            install the model in Settings or switch to your personal workspace for cloud-backed
+            ingest.
+          </div>
+        )}
+
         <div className="grid min-h-0 flex-1 grid-cols-2 gap-6">
           <div
             className={`trellis-panel flex flex-col justify-between px-6 py-6 ${
@@ -190,7 +203,7 @@ export function Ingest() {
               </div>
               <p className="mt-3 text-sm leading-7 text-trellis-muted">
                 Paste an article URL. Trellis fetches and distills the readable text before
-                extraction.
+                turning it into notes.
               </p>
             </div>
             <div className="mt-8 flex gap-3">
@@ -240,7 +253,7 @@ export function Ingest() {
             </div>
           ) : (
             <p className="text-sm leading-7 text-trellis-muted">
-              Reading, extracting concepts, updating notes, and final confirmation all
+              Reading the source, shaping concepts, updating notes, and final confirmation all
               show up here as the source moves through the pipeline.
             </p>
           )}

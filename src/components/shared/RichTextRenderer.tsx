@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import Link from "@tiptap/extension-link";
 import StarterKit from "@tiptap/starter-kit";
 import { EditorContent, useEditor } from "@tiptap/react";
+import { WikiAwareLink } from "@/components/wiki/wikiAwareLink";
 import { renderWikiMarkdown } from "@/lib/markdown";
 import { htmlToMarkdown } from "@/lib/htmlToMarkdown";
 import { cn } from "@/lib/utils";
@@ -11,7 +11,7 @@ interface Props {
   existingSlugs: string[];
   className?: string;
   editable?: boolean;
-  onOpenNote?: (slug: string) => void;
+  onOpenNote?: (slug: string, options?: { linkText?: string }) => void;
   onSave?: (markdown: string) => void;
 }
 
@@ -56,13 +56,13 @@ export function RichTextRenderer({
       StarterKit.configure({
         heading: {
           levels: [1, 2, 3]
-        }
+        },
+        link: false
       }),
-      Link.configure({
+      WikiAwareLink.configure({
         openOnClick: false,
-        HTMLAttributes: {
-          class: "text-trellis-accent transition hover:text-[var(--trellis-accent-hover)]"
-        }
+        autolink: true,
+        HTMLAttributes: {}
       })
     ],
     content: rendered.html,
@@ -136,11 +136,18 @@ export function RichTextRenderer({
             return;
           }
 
-          onOpenNote(decodeURIComponent(href.replace("#/wiki?note=", "")));
+          const slug = decodeURIComponent(href.replace("#/wiki?note=", ""));
+          const linkText = link.textContent?.trim();
+          onOpenNote(slug, { linkText });
           return;
         }
 
         if (href?.startsWith("http")) {
+          if (!(event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            return;
+          }
+
           event.preventDefault();
           void window.trellis.shell.openExternal(href);
         }

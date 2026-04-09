@@ -13,6 +13,7 @@ type SimNode = d3.SimulationNodeDatum & {
   slug: string;
   title: string;
   size: number;
+  cluster?: string;
   isPlaceholder?: boolean;
 };
 
@@ -75,6 +76,32 @@ export function ForceGraph({ graph, onSelectNode, onHoverNode }: Props) {
 
     const nodes: SimNode[] = graph.nodes.map((node) => ({ ...node }));
     const links: SimLink[] = graph.edges.map((edge) => ({ ...edge }));
+    const clusterKeys = [...new Set(nodes.map((node) => node.cluster || "untagged"))];
+    const clusterCenters = new Map<string, { x: number; y: number }>();
+    const ringRadius = Math.min(width, height) * 0.6;
+
+    clusterKeys.forEach((clusterKey, index) => {
+      const angle = (Math.PI * 2 * index) / Math.max(clusterKeys.length, 1);
+      clusterCenters.set(clusterKey, {
+        x: width / 2 + Math.cos(angle) * ringRadius,
+        y: height / 2 + Math.sin(angle) * ringRadius
+      });
+    });
+
+    nodes.forEach((node, index) => {
+      const center = clusterCenters.get(node.cluster || "untagged") ?? {
+        x: width / 2,
+        y: height / 2
+      };
+
+      if (typeof node.x !== "number" || typeof node.y !== "number") {
+        const spread = 60 + (index % 7) * 20;
+        const angle = ((index % 17) / 17) * Math.PI * 2;
+        node.x = center.x + Math.cos(angle) * spread;
+        node.y = center.y + Math.sin(angle) * spread;
+      }
+    });
+
     const container = svg.append("g");
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
@@ -132,8 +159,8 @@ export function ForceGraph({ graph, onSelectNode, onHoverNode }: Props) {
             if (!event.active) {
               simulation.alphaTarget(0);
             }
-            item.fx = null;
-            item.fy = null;
+            item.fx = event.x;
+            item.fy = event.y;
           })
       );
 
@@ -152,15 +179,38 @@ export function ForceGraph({ graph, onSelectNode, onHoverNode }: Props) {
     simulation = d3
       .forceSimulation(nodes)
       .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("charge", d3.forceManyBody().strength(-180))
+      .force("charge", d3.forceManyBody().strength(-165))
       .force(
         "link",
         d3
           .forceLink<SimNode, SimLink>(links)
           .id((item) => item.id)
-          .distance(90)
+          .distance((item) => {
+            const source = item.source as SimNode;
+            const target = item.target as SimNode;
+            return source.cluster && source.cluster === target.cluster ? 118 : 188;
+          })
+          .strength((item) => {
+            const source = item.source as SimNode;
+            const target = item.target as SimNode;
+            return source.cluster && source.cluster === target.cluster ? 0.2 : 0.08;
+          })
       )
-      .force("collision", d3.forceCollide<SimNode>().radius((item) => item.size + 12))
+      .force(
+        "cluster-x",
+        d3
+          .forceX<SimNode>((item) => clusterCenters.get(item.cluster || "untagged")?.x ?? width / 2)
+          .strength((item) => (item.fx == null ? 0.11 : 0))
+      )
+      .force(
+        "cluster-y",
+        d3
+          .forceY<SimNode>((item) => clusterCenters.get(item.cluster || "untagged")?.y ?? height / 2)
+          .strength((item) => (item.fy == null ? 0.12 : 0))
+      )
+      .force("collision", d3.forceCollide<SimNode>().radius((item) => item.size + 26))
+      .alphaDecay(0.05)
+      .velocityDecay(0.32)
       .on("tick", () => {
         link
           .attr("x1", (item) => (item.source as SimNode).x ?? 0)
@@ -199,6 +249,12 @@ export function ForceGraph({ graph, onSelectNode, onHoverNode }: Props) {
           .attr("stroke-width", 1.5);
 
         onHoverNodeRef.current(null);
+      })
+      .on("dblclick", (event: MouseEvent, item: SimNode) => {
+        event.stopPropagation();
+        item.fx = null;
+        item.fy = null;
+        simulation.alpha(0.2).restart();
       })
       .on("click", (_event: MouseEvent, item: SimNode) => {
         if (didDrag) {

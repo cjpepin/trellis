@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ForceGraph } from "@/components/graph/ForceGraph";
 import { NodeTooltip } from "@/components/graph/NodeTooltip";
 import { useGraph } from "@/hooks/useGraph";
+import { getActiveWorkspaceId } from "@/lib/workspace";
 import { useAuthStore } from "@/store/authStore";
 import { useUiStore } from "@/store/uiStore";
 import { useWikiStore } from "@/store/wikiStore";
@@ -38,7 +39,8 @@ export function Graph() {
   const setNote = useWikiStore((state) => state.setNote);
   const replaceIndex = useWikiStore((state) => state.replaceIndex);
   const pushToast = useUiStore((state) => state.pushToast);
-  const isPreviewMode = subscriptionTier !== "pro";
+  const isPreviewMode =
+    getActiveWorkspaceId() !== "preview" && subscriptionTier !== "pro";
   const visibleGraph = useMemo(
     () => (isPreviewMode ? buildPreviewGraph(graph) : graph),
     [graph, isPreviewMode]
@@ -60,6 +62,7 @@ export function Graph() {
       const snapshot = await window.trellis.vault.listIndex();
       replaceIndex({
         notes: snapshot.notes,
+        folders: snapshot.folders,
         graph: snapshot.graph
       });
       pushToast({

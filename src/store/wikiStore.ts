@@ -1,16 +1,21 @@
 import { create } from "zustand";
-import type { GraphData, NoteSummary, WikiNote } from "@electron/ipc/types";
+import type { FolderSummary, GraphData, NoteSummary, WikiNote } from "@electron/ipc/types";
 
 interface WikiState {
   notes: NoteSummary[];
+  folders: FolderSummary[];
   graph: GraphData;
   noteCache: Record<string, WikiNote>;
   activeNoteSlug: string | null;
   isHydrated: boolean;
-  hydrate: (payload: { notes: NoteSummary[]; graph: GraphData }) => void;
+  hydrate: (payload: { notes: NoteSummary[]; folders: FolderSummary[]; graph: GraphData }) => void;
   setActiveNote: (slug: string | null) => void;
   setNote: (note: WikiNote) => void;
-  replaceIndex: (payload: { notes: NoteSummary[]; graph: GraphData }) => void;
+  replaceIndex: (payload: {
+    notes: NoteSummary[];
+    folders: FolderSummary[];
+    graph: GraphData;
+  }) => void;
 }
 
 function upsertNoteSummary(notes: NoteSummary[], note: WikiNote): NoteSummary[] {
@@ -21,7 +26,9 @@ function upsertNoteSummary(notes: NoteSummary[], note: WikiNote): NoteSummary[] 
     tags: note.tags,
     type: note.type,
     excerpt: note.excerpt,
-    inboundCount: note.inboundCount
+    inboundCount: note.inboundCount,
+    folderPath: note.folderPath,
+    relativePath: note.relativePath
   };
   const rest = notes.filter((item) => item.slug !== note.slug);
   return [summary, ...rest].sort((left, right) => right.updated.localeCompare(left.updated));
@@ -29,6 +36,7 @@ function upsertNoteSummary(notes: NoteSummary[], note: WikiNote): NoteSummary[] 
 
 export const useWikiStore = create<WikiState>((set) => ({
   notes: [],
+  folders: [],
   graph: {
     nodes: [],
     edges: []
@@ -36,10 +44,12 @@ export const useWikiStore = create<WikiState>((set) => ({
   noteCache: {},
   activeNoteSlug: null,
   isHydrated: false,
-  hydrate: ({ notes, graph }) =>
+  hydrate: ({ notes, folders, graph }) =>
     set({
       notes,
+      folders,
       graph,
+      noteCache: {},
       activeNoteSlug: notes[0]?.slug ?? null,
       isHydrated: true
     }),
@@ -52,15 +62,36 @@ export const useWikiStore = create<WikiState>((set) => ({
       },
       notes: upsertNoteSummary(state.notes, note)
     })),
-  replaceIndex: ({ notes, graph }) =>
+  replaceIndex: ({ notes, folders, graph }) =>
     set((state) => ({
       notes,
+      folders,
       graph,
       noteCache: Object.fromEntries(
-        Object.entries(state.noteCache).filter(([slug]) =>
-          notes.some((note) => note.slug === slug)
-        )
+        Object.entries(state.noteCache)
+          .filter(([slug]) => notes.some((note) => note.slug === slug))
+          .map(([slug, cachedNote]) => {
+            const summary = notes.find((note) => note.slug === slug);
+
+            if (!summary) {
+              return [slug, cachedNote];
+            }
+
+            return [
+              slug,
+              {
+                ...cachedNote,
+                title: summary.title,
+                updated: summary.updated,
+                tags: summary.tags,
+                type: summary.type,
+                excerpt: summary.excerpt,
+                inboundCount: summary.inboundCount,
+                folderPath: summary.folderPath,
+                relativePath: summary.relativePath
+              }
+            ];
+          })
       )
     }))
 }));
-

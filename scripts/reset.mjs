@@ -14,6 +14,17 @@ function readAppName() {
   return name;
 }
 
+function parseWorkspaceArg(argv) {
+  const flag = argv.find((arg) => arg.startsWith("--workspace="));
+  const value = flag ? flag.split("=")[1] : "all";
+
+  if (!["all", "personal", "preview"].includes(value)) {
+    throw new Error(`Unknown workspace ${value}. Use --workspace=all|personal|preview.`);
+  }
+
+  return value;
+}
+
 /** Mirrors Electron `app.getPath("userData")` for unpackaged apps using `package.json` `name`. */
 function getUserDataDir(appName) {
   const home = os.homedir();
@@ -94,9 +105,9 @@ function removePglite(userDataDir) {
 
 const appName = readAppName();
 const userDataDir = getUserDataDir(appName);
-const settingsPath = path.join(userDataDir, "settings.json");
+const workspaceSelection = parseWorkspaceArg(process.argv.slice(2));
 
-console.log(`Trellis reset (app data: ${userDataDir})\n`);
+console.log(`Trellis reset (app data: ${userDataDir}, workspace: ${workspaceSelection})\n`);
 
 const extraVaults = process.env.TRELLIS_EXTRA_VAULT_PATHS
   ? process.env.TRELLIS_EXTRA_VAULT_PATHS.split(path.delimiter)
@@ -104,7 +115,20 @@ const extraVaults = process.env.TRELLIS_EXTRA_VAULT_PATHS
       .filter(Boolean)
   : [];
 
-const vaultPaths = [...new Set([...readVaultPaths(settingsPath), ...extraVaults])];
+const workspaceIds =
+  workspaceSelection === "all" ? ["personal", "preview"] : [workspaceSelection];
+const settingsPaths = [
+  path.join(userDataDir, "settings.json"),
+  ...workspaceIds.map((workspaceId) =>
+    path.join(userDataDir, "workspaces", workspaceId, "settings.json")
+  )
+];
+const vaultPaths = [
+  ...new Set([
+    ...settingsPaths.flatMap((settingsPath) => readVaultPaths(settingsPath)),
+    ...extraVaults
+  ])
+];
 
 if (vaultPaths.length === 0) {
   console.log("No vault paths found (missing or empty settings.json). Skipping wiki/raw.");
@@ -129,12 +153,19 @@ if (vaultPaths.length === 0) {
   console.log("");
 }
 
-const { pglitePath, removed } = removePglite(userDataDir);
+const databasePaths =
+  workspaceSelection === "all"
+    ? [path.join(userDataDir, "pglite-data"), ...workspaceIds.map((workspaceId) => path.join(userDataDir, "workspaces", workspaceId, "pglite-data"))]
+    : [path.join(userDataDir, "workspaces", workspaceSelection, "pglite-data")];
 
-if (removed) {
-  console.log(`Removed PGlite data: ${pglitePath}`);
-} else {
-  console.log(`PGlite data not present (ok): ${pglitePath}`);
+for (const databasePath of databasePaths) {
+  const { pglitePath, removed } = removePglite(path.dirname(databasePath));
+
+  if (removed) {
+    console.log(`Removed PGlite data: ${pglitePath}`);
+  } else {
+    console.log(`PGlite data not present (ok): ${pglitePath}`);
+  }
 }
 
 console.log("\nQuit Trellis before running this script if the app is open. Next launch recreates PGlite and empty wiki/raw folders as needed.");

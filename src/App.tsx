@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import type { Session } from "@supabase/supabase-js";
-import type { AppSettings } from "@electron/ipc/types";
+import type {
+  AppBootstrap,
+  AppFeatureFlags,
+  AppSettings,
+  AppWorkspaceId,
+  WorkspaceInfo
+} from "@electron/ipc/types";
+import { WorkspaceChooser } from "@/components/setup/WorkspaceChooser";
+import { LocalNoteProcessorFirstRun } from "@/components/setup/LocalNoteProcessorFirstRun";
 import { CommandPalette } from "@/components/shared/CommandPalette";
 import { RouteErrorBoundary } from "@/components/shared/RouteErrorBoundary";
 import { Sidebar } from "@/components/shared/Sidebar";
@@ -9,6 +17,11 @@ import { Toast } from "@/components/shared/Toast";
 import { getProfileSnapshot, hydrateStoredSession, persistSession } from "@/lib/auth";
 import { applyTheme } from "@/lib/settings";
 import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
+import {
+  readWorkspaceLocalStorage,
+  setActiveWorkspaceId,
+  writeWorkspaceLocalStorage
+} from "@/lib/workspace";
 import { Chat } from "@/routes/Chat";
 import { Graph } from "@/routes/Graph";
 import { Ingest } from "@/routes/Ingest";
@@ -19,8 +32,8 @@ import { useChatStore } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
 import { useWikiStore } from "@/store/wikiStore";
 
-const SIDEBAR_STORAGE_KEY = "trellis:sidebar-width";
-const SIDEBAR_COLLAPSED_STORAGE_KEY = "trellis:sidebar-collapsed";
+const SIDEBAR_STORAGE_KEY = "sidebar-width";
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "sidebar-collapsed";
 const DEFAULT_SIDEBAR_WIDTH = 248;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 360;
@@ -31,45 +44,54 @@ function clampSidebarWidth(value: number): number {
 }
 
 function getStoredSidebarWidth(): number {
-  if (typeof window === "undefined") {
-    return DEFAULT_SIDEBAR_WIDTH;
-  }
-
-  const rawValue = window.localStorage.getItem(SIDEBAR_STORAGE_KEY);
+  const rawValue = readWorkspaceLocalStorage(SIDEBAR_STORAGE_KEY);
   const parsed = Number(rawValue);
 
   return Number.isFinite(parsed) ? clampSidebarWidth(parsed) : DEFAULT_SIDEBAR_WIDTH;
 }
 
 function getStoredSidebarCollapsed(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
+  return readWorkspaceLocalStorage(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
 }
 
 function AppFrame({
   settings,
-  onUpdateSettings
+  features,
+  workspace,
+  workspaces,
+  onUpdateSettings,
+  onSwitchWorkspace,
+  onResetPreview
 }: {
   settings: AppSettings;
+  features: AppFeatureFlags;
+  workspace: WorkspaceInfo;
+  workspaces: WorkspaceInfo[];
   onUpdateSettings: (settings: AppSettings) => Promise<void>;
+  onSwitchWorkspace: (workspaceId: AppWorkspaceId) => Promise<void>;
+  onResetPreview: () => Promise<void>;
 }) {
   const [sidebarWidth, setSidebarWidth] = useState(getStoredSidebarWidth);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(getStoredSidebarCollapsed);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
 
   useEffect(() => {
-    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(sidebarWidth));
-  }, [sidebarWidth]);
+    setActiveWorkspaceId(workspace.id);
+    setSidebarWidth(getStoredSidebarWidth());
+    setSidebarCollapsed(getStoredSidebarCollapsed());
+  }, [workspace.id]);
 
   useEffect(() => {
-    window.localStorage.setItem(
+    writeWorkspaceLocalStorage(SIDEBAR_STORAGE_KEY, String(sidebarWidth), workspace.id);
+  }, [sidebarWidth, workspace.id]);
+
+  useEffect(() => {
+    writeWorkspaceLocalStorage(
       SIDEBAR_COLLAPSED_STORAGE_KEY,
-      sidebarCollapsed ? "true" : "false"
+      sidebarCollapsed ? "true" : "false",
+      workspace.id
     );
-  }, [sidebarCollapsed]);
+  }, [sidebarCollapsed, workspace.id]);
 
   useEffect(() => {
     if (!isResizingSidebar) {
@@ -117,7 +139,7 @@ function AppFrame({
           type="button"
           aria-label="Resize sidebar"
           title="Drag to resize sidebar"
-          className="group absolute inset-y-0 -right-2 z-20 hidden w-4 cursor-col-resize items-center justify-center bg-transparent md:flex"
+          className="app-region-no-drag group absolute inset-y-0 -right-2 z-20 hidden w-4 cursor-col-resize items-center justify-center bg-transparent md:flex"
           onMouseDown={(event) => {
             if (event.button !== 0) {
               return;
@@ -134,17 +156,19 @@ function AppFrame({
           <span className="h-20 w-px rounded-full bg-trellis-border transition group-hover:bg-trellis-accent/45" />
         </button>
       </div>
-      <main className="min-w-0 flex-1">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <Routes>
-          <Route
-            path="/"
-            element={<Navigate to="/chat" replace />}
-          />
+          <Route path="/" element={<Navigate to="/chat" replace />} />
           <Route
             path="/chat"
             element={
               <RouteErrorBoundary>
-                <Chat settings={settings} onUpdateSettings={onUpdateSettings} />
+                <Chat
+                  settings={settings}
+                  workspace={workspace}
+                  onUpdateSettings={onUpdateSettings}
+                  onSwitchWorkspace={onSwitchWorkspace}
+                />
               </RouteErrorBoundary>
             }
           />
@@ -152,7 +176,7 @@ function AppFrame({
             path="/wiki"
             element={
               <RouteErrorBoundary>
-                <Wiki />
+                <Wiki workspaceId={workspace.id} />
               </RouteErrorBoundary>
             }
           />
@@ -168,7 +192,7 @@ function AppFrame({
             path="/ingest"
             element={
               <RouteErrorBoundary>
-                <Ingest />
+                <Ingest settings={settings} workspace={workspace} />
               </RouteErrorBoundary>
             }
           />
@@ -176,13 +200,26 @@ function AppFrame({
             path="/settings"
             element={
               <RouteErrorBoundary>
-                <Settings settings={settings} onUpdateSettings={onUpdateSettings} />
+                <Settings
+                  settings={settings}
+                  features={features}
+                  workspace={workspace}
+                  workspaces={workspaces}
+                  onUpdateSettings={onUpdateSettings}
+                  onSwitchWorkspace={onSwitchWorkspace}
+                  onResetPreview={onResetPreview}
+                />
               </RouteErrorBoundary>
             }
           />
         </Routes>
       </main>
-      <CommandPalette />
+      <CommandPalette
+        workspace={workspace}
+        workspaces={workspaces}
+        onSwitchWorkspace={onSwitchWorkspace}
+        onResetPreview={onResetPreview}
+      />
       <Toast />
     </div>
   );
@@ -191,8 +228,14 @@ function AppFrame({
 export default function App() {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [features, setFeatures] = useState<AppFeatureFlags | null>(null);
+  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
+  const [needsWorkspaceChoice, setNeedsWorkspaceChoice] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   const rememberSessionRef = useRef(true);
+  const workspaceRef = useRef<WorkspaceInfo | null>(null);
+  const hydrateWorkspace = useChatStore((state) => state.hydrateWorkspace);
   const hydrateSessions = useChatStore((state) => state.hydrateSessions);
   const hydrateWiki = useWikiStore((state) => state.hydrate);
   const setConfigured = useAuthStore((state) => state.setConfigured);
@@ -201,34 +244,47 @@ export default function App() {
   const setAnonymous = useAuthStore((state) => state.setAnonymous);
   const setError = useAuthStore((state) => state.setError);
   const setCommandPaletteOpen = useUiStore((state) => state.setCommandPaletteOpen);
+  const pushToast = useUiStore((state) => state.pushToast);
 
   const loadVaultSnapshot = useCallback(async (vaultId?: string): Promise<void> => {
     const snapshot = await window.trellis.vault.listIndex(vaultId);
     hydrateWiki({
       notes: snapshot.notes,
+      folders: snapshot.folders,
       graph: snapshot.graph
     });
   }, [hydrateWiki]);
 
-  const handleSettingsUpdate = useCallback(async (nextSettings: AppSettings): Promise<void> => {
-    const previousSettings = settings;
-    const savedSettings = await window.trellis.app.updateSettings(nextSettings);
-    rememberSessionRef.current = savedSettings.rememberSession;
-    setSettings(savedSettings);
-    applyTheme(savedSettings.theme);
-    if (savedSettings.rememberSession !== previousSettings?.rememberSession && !savedSettings.rememberSession) {
-      await persistSession(null);
-      if (hasSupabaseConfig()) {
-        await getSupabase().auth.signOut({ scope: "local" });
+  const applyBootstrapPayload = useCallback(
+    (payload: AppBootstrap) => {
+      setActiveWorkspaceId(payload.workspace.id);
+      setSettings(payload.settings);
+      setFeatures(payload.features);
+      setWorkspace(payload.workspace);
+      workspaceRef.current = payload.workspace;
+      setWorkspaces(payload.workspaces);
+      setNeedsWorkspaceChoice(payload.needsWorkspaceChoice);
+      rememberSessionRef.current = payload.settings.rememberSession;
+      applyTheme(payload.settings.theme);
+      setBootError(null);
+      hydrateWorkspace(payload.workspace.id, payload.sessions);
+      hydrateWiki({
+        notes: payload.notes,
+        folders: payload.folders,
+        graph: payload.graph
+      });
+      setConfigured(hasSupabaseConfig());
+    },
+    [hydrateWiki, hydrateWorkspace, setConfigured]
+  );
+
+  const syncAuth = useCallback(
+    async (session: Session | null, rememberSession: boolean): Promise<void> => {
+      if (workspaceRef.current?.localOnly) {
+        setAnonymous();
+        return;
       }
-    }
-    await loadVaultSnapshot(savedSettings.activeVaultId);
-  }, [loadVaultSnapshot, settings]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function syncAuth(session: Session | null, rememberSession: boolean): Promise<void> {
       if (!session) {
         await persistSession(null);
         setAnonymous();
@@ -254,7 +310,10 @@ export default function App() {
           usage: profile.usage
         });
       } catch (error) {
-        console.warn("Could not fully hydrate auth state, falling back to local trial defaults.", error);
+        console.warn(
+          "Could not fully hydrate auth state, falling back to local trial defaults.",
+          error
+        );
         setAuthenticated({
           accessToken: session.access_token,
           user: {
@@ -271,7 +330,95 @@ export default function App() {
           }
         });
       }
+    },
+    [setAnonymous, setAuthenticated]
+  );
+
+  const refreshAuthForWorkspace = useCallback(
+    async (payload: AppBootstrap): Promise<void> => {
+      if (payload.workspace.localOnly || !hasSupabaseConfig()) {
+        setAnonymous();
+        return;
+      }
+
+      if (!payload.settings.rememberSession) {
+        await persistSession(null);
+        await getSupabase().auth.signOut({ scope: "local" });
+      }
+
+      const session = payload.settings.rememberSession ? await hydrateStoredSession() : null;
+      await syncAuth(session, payload.settings.rememberSession);
+    },
+    [setAnonymous, syncAuth]
+  );
+
+  const handleSettingsUpdate = useCallback(
+    async (nextSettings: AppSettings): Promise<void> => {
+      const previousSettings = settings;
+      const savedSettings = await window.trellis.app.updateSettings(nextSettings);
+      rememberSessionRef.current = savedSettings.rememberSession;
+      setSettings(savedSettings);
+      applyTheme(savedSettings.theme);
+
+      if (
+        workspace &&
+        !workspace.localOnly &&
+        savedSettings.rememberSession !== previousSettings?.rememberSession &&
+        !savedSettings.rememberSession
+      ) {
+        await persistSession(null);
+        if (hasSupabaseConfig()) {
+          await getSupabase().auth.signOut({ scope: "local" });
+        }
+      }
+
+      await loadVaultSnapshot(savedSettings.activeVaultId);
+    },
+    [loadVaultSnapshot, settings, workspace]
+  );
+
+  const handleWorkspaceSwitch = useCallback(
+    async (workspaceId: AppWorkspaceId, options?: { completeSelection?: boolean }) => {
+      setIsBootstrapping(true);
+
+      try {
+        const payload = await window.trellis.app.switchWorkspace({
+          workspaceId,
+          completeSelection: options?.completeSelection
+        });
+        applyBootstrapPayload(payload);
+        await refreshAuthForWorkspace(payload);
+      } catch (error) {
+        pushToast({
+          title: error instanceof Error ? error.message : "Could not switch workspaces.",
+          tone: "warning"
+        });
+      } finally {
+        setIsBootstrapping(false);
+      }
+    },
+    [applyBootstrapPayload, pushToast, refreshAuthForWorkspace]
+  );
+
+  const handleResetPreview = useCallback(async () => {
+    setIsBootstrapping(true);
+
+    try {
+      const payload = await window.trellis.app.resetPreviewWorkspace();
+      applyBootstrapPayload(payload);
+      await refreshAuthForWorkspace(payload);
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not reset the preview workspace.",
+        tone: "warning"
+      });
+    } finally {
+      setIsBootstrapping(false);
     }
+  }, [applyBootstrapPayload, pushToast, refreshAuthForWorkspace]);
+
+  useEffect(() => {
+    let cancelled = false;
 
     async function bootstrap(): Promise<(() => void) | undefined> {
       if (!window.trellis?.app) {
@@ -286,43 +433,32 @@ export default function App() {
         return;
       }
 
-      setSettings(payload.settings);
-      rememberSessionRef.current = payload.settings.rememberSession;
-      applyTheme(payload.settings.theme);
-      setBootError(null);
-      hydrateSessions(payload.sessions);
-      hydrateWiki({
-        notes: payload.notes,
-        graph: payload.graph
-      });
-      setConfigured(hasSupabaseConfig());
-
-      if (hasSupabaseConfig()) {
+      applyBootstrapPayload(payload);
+      if (hasSupabaseConfig() && !payload.workspace.localOnly) {
         setLoading();
-        if (!payload.settings.rememberSession) {
-          await persistSession(null);
-          await getSupabase().auth.signOut({ scope: "local" });
-        }
-        const session = payload.settings.rememberSession ? await hydrateStoredSession() : null;
-        await syncAuth(session, payload.settings.rememberSession);
+      }
+      await refreshAuthForWorkspace(payload);
 
-        const {
-          data: { subscription }
-        } = getSupabase().auth.onAuthStateChange((_event, nextSession) => {
-          void syncAuth(nextSession, rememberSessionRef.current);
-        });
-
+      if (!hasSupabaseConfig()) {
         if (!cancelled) {
           setIsBootstrapping(false);
         }
-
-        return () => {
-          subscription.unsubscribe();
-        };
+        return;
       }
 
-      setAnonymous();
-      setIsBootstrapping(false);
+      const {
+        data: { subscription }
+      } = getSupabase().auth.onAuthStateChange((_event, nextSession) => {
+        void syncAuth(nextSession, rememberSessionRef.current);
+      });
+
+      if (!cancelled) {
+        setIsBootstrapping(false);
+      }
+
+      return () => {
+        subscription.unsubscribe();
+      };
     }
 
     let cleanup: (() => void) | undefined;
@@ -332,8 +468,7 @@ export default function App() {
         cleanup = maybeCleanup;
       })
       .catch((error) => {
-        const message =
-          error instanceof Error ? error.message : "Unable to bootstrap the app.";
+        const message = error instanceof Error ? error.message : "Unable to bootstrap the app.";
         setBootError(message);
         setError(message);
         setIsBootstrapping(false);
@@ -343,7 +478,13 @@ export default function App() {
       cancelled = true;
       cleanup?.();
     };
-  }, [hydrateSessions, hydrateWiki, setAnonymous, setAuthenticated, setConfigured, setError, setLoading]);
+  }, [
+    applyBootstrapPayload,
+    setError,
+    setLoading,
+    refreshAuthForWorkspace,
+    syncAuth
+  ]);
 
   useEffect(() => {
     if (!settings) {
@@ -367,36 +508,126 @@ export default function App() {
     };
   }, [setCommandPaletteOpen]);
 
+  useEffect(() => {
+    if (!settings) {
+      return;
+    }
+
+    return window.trellis.extraction.onJobUpdate((notification) => {
+      if (notification.status === "completed") {
+        if (notification.appliedUpdateCount > 0) {
+          pushToast({
+            title: `✦ ${notification.appliedUpdateCount} notes updated`,
+            tone: "success"
+          });
+
+          if (notification.vaultId === settings.activeVaultId) {
+            void loadVaultSnapshot(notification.vaultId).catch((error) => {
+              pushToast({
+                title:
+                  error instanceof Error
+                    ? error.message
+                    : "Could not refresh the wiki after your notes were processed.",
+                tone: "warning"
+              });
+            });
+          }
+        }
+
+        void window.trellis.db.listSessions().then(hydrateSessions).catch(() => {
+          // Session refresh failures are non-fatal; the next route load will reconcile.
+        });
+        return;
+      }
+
+      if (notification.status === "failed" && notification.errorMessage) {
+        pushToast({
+          title: notification.errorMessage,
+          tone: "warning"
+        });
+        return;
+      }
+
+      if (notification.status === "skipped" && notification.errorMessage) {
+        pushToast({
+          title: notification.errorMessage,
+          tone: "warning"
+        });
+      }
+    });
+  }, [settings, hydrateSessions, loadVaultSnapshot, pushToast]);
+
   const content = useMemo(() => {
     if (bootError) {
       return (
         <div className="flex h-full items-center justify-center px-6">
           <div className="trellis-elevated max-w-lg px-8 py-8 text-center">
-            <p className="font-display text-3xl text-trellis-text">Trellis couldn’t finish booting</p>
+            <p className="font-display text-3xl text-trellis-text">
+              Trellis couldn’t finish booting
+            </p>
             <p className="mt-4 text-sm leading-7 text-trellis-muted">{bootError}</p>
           </div>
         </div>
       );
     }
 
-    if (isBootstrapping || !settings) {
+    if (isBootstrapping || !settings || !features || !workspace) {
       return (
         <div className="flex h-full items-center justify-center">
           <div className="trellis-elevated px-8 py-6 text-center">
             <p className="font-display text-3xl text-trellis-text">Trellis</p>
             <p className="mt-3 text-sm text-trellis-muted">Where ideas take hold.</p>
-            <p className="mt-2 text-xs text-trellis-faint">Opening your vault, sessions, and graph…</p>
+            <p className="mt-2 text-xs text-trellis-faint">
+              Opening your vault, sessions, and graph…
+            </p>
           </div>
         </div>
       );
     }
 
+    if (needsWorkspaceChoice) {
+      return (
+        <WorkspaceChooser
+          workspaces={workspaces}
+          onSelect={async (workspaceId) => {
+            await handleWorkspaceSwitch(workspaceId, { completeSelection: true });
+          }}
+        />
+      );
+    }
+
     return (
-      <HashRouter>
-        <AppFrame settings={settings} onUpdateSettings={handleSettingsUpdate} />
-      </HashRouter>
+      <>
+        <HashRouter key={workspace.id}>
+          <AppFrame
+            settings={settings}
+            features={features}
+            workspace={workspace}
+            workspaces={workspaces}
+            onUpdateSettings={handleSettingsUpdate}
+            onSwitchWorkspace={handleWorkspaceSwitch}
+            onResetPreview={handleResetPreview}
+          />
+        </HashRouter>
+        <LocalNoteProcessorFirstRun
+          settings={settings}
+          features={features}
+          onUpdateSettings={handleSettingsUpdate}
+        />
+      </>
     );
-  }, [bootError, handleSettingsUpdate, isBootstrapping, settings]);
+  }, [
+    bootError,
+    features,
+    handleResetPreview,
+    handleSettingsUpdate,
+    handleWorkspaceSwitch,
+    isBootstrapping,
+    needsWorkspaceChoice,
+    settings,
+    workspace,
+    workspaces
+  ]);
 
   return content;
 }

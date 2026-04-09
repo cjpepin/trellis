@@ -1,5 +1,5 @@
 import type { GraphData } from "@electron/ipc/types";
-import type { ExtractionIndexEntry } from "@/lib/api";
+import type { ExtractionIndexEntry } from "@shared/extraction/contracts";
 
 export function buildExtractionIndex(graph: GraphData): ExtractionIndexEntry[] {
   const existingEntries = graph.nodes

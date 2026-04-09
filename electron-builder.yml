@@ -6,6 +6,7 @@ files:
   - dist/**
   - dist-electron/**
   - package.json
+  - preview-seed/**
 mac:
   category: public.app-category.productivity
   hardenedRuntime: true
@@ -13,4 +14,3 @@ win:
   target: nsis
 linux:
   target: AppImage
-

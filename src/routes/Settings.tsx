@@ -1,32 +1,433 @@
-import { useState } from "react";
-import { Check, FolderOpen, LogOut, Palette, Plus, UserRound } from "lucide-react";
-import type { AppSettings } from "@electron/ipc/types";
-import { getActiveVault, themeOptions } from "@/lib/settings";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Check,
+  ChevronDown,
+  Download,
+  FolderOpen,
+  LoaderCircle,
+  LogOut,
+  Palette,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+  UserRound
+} from "lucide-react";
+import type {
+  AppFeatureFlags,
+  AppSettings,
+  ExtractionDebugRun,
+  ExtractionInstallProgressEvent,
+  ExtractionRuntimeStatus,
+  LocalExtractionModelInfo,
+  WorkspaceInfo
+} from "@electron/ipc/types";
+import {
+  defaultLocalExtractionModelApproxDownload,
+  defaultLocalExtractionModelId
+} from "@shared/extraction/config";
+import { getOptionalExtractionCloudConfig } from "@/lib/api";
+import {
+  getExtractionModeOptions,
+  getActiveVault,
+  themeOptions
+} from "@/lib/settings";
+import { cn } from "@/lib/utils";
 import { getSupabase, getSupabaseConfigError } from "@/lib/supabase";
+import { ExtractionModeSelect } from "@/components/ExtractionModeSelect";
+import { ListboxSelect } from "@/components/ListboxSelect";
+import { PremiumPlansModal } from "@/components/PremiumPlansModal";
+import { useChatStore } from "@/store/chatStore";
 import { useAuthStore } from "@/store/authStore";
 import { useUiStore } from "@/store/uiStore";
 
 interface Props {
+  features: AppFeatureFlags;
   settings: AppSettings;
+  workspace: WorkspaceInfo;
+  workspaces: WorkspaceInfo[];
   onUpdateSettings: (settings: AppSettings) => Promise<void>;
+  onSwitchWorkspace: (workspaceId: WorkspaceInfo["id"]) => Promise<void>;
+  onResetPreview: () => Promise<void>;
 }
 
-export function Settings({ settings, onUpdateSettings }: Props) {
+function formatBytes(value?: number): string | null {
+  if (!value || value <= 0) {
+    return null;
+  }
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = value;
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+
+  const precision = size >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${size.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function findLocalProvider(status: ExtractionRuntimeStatus | null) {
+  return status?.providers.find((provider) => provider.id === "embedded") ?? null;
+}
+
+function findCloudProvider(status: ExtractionRuntimeStatus | null) {
+  return status?.providers.find((provider) => provider.id === "cloud") ?? null;
+}
+
+function pickInstalledExtractionModelId(
+  models: LocalExtractionModelInfo[] | undefined
+): string | null {
+  const installedExtractionModels = (models ?? []).filter(
+    (model) => model.purpose === "extraction" && model.installed
+  );
+
+  return installedExtractionModels[0]?.id ?? null;
+}
+
+function formatDebugDuration(
+  value: number | null,
+  status?: ExtractionDebugRun["status"]
+): string {
+  if (value === null) {
+    return status === "running" || status === "queued" ? "In progress" : "Not recorded";
+  }
+
+  if (value < 1_000) {
+    return `${value} ms`;
+  }
+
+  if (value < 60_000) {
+    const seconds = value / 1_000;
+    return `${seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1)} s`;
+  }
+
+  const minutes = Math.floor(value / 60_000);
+  const seconds = Math.round((value % 60_000) / 1_000);
+  return `${minutes}m ${seconds}s`;
+}
+
+function formatDebugTimestamp(value: number | null): string {
+  if (value === null) {
+    return "Not finished yet";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(value);
+}
+
+function getDebugStatusClasses(status: ExtractionDebugRun["status"]): string {
+  if (status === "completed") {
+    return "border-emerald-500/20 text-emerald-300";
+  }
+
+  if (status === "failed") {
+    return "border-rose-500/20 text-rose-300";
+  }
+
+  if (status === "skipped") {
+    return "border-trellis-border text-trellis-muted";
+  }
+
+  if (status === "running") {
+    return "border-trellis-accent/25 text-trellis-accent";
+  }
+
+  return "border-trellis-border text-trellis-faint";
+}
+
+function formatInstallProgressLine(event: ExtractionInstallProgressEvent | null): string {
+  if (!event) {
+    return "";
+  }
+
+  if (event.kind === "status") {
+    return event.status;
+  }
+
+  if (event.kind === "layer" && event.total && event.completed !== undefined) {
+    const pct = Math.min(100, Math.round((event.completed / event.total) * 100));
+    return `Downloading ${pct}%`;
+  }
+
+  if (event.kind === "complete") {
+    return "Finishing…";
+  }
+
+  if (event.kind === "aborted") {
+    return "Cancelled";
+  }
+
+  return "";
+}
+
+function installProgressPercent(event: ExtractionInstallProgressEvent | null): number | null {
+  if (!event || event.kind !== "layer") {
+    return null;
+  }
+
+  if (!event.total || event.total <= 0 || event.completed === undefined) {
+    return null;
+  }
+
+  return Math.min(100, Math.round((event.completed / event.total) * 100));
+}
+
+function formatAttemptSummary(run: ExtractionDebugRun): string | null {
+  if (run.attemptedProviders.length === 0) {
+    return null;
+  }
+
+  return run.attemptedProviders
+    .map((attempt) => {
+      const parts: string[] = [attempt.id, attempt.outcome];
+
+      if (attempt.durationMs !== undefined) {
+        parts.push(formatDebugDuration(attempt.durationMs));
+      }
+
+      if (attempt.reason) {
+        parts.push(attempt.reason);
+      }
+
+      return parts.join(" · ");
+    })
+    .join("  |  ");
+}
+
+export function Settings({
+  settings,
+  features,
+  workspace,
+  workspaces,
+  onUpdateSettings,
+  onSwitchWorkspace,
+  onResetPreview
+}: Props) {
   const [authMode, setAuthMode] = useState<"sign-in" | "create-account">("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [newVaultName, setNewVaultName] = useState("");
+  const [isAddingVault, setIsAddingVault] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [runtimeStatus, setRuntimeStatus] = useState<ExtractionRuntimeStatus | null>(null);
+  const [isRefreshingRuntime, setIsRefreshingRuntime] = useState(false);
+  const [debugRuns, setDebugRuns] = useState<ExtractionDebugRun[]>([]);
+  const [isRefreshingDebugRuns, setIsRefreshingDebugRuns] = useState(false);
+  const [isRunningManualSync, setIsRunningManualSync] = useState(false);
+  const [isRunningManualExtraction, setIsRunningManualExtraction] = useState(false);
+  const [busyModelAction, setBusyModelAction] = useState<{
+    modelId: string;
+    action: "install" | "remove";
+  } | null>(null);
+  const [extractionAdvancedOpen, setExtractionAdvancedOpen] = useState(false);
+  const [premiumPlansModalOpen, setPremiumPlansModalOpen] = useState(false);
+  const [installProgressEvent, setInstallProgressEvent] =
+    useState<ExtractionInstallProgressEvent | null>(null);
+  const installingModelIdRef = useRef<string | null>(null);
   const authState = useAuthStore();
+  const chatSessions = useChatStore((state) => state.sessions);
+  const activeSessionId = useChatStore((state) => state.activeSessionId);
   const pushToast = useUiStore((state) => state.pushToast);
   const configError = getSupabaseConfigError();
   const stripeCheckoutUrl = import.meta.env.VITE_STRIPE_CHECKOUT_URL;
   const activeVault = getActiveVault(settings);
   const normalizedEmail = email.trim().toLowerCase();
+  const localProvider = useMemo(() => findLocalProvider(runtimeStatus), [runtimeStatus]);
+  const cloudProvider = useMemo(() => findCloudProvider(runtimeStatus), [runtimeStatus]);
+  const localExtractionEnabled = features.localExtraction;
+  const availableExtractionModeOptions = useMemo(
+    () => getExtractionModeOptions(localExtractionEnabled),
+    [localExtractionEnabled]
+  );
+  const localModels = localProvider?.models ?? [];
+  const extractionModels = localModels.filter((model) => model.purpose === "extraction");
+  const embeddingModels = localModels.filter((model) => model.purpose === "embedding");
+  const needsLocalSetup =
+    localExtractionEnabled &&
+    settings.extraction.mode === "local" &&
+    !localProvider?.available;
+
+  const defaultNoteProcessorModel = extractionModels.find(
+    (model) => model.id === defaultLocalExtractionModelId
+  );
+  const showDefaultNoteProcessorSetup =
+    localExtractionEnabled &&
+    Boolean(defaultNoteProcessorModel) &&
+    !defaultNoteProcessorModel?.installed &&
+    (settings.extraction.mode === "auto" || settings.extraction.mode === "local");
+  const manualExtractionSession = useMemo(
+    () =>
+      chatSessions.find((session) => session.id === activeSessionId) ??
+      chatSessions[0] ??
+      null,
+    [activeSessionId, chatSessions]
+  );
+  const manualExtractionSessionLabel =
+    manualExtractionSession?.title.trim() || "your latest chat";
+
+  const notesFromChatsStatusLine = useMemo(() => {
+    if (isRefreshingRuntime) {
+      return "Checking status…";
+    }
+    if (!localExtractionEnabled) {
+      return cloudProvider?.available
+        ? "Cloud ready."
+        : (cloudProvider?.reason ?? "Cloud unavailable.");
+    }
+
+    const mode = settings.extraction.mode;
+    const localOk = localProvider?.available;
+    const cloudOk = cloudProvider?.available;
+
+    if (mode === "cloud") {
+      return cloudOk
+        ? "Cloud processing."
+        : (cloudProvider?.reason ?? "Cloud unavailable.");
+    }
+
+    if (mode === "local") {
+      if (localOk) {
+        return localProvider?.selectedModel
+          ? `On-device · ${localProvider.selectedModel}`
+          : "On-device ready.";
+      }
+      return localProvider?.reason ?? "On-device not ready.";
+    }
+
+    return [
+      localOk ? "On-device ready" : "On-device not ready",
+      cloudOk ? "Cloud available" : (cloudProvider?.reason ?? "Cloud unavailable")
+    ].join(" · ");
+  }, [
+    isRefreshingRuntime,
+    localExtractionEnabled,
+    cloudProvider,
+    localProvider,
+    settings.extraction.mode
+  ]);
 
   function isValidEmail(value: string): boolean {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  }
+
+  async function refreshRuntimeStatus(): Promise<void> {
+    setIsRefreshingRuntime(true);
+
+    try {
+      const status = await window.trellis.extraction.getRuntimeStatus({
+        mode: settings.extraction.mode,
+        cloud: getOptionalExtractionCloudConfig(authState.accessToken ?? null)
+      });
+      setRuntimeStatus(status);
+    } catch (error) {
+      pushToast({
+        title:
+          error instanceof Error
+            ? error.message
+            : "Could not load note processing status.",
+        tone: "warning"
+      });
+    } finally {
+      setIsRefreshingRuntime(false);
+    }
+  }
+
+  async function refreshDebugRuns(limit = 12): Promise<void> {
+    setIsRefreshingDebugRuns(true);
+
+    try {
+      const runs = await window.trellis.extraction.listDebugRuns(limit);
+      setDebugRuns(runs);
+    } catch (error) {
+      pushToast({
+        title:
+          error instanceof Error ? error.message : "Could not load recent note processing logs.",
+        tone: "warning"
+      });
+    } finally {
+      setIsRefreshingDebugRuns(false);
+    }
+  }
+
+  async function runManualSync(): Promise<void> {
+    setIsRunningManualSync(true);
+
+    try {
+      const result = await window.trellis.retrieval.rebuildIndex(activeVault.id);
+      pushToast({
+        title: result.usedEmbeddings
+          ? `Synced ${result.notesIndexed} notes for ${activeVault.name}.`
+          : `Synced ${result.notesIndexed} notes for ${activeVault.name} without embeddings.`,
+        tone: "success"
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not sync the vault index.",
+        tone: "warning"
+      });
+    } finally {
+      setIsRunningManualSync(false);
+    }
+  }
+
+  async function runManualExtraction(): Promise<void> {
+    if (!manualExtractionSession) {
+      pushToast({
+        title: "Start a chat before running manual extraction.",
+        tone: "warning"
+      });
+      return;
+    }
+
+    setIsRunningManualExtraction(true);
+
+    try {
+      const result = await window.trellis.extraction.queueSession({
+        sessionId: manualExtractionSession.id,
+        trigger: "manual",
+        mode: settings.extraction.mode,
+        cloud: getOptionalExtractionCloudConfig(authState.accessToken ?? null),
+        preferredLocalModelId: settings.extraction.preferredLocalModelId ?? undefined,
+        force: true
+      });
+
+      if (result.state === "queued") {
+        pushToast({
+          title: `Manual extraction queued for ${manualExtractionSessionLabel}.`,
+          tone: "success"
+        });
+        return;
+      }
+
+      if (result.state === "duplicate") {
+        pushToast({
+          title: `Manual extraction is already running for ${manualExtractionSessionLabel}.`,
+          tone: "warning"
+        });
+        return;
+      }
+
+      pushToast({
+        title: "That chat needs at least one full exchange before it can be extracted.",
+        tone: "warning"
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not run manual extraction.",
+        tone: "warning"
+      });
+    } finally {
+      setIsRunningManualExtraction(false);
+    }
   }
 
   function getAuthValidationError(): string | null {
@@ -56,6 +457,43 @@ export function Settings({ settings, onUpdateSettings }: Props) {
   }
 
   const authValidationError = getAuthValidationError();
+
+  useEffect(() => {
+    void refreshRuntimeStatus();
+  }, [authState.accessToken, settings.extraction.mode]);
+
+  useEffect(() => {
+    void refreshDebugRuns();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.trellis.extraction.onJobUpdate(() => {
+      void refreshDebugRuns();
+    });
+
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    return window.trellis.extraction.onInstallProgress((event) => {
+      if (!installingModelIdRef.current) {
+        return;
+      }
+
+      setInstallProgressEvent(event);
+    });
+  }, []);
+
+  async function cancelLocalModelInstall(): Promise<void> {
+    try {
+      await window.trellis.extraction.cancelInstallLocalModel();
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not cancel the download.",
+        tone: "warning"
+      });
+    }
+  }
 
   async function openVault(targetPath: string): Promise<void> {
     try {
@@ -102,6 +540,7 @@ export function Settings({ settings, onUpdateSettings }: Props) {
         activeVaultId: nextVault.id
       });
       setNewVaultName("");
+      setIsAddingVault(false);
       pushToast({
         title: `${normalizedName} added.`,
         tone: "success"
@@ -275,175 +714,860 @@ export function Settings({ settings, onUpdateSettings }: Props) {
     }
   }
 
+  async function updateExtractionMode(mode: AppSettings["extraction"]["mode"]): Promise<void> {
+    try {
+      await onUpdateSettings({
+        ...settings,
+        extraction: {
+          ...settings.extraction,
+          mode
+        }
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not update how chats are turned into notes.",
+        tone: "error"
+      });
+    }
+  }
+
+  async function updatePreferredLocalModel(modelId: string | null): Promise<void> {
+    try {
+      await onUpdateSettings({
+        ...settings,
+        extraction: {
+          ...settings.extraction,
+          preferredLocalModelId: modelId
+        }
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not update the local note processor.",
+        tone: "error"
+      });
+    }
+  }
+
+  async function installLocalModel(model: LocalExtractionModelInfo): Promise<void> {
+    setBusyModelAction({
+      modelId: model.id,
+      action: "install"
+    });
+    installingModelIdRef.current = model.id;
+    setInstallProgressEvent({ kind: "status", status: "Starting download…" });
+
+    try {
+      const nextStatus = await window.trellis.extraction.installLocalModel(model.id);
+      setRuntimeStatus(nextStatus);
+      await refreshRuntimeStatus();
+
+      const modelsAfter = findLocalProvider(nextStatus)?.models ?? [];
+      const preferredId = settings.extraction.preferredLocalModelId;
+      const preferredInstalled =
+        preferredId &&
+        modelsAfter.some(
+          (m) =>
+            m.purpose === "extraction" &&
+            m.installed &&
+            (m.id === preferredId || m.variant === preferredId)
+        );
+
+      if (model.purpose === "extraction" && (!preferredId || !preferredInstalled)) {
+        await updatePreferredLocalModel(model.id);
+      }
+
+      pushToast({
+        title: `${model.label} installed.`,
+        tone: "success"
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not install that local model.";
+      pushToast({
+        title: message,
+        tone: message.includes("cancelled") ? "default" : "error"
+      });
+    } finally {
+      installingModelIdRef.current = null;
+      setInstallProgressEvent(null);
+      setBusyModelAction(null);
+    }
+  }
+
+  async function removeLocalModel(model: LocalExtractionModelInfo): Promise<void> {
+    setBusyModelAction({
+      modelId: model.id,
+      action: "remove"
+    });
+
+    try {
+      const nextStatus = await window.trellis.extraction.removeLocalModel(model.id);
+      setRuntimeStatus(nextStatus);
+      await refreshRuntimeStatus();
+
+      if (settings.extraction.preferredLocalModelId === model.id) {
+        const nextPreferredModelId = pickInstalledExtractionModelId(
+          findLocalProvider(nextStatus)?.models
+        );
+        await updatePreferredLocalModel(nextPreferredModelId);
+      }
+
+      pushToast({
+        title: `${model.label} removed.`,
+        tone: "default"
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not remove that local model.",
+        tone: "error"
+      });
+    } finally {
+      setBusyModelAction(null);
+    }
+  }
+
   return (
-    <div className="grid h-full grid-cols-[minmax(0,1fr)_360px] gap-6 p-6">
-      <section className="flex min-h-0 flex-col gap-6">
-        <div className="trellis-panel px-6 py-6">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_360px] gap-6 overflow-hidden">
+      <section className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain pr-1">
+        <div className="trellis-panel px-4 py-3">
           <p className="font-display text-3xl text-trellis-text">Settings</p>
           <p className="mt-3 max-w-2xl text-sm leading-7 text-trellis-muted">
             Choose where your notes live, how Trellis looks, and how this device stays signed in.
           </p>
         </div>
 
-        <div className="trellis-panel px-6 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-lg text-trellis-text">Vaults</p>
-              <p className="mt-2 text-sm text-trellis-muted">
-                Keep separate vaults for different projects, clients, or research threads.
+        <div className="trellis-panel px-4 py-3">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-trellis-text">Workspace mode</p>
+              <p className="mt-1 text-[11px] leading-snug text-trellis-muted">
+                {workspace.description}
               </p>
             </div>
-            <button
-              type="button"
-              className="trellis-accent-button rounded-field border px-4 py-3 text-sm transition"
-              onClick={() => {
-                void openVault(activeVault.path);
-              }}
-            >
-              <span className="flex items-center gap-2">
-                <FolderOpen className="h-4 w-4" />
-                Open active vault
-              </span>
-            </button>
-          </div>
-
-          <div className="mt-6 space-y-3">
-            {settings.vaults.map((vault) => {
-              const isActive = vault.id === settings.activeVaultId;
-
-              return (
-                <div
-                  key={vault.id}
-                  className={`rounded-panel border px-4 py-4 ${
-                    isActive ? "trellis-selected-surface border-trellis-accent/30" : "bg-trellis-surface-2"
-                  }`}
+            <div className="flex flex-wrap gap-2">
+              {workspaces.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={cn(
+                    "rounded-full border px-3 py-1.5 text-xs transition",
+                    item.id === workspace.id
+                      ? "border-trellis-accent/30 bg-trellis-accent/10 text-trellis-accent"
+                      : "border-trellis-border text-trellis-text hover:border-trellis-accent/35"
+                  )}
+                  onClick={() => {
+                    if (item.id !== workspace.id) {
+                      void onSwitchWorkspace(item.id);
+                    }
+                  }}
                 >
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm text-trellis-text">{vault.name}</p>
-                        {isActive && (
-                          <span className="rounded-full border border-trellis-accent/25 px-2 py-0.5 text-[11px] text-trellis-accent">
-                            Active
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-2 truncate text-xs text-trellis-muted">{vault.path}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        className="rounded-field border border-trellis-border px-3 py-2 text-sm text-trellis-text transition hover:border-trellis-accent/35"
-                        onClick={() => {
-                          void openVault(vault.path);
-                        }}
-                      >
-                        Open
-                      </button>
-                      {!isActive && (
-                        <button
-                          type="button"
-                          className="trellis-accent-button rounded-field border px-3 py-2 text-sm transition"
-                          onClick={() => {
-                            void activateVault(vault.id);
-                          }}
-                        >
-                          Use now
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-6 grid gap-3 rounded-panel border border-dashed border-trellis-border px-4 py-4">
-            <p className="text-sm text-trellis-text">Add another vault</p>
-            <input
-              value={newVaultName}
-              onChange={(event) => setNewVaultName(event.target.value)}
-              className="trellis-input"
-              placeholder="Client research, Personal notes, Paper drafts…"
-            />
-            <button
-              type="button"
-              className="trellis-accent-button w-fit rounded-field border px-4 py-3 text-sm transition"
-              onClick={() => {
-                void addVault();
-              }}
-            >
-              <span className="flex items-center gap-2">
-                <Plus className="h-4 w-4" />
-                Choose folder and add
-              </span>
-            </button>
+                  {item.label}
+                </button>
+              ))}
+              {workspace.canReset && (
+                <button
+                  type="button"
+                  className="rounded-full border border-trellis-border px-3 py-1.5 text-xs text-trellis-text transition hover:border-trellis-accent/35"
+                  onClick={() => {
+                    void onResetPreview();
+                  }}
+                >
+                  Reset preview
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="trellis-panel px-6 py-6">
-          <div className="flex items-center gap-3">
-            <Palette className="h-5 w-5 text-trellis-accent" />
-            <p className="text-lg text-trellis-text">Appearance</p>
-          </div>
-          <p className="mt-3 text-sm leading-7 text-trellis-muted">
-            Pick the workspace mood that feels right for the way you think.
-          </p>
-          <div className="mt-5 grid grid-cols-2 gap-3">
-            {themeOptions.map((theme) => {
-              const isSelected = settings.theme === theme.id;
+        <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+          <div className="trellis-panel flex min-h-0 flex-col px-4 py-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-trellis-text">Vaults</p>
+                <p className="mt-0.5 text-[11px] leading-snug text-trellis-muted">
+                  Separate vaults for projects, clients, or research threads.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="trellis-accent-button shrink-0 rounded-field border px-2.5 py-1.5 text-xs transition"
+                onClick={() => {
+                  void openVault(activeVault.path);
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  Open active vault
+                </span>
+              </button>
+            </div>
 
-              return (
+            <div className="mt-2 min-h-0 space-y-1.5">
+              {settings.vaults.map((vault) => {
+                const isActive = vault.id === settings.activeVaultId;
+
+                return (
+                  <div
+                    key={vault.id}
+                    className={`rounded-panel border px-2.5 py-2 ${
+                      isActive ? "trellis-selected-surface border-trellis-accent/30" : "bg-trellis-surface-2"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-xs font-medium text-trellis-text">{vault.name}</p>
+                          {isActive && (
+                            <span className="rounded-full border border-trellis-accent/25 px-2 py-0.5 text-[11px] text-trellis-accent">
+                              Active
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-0.5 truncate text-xs text-trellis-muted">{vault.path}</p>
+                      </div>
+                      <div className="flex shrink-0 gap-1.5">
+                        <button
+                          type="button"
+                          className="rounded-field border border-trellis-border px-2.5 py-1.5 text-xs text-trellis-text transition hover:border-trellis-accent/35"
+                          onClick={() => {
+                            void openVault(vault.path);
+                          }}
+                        >
+                          Open
+                        </button>
+                        {!isActive && (
+                          <button
+                            type="button"
+                            className="trellis-accent-button rounded-field border px-2.5 py-1.5 text-xs transition"
+                            onClick={() => {
+                              void activateVault(vault.id);
+                            }}
+                          >
+                            Use now
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {isAddingVault ? (
+              <div className="mt-2 grid gap-2 rounded-panel border border-dashed border-trellis-border px-2.5 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-medium text-trellis-text">New vault</p>
+                  <button
+                    type="button"
+                    className="shrink-0 text-[11px] text-trellis-muted underline-offset-2 transition hover:text-trellis-text"
+                    onClick={() => {
+                      setIsAddingVault(false);
+                      setNewVaultName("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <input
+                  value={newVaultName}
+                  onChange={(event) => setNewVaultName(event.target.value)}
+                  className="trellis-input py-1.5 text-xs"
+                  placeholder="Name this vault…"
+                  autoFocus
+                />
                 <button
-                  key={theme.id}
                   type="button"
-                  className={`rounded-field border px-4 py-3 text-left text-sm transition ${
-                    isSelected
-                      ? "trellis-selected-surface border-trellis-accent/30 text-trellis-text"
-                      : "border-trellis-border bg-trellis-surface-2 text-trellis-muted hover:border-trellis-accent/35 hover:text-trellis-text"
-                  }`}
+                  className="trellis-accent-button w-fit rounded-field border px-2.5 py-1.5 text-xs transition"
                   onClick={() => {
-                    void updateTheme(theme.id);
+                    void addVault();
                   }}
                 >
-                  <span className="flex items-center justify-between gap-3">
-                    {theme.label}
-                    {isSelected && <Check className="h-4 w-4 text-trellis-accent" />}
+                  <span className="flex items-center gap-2">
+                    <Plus className="h-3.5 w-3.5" />
+                    Choose folder and add
                   </span>
                 </button>
-              );
-            })}
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="mt-2 flex w-full items-center justify-center gap-2 rounded-field border border-dashed border-trellis-border px-2.5 py-2 text-[11px] text-trellis-muted transition hover:border-trellis-accent/35 hover:text-trellis-text"
+                onClick={() => {
+                  setIsAddingVault(true);
+                }}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add vault
+              </button>
+            )}
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-4">
+            <div className="trellis-panel px-4 py-3">
+            <label className="block" htmlFor="settings-theme">
+              <div className="flex items-center gap-1.5">
+                <Palette className="h-3.5 w-3.5 text-trellis-accent" aria-hidden />
+                <span className="text-sm font-medium text-trellis-text">Appearance</span>
+              </div>
+              <span className="mt-0.5 block text-[11px] leading-snug text-trellis-muted">
+                Workspace color theme.
+              </span>
+            </label>
+            <ListboxSelect
+              id="settings-theme"
+              className="mt-2"
+              options={themeOptions}
+              value={settings.theme}
+              listboxAriaLabel="Appearance theme"
+              onSelect={(theme) => {
+                void updateTheme(theme);
+              }}
+            />
+            </div>
+
+            <div className="trellis-panel px-4 py-3">
+          <label className="block" htmlFor="settings-notes-from-chats-mode">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-trellis-accent" aria-hidden />
+              <span className="text-sm font-medium text-trellis-text">Notes from chats</span>
+            </div>
+            <span className="mt-0.5 block text-[11px] leading-snug text-trellis-muted">
+              Linked notes from chat into your vault.
+            </span>
+          </label>
+
+          {localExtractionEnabled && (
+            <div
+              className={cn(
+                "mt-3 flex flex-col gap-3",
+                showDefaultNoteProcessorSetup &&
+                  defaultNoteProcessorModel &&
+                  "sm:flex-row sm:items-start sm:gap-4"
+              )}
+            >
+              <ExtractionModeSelect
+                id="settings-notes-from-chats-mode"
+                className={
+                  showDefaultNoteProcessorSetup && defaultNoteProcessorModel
+                    ? "w-full shrink-0 self-start sm:max-w-[min(100%,240px)]"
+                    : undefined
+                }
+                options={availableExtractionModeOptions}
+                value={settings.extraction.mode}
+                onSelect={(mode) => {
+                  void updateExtractionMode(mode);
+                }}
+              />
+
+              {showDefaultNoteProcessorSetup && defaultNoteProcessorModel && (
+                <div
+                  className={cn(
+                    "flex min-w-0 flex-1 rounded-panel border border-trellis-accent/25 bg-trellis-surface-2/80 px-3",
+                    busyModelAction?.modelId === defaultNoteProcessorModel.id &&
+                      busyModelAction.action === "install"
+                      ? "flex-col justify-center gap-2 py-2.5"
+                      : "h-[42px] flex-row items-center gap-2 overflow-hidden sm:gap-3"
+                  )}
+                >
+                  {busyModelAction?.modelId === defaultNoteProcessorModel.id &&
+                  busyModelAction.action === "install" ? (
+                    <div className="space-y-2">
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-trellis-surface">
+                        <div
+                          className="h-full rounded-full bg-trellis-accent transition-[width] duration-300"
+                          style={{
+                            width: `${installProgressPercent(installProgressEvent) ?? 0}%`
+                          }}
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-[11px] text-trellis-muted">
+                          {formatInstallProgressLine(installProgressEvent) || "Downloading…"}
+                        </p>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-field border border-trellis-border px-2.5 py-1.5 text-xs text-trellis-text transition hover:border-trellis-accent/35"
+                          onClick={() => {
+                            void cancelLocalModelInstall();
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex h-full min-h-0 w-full min-w-0 flex-row flex-nowrap items-center gap-2 sm:justify-between sm:gap-3">
+                      <p className="min-w-0 flex-1 truncate text-[11px] leading-none text-trellis-muted">
+                        {defaultNoteProcessorModel.label} (~{defaultLocalExtractionModelApproxDownload})
+                      </p>
+                      <button
+                        type="button"
+                        className="trellis-accent-button shrink-0 rounded-field border px-2.5 py-1.5 text-xs transition"
+                        onClick={() => {
+                          void installLocalModel(defaultNoteProcessorModel);
+                        }}
+                      >
+                        <span className="flex items-center gap-2">
+                          <Download className="h-3.5 w-3.5" />
+                          Download
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <p className="mt-3 text-[11px] leading-snug text-trellis-muted">{notesFromChatsStatusLine}</p>
+
+          {needsLocalSetup && !showDefaultNoteProcessorSetup && (
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <p className="text-[11px] text-trellis-muted">
+                {localProvider?.reason ?? "Install a model under Advanced."}
+              </p>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 text-[11px] text-trellis-text underline decoration-trellis-border underline-offset-2 transition hover:decoration-trellis-accent"
+                onClick={() => {
+                  void refreshRuntimeStatus();
+                }}
+              >
+                <RefreshCw className="h-3 w-3" aria-hidden />
+                Refresh status
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="mt-4 flex w-full items-center justify-between gap-2 rounded-field border border-trellis-border px-3 py-2 text-left text-xs text-trellis-text transition hover:border-trellis-accent/35"
+            onClick={() => {
+              setExtractionAdvancedOpen((open) => !open);
+            }}
+          >
+            <span className="font-medium">Advanced</span>
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 shrink-0 text-trellis-muted transition",
+                extractionAdvancedOpen && "-rotate-180"
+              )}
+              aria-hidden
+            />
+          </button>
+
+          {extractionAdvancedOpen && (
+            <div className="mt-4 space-y-4 border-t border-trellis-border/60 pt-4">
+              <div className="rounded-panel border border-trellis-border bg-trellis-surface-2/80 px-3 py-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0 max-w-2xl">
+                    <p className="text-xs font-medium text-trellis-text">Manual tools</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-trellis-muted">
+                      Refresh the active vault’s search index or force note processing for{" "}
+                      {manualExtractionSession ? manualExtractionSessionLabel : "your next chat"}.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid gap-2 xl:grid-cols-2">
+                  <div className="rounded-panel border border-trellis-border bg-trellis-surface px-3 py-3">
+                    <p className="text-xs font-medium text-trellis-text">Manual sync</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-trellis-muted">
+                      Rebuild the retrieval index for {activeVault.name}.
+                    </p>
+                    <button
+                      type="button"
+                      className="mt-3 rounded-field border border-trellis-border px-2.5 py-1.5 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:text-trellis-faint"
+                      onClick={() => {
+                        void runManualSync();
+                      }}
+                      disabled={isRunningManualSync}
+                    >
+                      <span className="flex items-center gap-2">
+                        {isRunningManualSync ? (
+                          <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                        Run sync
+                      </span>
+                    </button>
+                  </div>
+
+                  <div className="rounded-panel border border-trellis-border bg-trellis-surface px-3 py-3">
+                    <p className="text-xs font-medium text-trellis-text">Manual extraction</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-trellis-muted">
+                      Force note processing for{" "}
+                      {manualExtractionSession ? manualExtractionSessionLabel : "the active chat"}.
+                    </p>
+                    <button
+                      type="button"
+                      className="mt-3 rounded-field border border-trellis-border px-2.5 py-1.5 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:text-trellis-faint"
+                      onClick={() => {
+                        void runManualExtraction();
+                      }}
+                      disabled={isRunningManualExtraction || !manualExtractionSession}
+                    >
+                      <span className="flex items-center gap-2">
+                        {isRunningManualExtraction ? (
+                          <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-3.5 w-3.5" />
+                        )}
+                        Run extraction
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {localExtractionEnabled && (
+                <>
+                  <div className="flex flex-wrap items-end justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-medium text-trellis-text">Local models</p>
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-trellis-muted">
+                        Install models and run diagnostics.
+                      </p>
+                    </div>
+                    {settings.extraction.preferredLocalModelId && (
+                      <span className="rounded-full border border-trellis-accent/25 px-2 py-0.5 text-[10px] text-trellis-accent">
+                        Preferred: {settings.extraction.preferredLocalModelId}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid gap-2 xl:grid-cols-2">
+                    {[...extractionModels, ...embeddingModels].map((model) => {
+                      const isBusy = busyModelAction?.modelId === model.id;
+                      const isSelectedExtractionModel =
+                        model.purpose === "extraction" &&
+                        settings.extraction.preferredLocalModelId === model.id;
+
+                      return (
+                        <div
+                          key={model.id}
+                          className={cn(
+                            "rounded-panel border px-3 py-3",
+                            isSelectedExtractionModel
+                              ? "border-trellis-accent/30 bg-trellis-surface"
+                              : "border-trellis-border bg-trellis-surface-2"
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-xs font-medium text-trellis-text">
+                                  {model.label}
+                                </p>
+                                <span className="rounded-full border border-trellis-border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-trellis-faint">
+                                  {model.purpose === "extraction" ? "Notes" : "Search"}
+                                </span>
+                                {model.recommended && (
+                                  <span className="rounded-full border border-trellis-accent/20 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-trellis-accent">
+                                    Recommended
+                                  </span>
+                                )}
+                                {isSelectedExtractionModel && (
+                                  <span className="rounded-full border border-trellis-accent/20 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-trellis-accent">
+                                    Selected
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-1 text-[11px] leading-relaxed text-trellis-muted">
+                                {[
+                                  model.parameterSize,
+                                  formatBytes(model.sizeBytes),
+                                  model.installed ? "Installed" : "Not installed"
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </p>
+                            </div>
+                            {model.installed ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-trellis-accent/20 px-2 py-0.5 text-[10px] text-trellis-accent">
+                                <Check className="h-3 w-3" />
+                                Ready
+                              </span>
+                            ) : (
+                              <span className="rounded-full border border-trellis-border px-2 py-0.5 text-[10px] text-trellis-muted">
+                                Needs install
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {model.installed ? (
+                              <>
+                                {model.purpose === "extraction" && !isSelectedExtractionModel && (
+                                  <button
+                                    type="button"
+                                    className="trellis-accent-button rounded-field border px-2.5 py-1.5 text-xs transition"
+                                    onClick={() => {
+                                      void updatePreferredLocalModel(model.id);
+                                    }}
+                                  >
+                                    Use model
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="rounded-field border border-trellis-border px-2.5 py-1.5 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:text-trellis-faint"
+                                  onClick={() => {
+                                    void removeLocalModel(model);
+                                  }}
+                                  disabled={isBusy}
+                                >
+                                  <span className="flex items-center gap-2">
+                                    {isBusy && busyModelAction?.action === "remove" ? (
+                                      <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    )}
+                                    Remove
+                                  </span>
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                className="trellis-accent-button rounded-field border px-2.5 py-1.5 text-xs transition disabled:text-trellis-faint"
+                                onClick={() => {
+                                  void installLocalModel(model);
+                                }}
+                                disabled={isBusy}
+                              >
+                                <span className="flex items-center gap-2">
+                                  {isBusy && busyModelAction?.action === "install" ? (
+                                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Download className="h-3.5 w-3.5" />
+                                  )}
+                                  Install
+                                </span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              <div className="flex min-h-0 flex-col rounded-panel border border-trellis-border bg-trellis-surface-2/80 px-3 py-3">
+                <div className="flex shrink-0 flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0 max-w-2xl">
+                    <p className="text-xs font-medium text-trellis-text">Note processing diagnostics</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-trellis-muted">
+                      Recent runs on this device (this session): providers, timing, and validation
+                      summaries. Message text is not stored here.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-field border border-trellis-border px-2.5 py-1.5 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:text-trellis-faint"
+                    onClick={() => {
+                      void refreshDebugRuns();
+                    }}
+                    disabled={isRefreshingDebugRuns}
+                  >
+                    <span className="flex items-center gap-2">
+                      {isRefreshingDebugRuns ? (
+                        <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      )}
+                      Refresh
+                    </span>
+                  </button>
+                </div>
+
+                <div
+                  className="trellis-scrollbar mt-3 min-h-0 max-h-[min(28rem,50vh)] overflow-y-auto overscroll-contain pr-0.5"
+                  role="region"
+                  aria-label="Extraction run history"
+                >
+                  {debugRuns.length === 0 ? (
+                    <div className="rounded-panel border border-dashed border-trellis-border px-3 py-3 text-[11px] text-trellis-muted">
+                      No note processing runs logged in this session yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {debugRuns.map((run) => {
+                        const attemptsSummary = formatAttemptSummary(run);
+                        const validationPreview =
+                          run.validationIssues.length > 2
+                            ? `${run.validationIssues.slice(0, 2).join("  |  ")}  |  +${
+                                run.validationIssues.length - 2
+                              } more`
+                            : run.validationIssues.join("  |  ");
+
+                        return (
+                          <div
+                            key={run.id}
+                            className="rounded-panel border border-trellis-border bg-trellis-surface px-3 py-3"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span
+                                  className={cn(
+                                    "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]",
+                                    getDebugStatusClasses(run.status)
+                                  )}
+                                >
+                                  {run.status}
+                                </span>
+                                <span className="rounded-full border border-trellis-border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-trellis-faint">
+                                  {run.scope}
+                                </span>
+                                <span className="rounded-full border border-trellis-border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-trellis-faint">
+                                  {run.mode}
+                                </span>
+                                {run.trigger && (
+                                  <span className="rounded-full border border-trellis-border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-trellis-faint">
+                                    {run.trigger}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-trellis-muted">
+                                {formatDebugTimestamp(run.createdAt)}
+                              </p>
+                            </div>
+
+                            <div className="mt-2 grid gap-2 text-[11px] text-trellis-muted sm:grid-cols-2 xl:grid-cols-4">
+                              <p>
+                                Provider:{" "}
+                                <span className="text-trellis-text">
+                                  {run.selectedProvider ?? "Not selected"}
+                                  {run.model ? ` · ${run.model}` : ""}
+                                </span>
+                              </p>
+                              <p>
+                                Duration:{" "}
+                                <span className="text-trellis-text">
+                                  {formatDebugDuration(run.durationMs, run.status)}
+                                </span>
+                              </p>
+                              <p>
+                                Updates:{" "}
+                                <span className="text-trellis-text">
+                                  {run.requestedUpdateCount ?? 0} requested
+                                  {run.appliedUpdateCount !== null
+                                    ? ` · ${run.appliedUpdateCount} applied`
+                                    : ""}
+                                  {run.guardrailDropCount !== null
+                                    ? ` · ${run.guardrailDropCount} dropped`
+                                    : ""}
+                                </span>
+                              </p>
+                              <p>
+                                Context:{" "}
+                                <span className="text-trellis-text">
+                                  {run.transcriptMessageCount} messages
+                                  {run.relatedNoteCount !== null ? ` · ${run.relatedNoteCount} notes` : ""}
+                                </span>
+                              </p>
+                            </div>
+
+                            <div className="mt-2 grid gap-1.5 text-[11px] text-trellis-muted sm:grid-cols-2">
+                              <p>
+                                Transcript span:{" "}
+                                <span className="text-trellis-text">
+                                  {run.transcriptStartIndex ?? 0} to {run.transcriptEndIndex ?? 0}
+                                </span>
+                              </p>
+                              <p>
+                                Finished:{" "}
+                                <span className="text-trellis-text">
+                                  {formatDebugTimestamp(run.finishedAt)}
+                                </span>
+                              </p>
+                            </div>
+
+                            {attemptsSummary && (
+                              <p className="mt-2 text-[11px] leading-relaxed text-trellis-muted">
+                                Attempts: <span className="text-trellis-text">{attemptsSummary}</span>
+                              </p>
+                            )}
+
+                            {validationPreview && (
+                              <p className="mt-1.5 text-[11px] leading-relaxed text-trellis-muted">
+                                Validation: <span className="text-trellis-text">{validationPreview}</span>
+                              </p>
+                            )}
+
+                            {run.errorMessage && (
+                              <p className="mt-1.5 text-[11px] leading-relaxed text-rose-300">
+                                Issue: {run.errorMessage}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+            </div>
           </div>
         </div>
       </section>
 
-      <aside className="flex min-h-0 flex-col gap-6">
-        <div className="trellis-panel px-6 py-6">
-          <div className="flex items-center gap-3">
+      <aside className="flex min-h-0 flex-col gap-6 overflow-y-auto overscroll-contain">
+        <div className="trellis-panel px-4 py-3">
+          <div className="flex items-center gap-2.5">
             <UserRound className="h-5 w-5 text-trellis-accent" />
             <p className="text-lg text-trellis-text">Account</p>
           </div>
 
-          {authState.status === "authenticated" ? (
+          {workspace.localOnly ? (
             <>
-              <p className="mt-3 text-sm leading-7 text-trellis-muted">
+              <p className="mt-2 text-sm leading-6 text-trellis-muted">
+                Preview workspace is intentionally local-only. It never reuses your real account
+                session, so you can explore the seeded data without touching your normal profile.
+              </p>
+              <div className="mt-3 rounded-panel border border-trellis-border bg-trellis-surface-2 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint">
+                  Preview mode
+                </p>
+                <p className="mt-1 text-sm text-trellis-text">
+                  Browse the seeded history here, then switch to Personal when you want live cloud
+                  chat.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="mt-4 rounded-field border border-trellis-border px-4 py-3 text-sm text-trellis-text transition hover:border-trellis-accent/35"
+                onClick={() => {
+                  void onSwitchWorkspace("personal");
+                }}
+              >
+                Switch to personal workspace
+              </button>
+            </>
+          ) : authState.status === "authenticated" ? (
+            <>
+              <p className="mt-2 text-sm leading-6 text-trellis-muted">
                 You’re signed in on this device. Trellis keeps you logged in between app launches so you can pick up where you left off.
               </p>
-              <div className="mt-5 rounded-panel border border-trellis-border bg-trellis-surface-2 px-4 py-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-trellis-faint">Signed in as</p>
-                <p className="mt-2 text-sm text-trellis-text">{authState.user?.email ?? "Account owner"}</p>
+              <div className="mt-3 rounded-panel border border-trellis-border bg-trellis-surface-2 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint">Signed in as</p>
+                <p className="mt-1 text-sm text-trellis-text">{authState.user?.email ?? "Account owner"}</p>
               </div>
-              <div className="mt-5 rounded-panel border border-trellis-border bg-trellis-surface-2 px-4 py-4">
+              <div className="mt-3 rounded-panel border border-trellis-border bg-trellis-surface-2 px-3 py-2.5">
                 <label className="flex cursor-pointer items-start justify-between gap-3">
                   <span>
-                    <p className="text-sm text-trellis-text">Stay signed in on this device</p>
-                    <p className="mt-1 text-xs leading-6 text-trellis-muted">
+                    <p className="text-sm leading-snug text-trellis-text">Stay signed in on this device</p>
+                    <p className="mt-0.5 text-xs leading-5 text-trellis-muted">
                       Keep your account session between app launches on this computer.
                     </p>
                   </span>
                   <input
                     type="checkbox"
-                    className="mt-1 h-4 w-4 accent-amber-500"
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-amber-500"
                     checked={settings.rememberSession}
                     onChange={(event) => {
                       void updateRememberSession(event.target.checked);
@@ -453,7 +1577,7 @@ export function Settings({ settings, onUpdateSettings }: Props) {
               </div>
               <button
                 type="button"
-                className="mt-5 rounded-field border border-trellis-border px-4 py-3 text-sm text-trellis-text transition hover:border-trellis-accent/35"
+                className="mt-4 rounded-field border border-trellis-border px-4 py-3 text-sm text-trellis-text transition hover:border-trellis-accent/35"
                 onClick={() => {
                   void signOut();
                 }}
@@ -566,51 +1690,69 @@ export function Settings({ settings, onUpdateSettings }: Props) {
           )}
         </div>
 
-        <div className="trellis-panel px-6 py-6">
+        <div className="trellis-panel px-3 py-2">
           <p className="text-lg text-trellis-text">Plan & usage</p>
-          <div className="mt-5 space-y-4 text-sm text-trellis-text">
+          <p className="mt-1 text-[11px] leading-snug text-trellis-muted">
+            {workspace.localOnly
+              ? "Preview uses local sample data, so plan limits do not apply here."
+              : "Your subscription tier and limits. View plans to compare tiers or upgrade to Pro."}
+          </p>
+          <div className="mt-3 space-y-3 text-sm text-trellis-text">
             <div>
               <p className="text-trellis-muted">Tier</p>
-              <p className="mt-1">
-                {authState.subscriptionTier === "pro" ? "Trellis Pro" : "Free trial"}
-              </p>
+              <p className="mt-1">{workspace.localOnly ? "Preview sandbox" : authState.subscriptionTier === "pro" ? "Trellis Pro" : "Free trial"}</p>
             </div>
             <div>
               <p className="text-trellis-muted">Messages</p>
-              <p className="mt-1">
-                {authState.usage.messagesUsed} / {authState.usage.messageLimit}
-              </p>
+              <p className="mt-1">{workspace.localOnly ? "Seeded history only" : `${authState.usage.messagesUsed} / ${authState.usage.messageLimit}`}</p>
             </div>
             <div>
               <p className="text-trellis-muted">Ingests</p>
-              <p className="mt-1">
-                {authState.usage.ingestsUsed} / {authState.usage.ingestLimit}
-              </p>
+              <p className="mt-1">{workspace.localOnly ? "Local-only when available" : `${authState.usage.ingestsUsed} / ${authState.usage.ingestLimit}`}</p>
             </div>
             <div>
               <p className="text-trellis-muted">Status</p>
-              <p className="mt-1 capitalize">{authState.subscriptionStatus}</p>
+              <p className="mt-1 capitalize">
+                {workspace.localOnly ? "isolated" : authState.subscriptionStatus}
+              </p>
             </div>
-            {stripeCheckoutUrl && (
+            {!workspace.localOnly && (
               <button
                 type="button"
-                className="trellis-accent-button rounded-field border px-4 py-3 text-sm transition"
+                className="w-full rounded-field border border-trellis-border px-3 py-2 text-sm text-trellis-text transition hover:border-trellis-accent/35"
                 onClick={() => {
-                  void window.trellis.shell.openExternal(stripeCheckoutUrl).catch((error) => {
-                    pushToast({
-                      title:
-                        error instanceof Error ? error.message : "Could not open the upgrade page.",
-                      tone: "warning"
-                    });
-                  });
+                  setPremiumPlansModalOpen(true);
                 }}
               >
-                Unlock Trellis Pro
+                View plans
               </button>
             )}
           </div>
         </div>
       </aside>
+      </div>
+
+      <PremiumPlansModal
+        open={premiumPlansModalOpen}
+        onClose={() => {
+          setPremiumPlansModalOpen(false);
+        }}
+        subscriptionTier={authState.subscriptionTier}
+        stripeCheckoutUrl={stripeCheckoutUrl}
+        onSubscribePro={() => {
+          if (!stripeCheckoutUrl) {
+            return;
+          }
+          setPremiumPlansModalOpen(false);
+          void window.trellis.shell.openExternal(stripeCheckoutUrl).catch((error) => {
+            pushToast({
+              title:
+                error instanceof Error ? error.message : "Could not open the upgrade page.",
+              tone: "warning"
+            });
+          });
+        }}
+      />
     </div>
   );
 }

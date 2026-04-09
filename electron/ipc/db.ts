@@ -18,14 +18,34 @@ const createSessionSchema = z.object({
 
 const sessionIdSchema = z.string().uuid();
 
-const messageSchema = z.object({
-  id: z.string().uuid(),
-  sessionId: sessionIdSchema,
-  role: z.enum(["user", "assistant"]),
-  content: z.string().min(1),
-  createdAt: z.number().int(),
-  tokens: z.number().int().nullable()
+const chatAttachmentSchema = z.object({
+  kind: z.enum(["file", "url"]),
+  label: z.string().min(1).max(500),
+  text: z.string().min(1).max(500_000),
+  sourceUrl: z.string().url().optional()
 });
+
+const messageSchema = z
+  .object({
+    id: z.string().uuid(),
+    sessionId: sessionIdSchema,
+    role: z.enum(["user", "assistant"]),
+    content: z.string().max(200_000),
+    createdAt: z.number().int(),
+    tokens: z.number().int().nullable(),
+    attachments: z.array(chatAttachmentSchema).max(12).optional()
+  })
+  .superRefine((value, ctx) => {
+    const hasText = value.content.trim().length > 0;
+    const hasAttachments = (value.attachments?.length ?? 0) > 0;
+
+    if (!hasText && !hasAttachments) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Message needs non-empty content or at least one attachment."
+      });
+    }
+  });
 
 const sessionUpdateSchema = z.object({
   id: sessionIdSchema,
@@ -40,7 +60,7 @@ const sessionUpdateSchema = z.object({
 const wikiOpSchema = z.object({
   sessionId: sessionIdSchema.optional(),
   file: z.string().min(1),
-  action: z.enum(["create", "update", "append"])
+  action: z.enum(["create", "rewrite", "append"])
 });
 
 const replaceMessagesSchema = z.object({

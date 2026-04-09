@@ -2,10 +2,12 @@ import { create } from "zustand";
 import {
   defaultChatModel,
   normalizeChatModel,
+  type AppWorkspaceId,
   type ChatModel,
   type ChatSessionSummary,
   type MessageRecord
 } from "@electron/ipc/types";
+import { readWorkspaceLocalStorage, writeWorkspaceLocalStorage } from "@/lib/workspace";
 
 export interface MessageMeta {
   status: "pending" | "failed";
@@ -21,6 +23,8 @@ interface ChatState {
   awaitingFirstToken: boolean;
   activeModel: ChatModel;
   lastExtractedMessageCount: Record<string, number>;
+  workspaceId: AppWorkspaceId;
+  hydrateWorkspace: (workspaceId: AppWorkspaceId, sessions: ChatSessionSummary[]) => void;
   hydrateSessions: (sessions: ChatSessionSummary[]) => void;
   setActiveSession: (sessionId: string | null) => void;
   setSessionMessages: (sessionId: string, messages: MessageRecord[]) => void;
@@ -38,11 +42,7 @@ interface ChatState {
 }
 
 function getStoredModel(): ChatModel | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const value = window.localStorage.getItem("trellis:model");
+  const value = readWorkspaceLocalStorage("model");
 
   return value ? normalizeChatModel(value) : null;
 }
@@ -77,10 +77,52 @@ export const useChatStore = create<ChatState>((set) => ({
   awaitingFirstToken: false,
   activeModel: storedModel ?? defaultChatModel,
   lastExtractedMessageCount: {},
+  workspaceId: "personal",
+  hydrateWorkspace: (workspaceId, sessions) =>
+    set(() => {
+      const sortedSessions = sortSessions(sessions);
+
+      return {
+        workspaceId,
+        sessions: sortedSessions,
+        activeSessionId: sortedSessions[0]?.id ?? null,
+        messagesBySession: {},
+        messageMetaById: {},
+        lastExtractedMessageCount: {},
+        activeModel: normalizeChatModel(
+          readWorkspaceLocalStorage("model", workspaceId) ?? defaultChatModel
+        )
+      };
+    }),
   hydrateSessions: (sessions) =>
-    set({
-      sessions: sortSessions(sessions),
-      activeSessionId: sessions[0]?.id ?? null
+    set((state) => {
+      const sortedSessions = sortSessions(sessions);
+      const activeSessionStillExists = sortedSessions.some(
+        (session) => session.id === state.activeSessionId
+      );
+      const allowedSessionIds = new Set(sortedSessions.map((session) => session.id));
+      const nextMessagesBySession = Object.fromEntries(
+        Object.entries(state.messagesBySession).filter(([sessionId]) =>
+          allowedSessionIds.has(sessionId)
+        )
+      );
+
+      return {
+        sessions: sortedSessions,
+        activeSessionId: activeSessionStillExists
+          ? state.activeSessionId
+          : (sortedSessions[0]?.id ?? null),
+        messagesBySession: nextMessagesBySession,
+        messageMetaById: filterMessageMetaByCurrentMessages(
+          state.messageMetaById,
+          nextMessagesBySession
+        ),
+        lastExtractedMessageCount: Object.fromEntries(
+          Object.entries(state.lastExtractedMessageCount).filter(([sessionId]) =>
+            allowedSessionIds.has(sessionId)
+          )
+        )
+      };
     }),
   setActiveSession: (sessionId) => set({ activeSessionId: sessionId }),
   setSessionMessages: (sessionId, messages) =>
@@ -179,10 +221,10 @@ export const useChatStore = create<ChatState>((set) => ({
   setStreaming: (value) => set({ isStreaming: value }),
   setAwaitingFirstToken: (value) => set({ awaitingFirstToken: value }),
   setActiveModel: (model) => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem("trellis:model", model);
-    }
-    set({ activeModel: model });
+    set((state) => {
+      writeWorkspaceLocalStorage("model", model, state.workspaceId);
+      return { activeModel: model };
+    });
   },
   markExtracted: (sessionId, messageCount) =>
     set((state) => ({

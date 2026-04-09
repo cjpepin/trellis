@@ -1,4 +1,4 @@
-import { Pencil, RotateCcw, TriangleAlert } from "lucide-react";
+import { Link2, Paperclip, Pencil, RotateCcw, TriangleAlert } from "lucide-react";
 import type { MessageRecord } from "@electron/ipc/types";
 import { cn } from "@/lib/utils";
 import type { MessageMeta } from "@/store/chatStore";
@@ -64,15 +64,34 @@ export function MessageBubble({
             isFailed && "border-trellis-error"
           )}
         >
+          {isUser && message.attachments && message.attachments.length > 0 && (
+            <div className="mb-3 flex flex-wrap justify-end gap-1.5">
+              {message.attachments.map((attachment, index) => (
+                <span
+                  key={`${attachment.label}-${index}`}
+                  className="inline-flex max-w-[min(100%,220px)] items-center gap-1 rounded-full border border-trellis-border bg-trellis-surface-2 px-2.5 py-0.5 text-[11px] text-trellis-muted"
+                >
+                  {attachment.kind === "url" ? (
+                    <Link2 className="h-3 w-3 shrink-0 text-trellis-accent" aria-hidden />
+                  ) : (
+                    <Paperclip className="h-3 w-3 shrink-0 text-trellis-accent" aria-hidden />
+                  )}
+                  <span className="min-w-0 truncate text-trellis-text">{attachment.label}</span>
+                </span>
+              ))}
+            </div>
+          )}
           {waitingForTokens && message.content.length === 0 ? (
             <StreamingIndicator />
-          ) : (
+          ) : message.content.trim().length > 0 ? (
             <RichTextRenderer
               markdown={message.content}
               existingSlugs={existingSlugs}
               className="trellis-chat-copy text-left"
               onOpenNote={onOpenNote}
             />
+          ) : (
+            <p className="text-sm italic text-trellis-muted">No message text (attachments only).</p>
           )}
         </div>
         {(isFailed || isPending || canEdit || canRetry) && (

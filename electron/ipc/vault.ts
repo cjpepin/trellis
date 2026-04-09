@@ -6,18 +6,24 @@ import YAML from "yaml";
 import { z } from "zod";
 import type {
   AppSettings,
+  CreateFolderInput,
   CreateStubInput,
+  DeleteFolderInput,
+  DeleteNoteInput,
+  FolderSummary,
   GraphData,
   GraphEdge,
   GraphNode,
   NoteFrontmatter,
   NoteSummary,
+  RenameFolderInput,
   SaveNoteInput,
   SaveNoteResult,
   VaultSnapshot,
   WikiNote
 } from "./types";
 import { ipcChannels } from "./types";
+import { rebuildVaultEmbeddings, syncNoteEmbeddings } from "../lib/retrieval/index";
 
 const noteTypeSchema = z.enum([
   "concept",
@@ -28,8 +34,17 @@ const noteTypeSchema = z.enum([
 
 const createStubSchema = z.object({
   title: z.string().min(1).max(120),
+  folderPath: z.string().nullable().optional(),
   vaultId: z.string().min(1).optional()
 });
+
+const folderPathSchema = z
+  .string()
+  .trim()
+  .transform((value) => value.replace(/\\/g, "/"))
+  .refine((value) => !value.startsWith("/") && !value.includes(".."), {
+    message: "Folder paths must stay inside the wiki root."
+  });
 
 const slugSchema = z
   .string()
@@ -39,6 +54,8 @@ const slugSchema = z
 const saveNoteSchema = z.object({
   vaultId: z.string().min(1).optional(),
   slug: slugSchema.optional(),
+  relativePath: z.string().min(1).optional(),
+  folderPath: z.string().nullable().optional(),
   title: z.string().min(1).max(120),
   content: z.string(),
   frontmatter: z
@@ -59,6 +76,30 @@ const noteLookupSchema = z.object({
   vaultId: z.string().min(1).optional()
 });
 
+const deleteNoteSchema = z.object({
+  slug: slugSchema,
+  relativePath: z.string().min(1).optional(),
+  vaultId: z.string().min(1).optional()
+});
+
+const createFolderSchema = z.object({
+  name: z.string().min(1).max(120),
+  parentPath: z.string().nullable().optional(),
+  vaultId: z.string().min(1).optional()
+});
+
+const renameFolderSchema = z.object({
+  path: folderPathSchema,
+  name: z.string().min(1).max(120),
+  parentPath: z.string().nullable().optional(),
+  vaultId: z.string().min(1).optional()
+});
+
+const deleteFolderSchema = z.object({
+  path: folderPathSchema,
+  vaultId: z.string().min(1).optional()
+});
+
 function slugifyNoteTitle(title: string): string {
   const slug = title
     .trim()
@@ -67,6 +108,30 @@ function slugifyNoteTitle(title: string): string {
     .replace(/^-+|-+$/g, "");
 
   return slug || "untitled-note";
+}
+
+function sanitizePathSegment(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/^\.+$/, "")
+    .trim();
+
+  return sanitized || "Untitled";
+}
+
+function normalizeFolderPath(value: string | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  return value
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((segment) => sanitizePathSegment(segment))
+    .filter(Boolean)
+    .join("/");
 }
 
 function getToday(): string {
@@ -109,13 +174,15 @@ function buildFrontmatter(
   overrides: Partial<NoteFrontmatter> | undefined
 ): NoteFrontmatter {
   const today = getToday();
+  const nextTags = [...new Set((overrides?.tags ?? existing?.tags ?? []).map((tag) => tag.trim().toLowerCase()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
 
   return {
     title,
     created: overrides?.created ?? existing?.created ?? today,
     updated: overrides?.updated ?? today,
     sources: overrides?.sources ?? existing?.sources ?? 0,
-    tags: overrides?.tags ?? existing?.tags ?? [],
+    tags: nextTags,
     type: overrides?.type ?? existing?.type ?? "concept",
     url: overrides?.url ?? existing?.url
   };
@@ -137,6 +204,10 @@ function serializeNote(frontmatter: NoteFrontmatter, content: string): string {
 
 function summariseContent(content: string): string {
   return content.replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+function toPosixRelative(from: string, targetPath: string): string {
+  return path.relative(from, targetPath).split(path.sep).join("/");
 }
 
 async function ensureDirectory(targetPath: string): Promise<void> {
@@ -176,12 +247,12 @@ function isEnoent(error: unknown): boolean {
  * Loads a wiki note; if the file is missing (e.g. graph placeholder never materialized),
  * creates a minimal empty page so navigation and editors succeed.
  */
-async function readNoteOrCreateIfMissing(vaultPath: string, slug: string): Promise<WikiNote> {
+export async function readNoteOrCreateIfMissing(vaultPath: string, slug: string): Promise<WikiNote> {
   await ensureVaultLayout(vaultPath);
-  const targetPath = ensureInsideVault(
-    vaultPath,
-    path.join(vaultPath, "wiki", `${slug}.md`)
-  );
+  const existingPath = await findNotePathBySlug(vaultPath, slug);
+  const targetPath =
+    existingPath ??
+    ensureInsideVault(vaultPath, path.join(vaultPath, "wiki", `${slug}.md`));
 
   try {
     await fs.access(targetPath);
@@ -194,16 +265,22 @@ async function readNoteOrCreateIfMissing(vaultPath: string, slug: string): Promi
       type: "concept",
       tags: []
     });
+    await ensureDirectory(path.dirname(targetPath));
     await fs.writeFile(targetPath, serializeNote(frontmatter, ""), "utf8");
   }
 
-  return parseNote(targetPath);
+  return parseNote(vaultPath, targetPath);
 }
 
-async function parseNote(filePath: string): Promise<WikiNote> {
+async function parseNote(vaultPath: string, filePath: string): Promise<WikiNote> {
   const file = await fs.readFile(filePath, "utf8");
   const parsed = matter(file);
   const slug = path.basename(filePath, ".md");
+  const wikiRoot = path.join(vaultPath, "wiki");
+  const relativePath = toPosixRelative(wikiRoot, filePath);
+  const folderPath = path.posix.dirname(relativePath) === "."
+    ? ""
+    : path.posix.dirname(relativePath);
   const frontmatter = parsed.data as Partial<NoteFrontmatter>;
   const links = extractWikiLinks(parsed.content);
 
@@ -218,10 +295,94 @@ async function parseNote(filePath: string): Promise<WikiNote> {
     type: noteTypeSchema.catch("concept").parse(frontmatter.type),
     excerpt: summariseContent(parsed.content),
     inboundCount: 0,
+    folderPath,
+    relativePath,
     content: parsed.content.trim(),
     links,
     sources: typeof frontmatter.sources === "number" ? frontmatter.sources : 0
   };
+}
+
+async function walkWikiTree(
+  vaultPath: string,
+  currentPath: string,
+  relativeFolder = ""
+): Promise<{ notes: WikiNote[]; folderPaths: string[] }> {
+  const entries = await fs.readdir(currentPath, { withFileTypes: true });
+  const notes: WikiNote[] = [];
+  const folderPaths: string[] = [];
+
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const entryPath = path.join(currentPath, entry.name);
+
+    if (entry.isDirectory()) {
+      const nextFolder = relativeFolder ? `${relativeFolder}/${entry.name}` : entry.name;
+      folderPaths.push(nextFolder);
+      const nested = await walkWikiTree(vaultPath, entryPath, nextFolder);
+      notes.push(...nested.notes);
+      folderPaths.push(...nested.folderPaths);
+      continue;
+    }
+
+    if (!entry.isFile() || !entry.name.endsWith(".md")) {
+      continue;
+    }
+
+    try {
+      notes.push(await parseNote(vaultPath, entryPath));
+    } catch (error) {
+      console.warn(`Skipping invalid note: ${entry.name}`, error);
+    }
+  }
+
+  return { notes, folderPaths };
+}
+
+async function findNotePathBySlug(vaultPath: string, slug: string): Promise<string | null> {
+  const notes = await readAllNotes(vaultPath);
+  const match = notes.find((note) => note.slug === slug);
+
+  if (!match) {
+    return null;
+  }
+
+  return ensureInsideVault(vaultPath, path.join(vaultPath, "wiki", match.relativePath));
+}
+
+async function ensureUniqueSlug(
+  vaultPath: string,
+  desiredSlug: string,
+  ignoreRelativePath?: string
+): Promise<string> {
+  const existing = await readAllNotes(vaultPath);
+  const usedSlugs = new Set(
+    existing
+      .filter((note) => note.relativePath !== ignoreRelativePath)
+      .map((note) => note.slug)
+  );
+
+  if (!usedSlugs.has(desiredSlug)) {
+    return desiredSlug;
+  }
+
+  let index = 2;
+  while (usedSlugs.has(`${desiredSlug}-${index}`)) {
+    index += 1;
+  }
+
+  return `${desiredSlug}-${index}`;
+}
+
+function buildFolderSummaries(notes: WikiNote[], folderPaths: string[]): FolderSummary[] {
+  const uniquePaths = [...new Set(folderPaths)].sort((left, right) => left.localeCompare(right));
+
+  return uniquePaths.map((folderPath) => ({
+    path: folderPath,
+    name: folderPath.split("/").at(-1) ?? folderPath,
+    noteCount: notes.filter(
+      (note) => note.folderPath === folderPath || note.folderPath.startsWith(`${folderPath}/`)
+    ).length
+  }));
 }
 
 function buildGraph(notes: WikiNote[]): GraphData {
@@ -289,27 +450,13 @@ function buildGraph(notes: WikiNote[]): GraphData {
 async function readAllNotes(vaultPath: string): Promise<WikiNote[]> {
   await ensureVaultLayout(vaultPath);
   const wikiPath = path.join(vaultPath, "wiki");
-  const files = await fs.readdir(wikiPath);
-  const notes = await Promise.all(
-    files
-      .filter((file) => file.endsWith(".md"))
-      .map(async (file) => {
-        try {
-          return await parseNote(path.join(wikiPath, file));
-        } catch (error) {
-          console.warn(`Skipping invalid note: ${file}`, error);
-          return null;
-        }
-      })
-  );
-
-  const validNotes = notes.filter((note): note is WikiNote => note !== null);
+  const { notes: validNotes } = await walkWikiTree(vaultPath, wikiPath);
   buildGraph(validNotes);
 
   return validNotes.sort((left, right) => right.updated.localeCompare(left.updated));
 }
 
-function resolveVault(settings: AppSettings, vaultId?: string) {
+export function resolveVault(settings: AppSettings, vaultId?: string) {
   const resolvedVault =
     settings.vaults.find((vault) => vault.id === vaultId) ??
     settings.vaults.find((vault) => vault.id === settings.activeVaultId) ??
@@ -322,18 +469,20 @@ function resolveVault(settings: AppSettings, vaultId?: string) {
   return resolvedVault;
 }
 
-async function buildSnapshot(
+export async function buildSnapshot(
   vaultPath: string,
   vaultId = "active-vault",
   vaultName = "Current Vault"
 ): Promise<VaultSnapshot> {
   const notes = await readAllNotes(vaultPath);
+  const { folderPaths } = await walkWikiTree(vaultPath, path.join(vaultPath, "wiki"));
   const graph = buildGraph(notes);
 
   return {
     vaultId,
     vaultName,
     vaultPath,
+    folders: buildFolderSummaries(notes, folderPaths),
     graph,
     notes: notes.map((note) => ({
       slug: note.slug,
@@ -342,7 +491,9 @@ async function buildSnapshot(
       tags: note.tags,
       type: note.type,
       excerpt: note.excerpt,
-      inboundCount: note.inboundCount
+      inboundCount: note.inboundCount,
+      folderPath: note.folderPath,
+      relativePath: note.relativePath
     }))
   };
 }
@@ -356,40 +507,168 @@ async function readExistingFrontmatter(filePath: string): Promise<Partial<NoteFr
   }
 }
 
-async function writeNoteFile(vaultPath: string, input: SaveNoteInput): Promise<SaveNoteResult> {
+async function removeEmptyWikiDirectories(vaultPath: string, startingDirectory: string): Promise<void> {
+  const wikiRoot = path.join(vaultPath, "wiki");
+  let currentPath = startingDirectory;
+
+  while (currentPath.startsWith(wikiRoot) && currentPath !== wikiRoot) {
+    const entries = await fs.readdir(currentPath);
+
+    if (entries.length > 0) {
+      break;
+    }
+
+    await fs.rmdir(currentPath);
+    currentPath = path.dirname(currentPath);
+  }
+}
+
+export async function writeNoteFile(
+  vaultPath: string,
+  vaultId: string,
+  input: SaveNoteInput
+): Promise<SaveNoteResult> {
   await ensureVaultLayout(vaultPath);
-  const slug = input.slug && input.slug.length > 0 ? input.slug : slugifyNoteTitle(input.title);
-  const targetPath = ensureInsideVault(
-    vaultPath,
-    path.join(vaultPath, "wiki", `${slug}.md`)
+  const wikiRoot = path.join(vaultPath, "wiki");
+  const existingPath = input.relativePath
+    ? ensureInsideVault(vaultPath, path.join(wikiRoot, input.relativePath))
+    : input.slug
+    ? await findNotePathBySlug(vaultPath, input.slug)
+    : null;
+  const existingRelativePath = existingPath ? toPosixRelative(wikiRoot, existingPath) : undefined;
+  const slug =
+    input.slug && input.slug.length > 0
+      ? input.slug
+      : await ensureUniqueSlug(vaultPath, slugifyNoteTitle(input.title), existingRelativePath);
+  const folderPath = normalizeFolderPath(
+    input.folderPath ??
+      (existingRelativePath
+        ? path.posix.dirname(existingRelativePath) === "."
+          ? ""
+          : path.posix.dirname(existingRelativePath)
+        : "")
   );
+  const targetPath = ensureInsideVault(vaultPath, path.join(wikiRoot, folderPath, `${slug}.md`));
   const parsedContent = input.content.trim().startsWith("---")
     ? matter(input.content)
     : { content: input.content, data: {} };
-  const existingFrontmatter = await readExistingFrontmatter(targetPath);
+  const existingFrontmatter = await readExistingFrontmatter(existingPath ?? targetPath);
   const frontmatter = buildFrontmatter(input.title, existingFrontmatter, {
     ...parsedContent.data,
     ...input.frontmatter
   });
 
+  await ensureDirectory(path.dirname(targetPath));
   await fs.writeFile(targetPath, serializeNote(frontmatter, parsedContent.content), "utf8");
 
+  if (existingPath && existingPath !== targetPath) {
+    await fs.unlink(existingPath);
+    await removeEmptyWikiDirectories(vaultPath, path.dirname(existingPath));
+  }
+
+  const note = await parseNote(vaultPath, targetPath);
+  await syncNoteEmbeddings(vaultId, note);
+
   return {
-    note: await parseNote(targetPath),
+    note,
     graph: (await buildSnapshot(vaultPath)).graph
   };
 }
 
-async function createStubNote(vaultPath: string, input: CreateStubInput): Promise<SaveNoteResult> {
+async function createStubNote(
+  vaultPath: string,
+  vaultId: string,
+  input: CreateStubInput
+): Promise<SaveNoteResult> {
   const title = input.title.trim();
-  return writeNoteFile(vaultPath, {
+  return writeNoteFile(vaultPath, vaultId, {
     title,
+    folderPath: input.folderPath,
     content: `# ${title}\n\nThis note is ready for expansion.\n`,
     frontmatter: {
       type: "concept",
       tags: []
     }
   });
+}
+
+async function deleteNoteFile(
+  vaultPath: string,
+  vaultId: string,
+  input: DeleteNoteInput
+): Promise<VaultSnapshot> {
+  await ensureVaultLayout(vaultPath);
+  const wikiRoot = path.join(vaultPath, "wiki");
+  const targetPath = input.relativePath
+    ? ensureInsideVault(vaultPath, path.join(wikiRoot, input.relativePath))
+    : await findNotePathBySlug(vaultPath, input.slug);
+
+  if (!targetPath) {
+    throw new Error("Could not find that note.");
+  }
+
+  await fs.unlink(targetPath);
+  await removeEmptyWikiDirectories(vaultPath, path.dirname(targetPath));
+  const snapshot = await buildSnapshot(vaultPath);
+  await rebuildVaultEmbeddings(vaultId, await readAllNotes(vaultPath));
+  return snapshot;
+}
+
+async function createFolder(
+  vaultPath: string,
+  input: CreateFolderInput
+): Promise<VaultSnapshot> {
+  await ensureVaultLayout(vaultPath);
+  const parentPath = normalizeFolderPath(input.parentPath);
+  const folderName = sanitizePathSegment(input.name);
+  const targetPath = ensureInsideVault(
+    vaultPath,
+    path.join(vaultPath, "wiki", parentPath, folderName)
+  );
+  await ensureDirectory(targetPath);
+  return buildSnapshot(vaultPath);
+}
+
+async function renameFolder(
+  vaultPath: string,
+  input: RenameFolderInput
+): Promise<VaultSnapshot> {
+  await ensureVaultLayout(vaultPath);
+  const sourcePath = ensureInsideVault(vaultPath, path.join(vaultPath, "wiki", input.path));
+  const targetParentPath = ensureInsideVault(
+    vaultPath,
+    path.join(vaultPath, "wiki", normalizeFolderPath(input.parentPath))
+  );
+  const targetPath = ensureInsideVault(
+    vaultPath,
+    path.join(targetParentPath, sanitizePathSegment(input.name))
+  );
+
+  if (sourcePath === targetPath) {
+    return buildSnapshot(vaultPath);
+  }
+
+  if (targetPath.startsWith(`${sourcePath}${path.sep}`)) {
+    throw new Error("A folder cannot be moved inside itself.");
+  }
+
+  await ensureDirectory(path.dirname(targetPath));
+
+  await fs.rename(sourcePath, targetPath);
+  return buildSnapshot(vaultPath);
+}
+
+async function deleteFolder(
+  vaultPath: string,
+  vaultId: string,
+  input: DeleteFolderInput
+): Promise<VaultSnapshot> {
+  await ensureVaultLayout(vaultPath);
+  const targetPath = ensureInsideVault(vaultPath, path.join(vaultPath, "wiki", input.path));
+  await fs.rm(targetPath, { recursive: true, force: true });
+  const notes = await readAllNotes(vaultPath);
+  await rebuildVaultEmbeddings(vaultId, notes);
+  return buildSnapshot(vaultPath);
 }
 
 export function registerVaultIpc(getSettings: () => AppSettings): void {
@@ -406,12 +685,32 @@ export function registerVaultIpc(getSettings: () => AppSettings): void {
   ipcMain.handle(ipcChannels.vaultWriteNote, async (_event, input: unknown) => {
     const parsed = saveNoteSchema.parse(input);
     const vault = resolveVault(getSettings(), parsed.vaultId);
-    return writeNoteFile(vault.path, parsed);
+    return writeNoteFile(vault.path, vault.id, parsed);
   });
   ipcMain.handle(ipcChannels.vaultCreateStub, async (_event, input: unknown) => {
     const parsed = createStubSchema.parse(input);
     const vault = resolveVault(getSettings(), parsed.vaultId);
-    return createStubNote(vault.path, parsed);
+    return createStubNote(vault.path, vault.id, parsed);
+  });
+  ipcMain.handle(ipcChannels.vaultDeleteNote, async (_event, input: unknown) => {
+    const parsed = deleteNoteSchema.parse(input);
+    const vault = resolveVault(getSettings(), parsed.vaultId);
+    return deleteNoteFile(vault.path, vault.id, parsed);
+  });
+  ipcMain.handle(ipcChannels.vaultCreateFolder, async (_event, input: unknown) => {
+    const parsed = createFolderSchema.parse(input);
+    const vault = resolveVault(getSettings(), parsed.vaultId);
+    return createFolder(vault.path, parsed);
+  });
+  ipcMain.handle(ipcChannels.vaultRenameFolder, async (_event, input: unknown) => {
+    const parsed = renameFolderSchema.parse(input);
+    const vault = resolveVault(getSettings(), parsed.vaultId);
+    return renameFolder(vault.path, parsed);
+  });
+  ipcMain.handle(ipcChannels.vaultDeleteFolder, async (_event, input: unknown) => {
+    const parsed = deleteFolderSchema.parse(input);
+    const vault = resolveVault(getSettings(), parsed.vaultId);
+    return deleteFolder(vault.path, vault.id, parsed);
   });
   ipcMain.handle(ipcChannels.vaultSelectDirectory, async () => {
     const result = await dialog.showOpenDialog({
@@ -443,4 +742,4 @@ export async function saveRawSource(
   return targetPath;
 }
 
-export { buildSnapshot, ensureVaultLayout, slugifyNoteTitle };
+export { ensureVaultLayout, readAllNotes, slugifyNoteTitle };
