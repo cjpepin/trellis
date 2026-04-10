@@ -4,6 +4,7 @@
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
     "types": ["node"],
     "jsx": "react-jsx",
     "allowJs": false,
@@ -20,5 +21,5 @@
       "@shared/*": ["shared/*"]
     }
   },
-  "include": ["src", "electron", "shared", "vite.config.ts"]
+  "include": ["src", "electron", "shared", "tests/e2e", "vite.config.ts", "playwright.config.ts"]
 }

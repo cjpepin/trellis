@@ -4,7 +4,7 @@ import { corsHeaders } from "./http.ts";
 export interface ProfileRow {
   id: string;
   email: string | null;
-  subscription_tier: "trial" | "pro";
+  subscription_tier: "trial" | "byok" | "pro";
   subscription_status: "trialing" | "active" | "expired";
   messages_used: number;
   message_limit: number;
@@ -198,6 +198,10 @@ export function assertEntitlement(profile: ProfileRow, kind: "message" | "ingest
     return;
   }
 
+  if (kind === "message" && profile.subscription_tier === "byok") {
+    return;
+  }
+
   const used = kind === "message" ? profile.messages_used : profile.ingests_used;
   const limit = kind === "message" ? profile.message_limit : profile.ingest_limit;
 
@@ -217,30 +221,33 @@ export async function incrementUsage(
   userId: string,
   kind: "message" | "ingest",
   amount: number,
-  metadata: Record<string, unknown>
+  metadata: Record<string, unknown>,
+  options?: { skipCounterUpdate?: boolean }
 ): Promise<void> {
   const field = kind === "message" ? "messages_used" : "ingests_used";
-  const profile = await admin
-    .from("profiles")
-    .select(field)
-    .eq("id", userId)
-    .single();
+  if (!options?.skipCounterUpdate) {
+    const profile = await admin
+      .from("profiles")
+      .select(field)
+      .eq("id", userId)
+      .single();
 
-  if (profile.error || !profile.data) {
-    throw profile.error ?? new Error("Could not fetch usage counters.");
-  }
+    if (profile.error || !profile.data) {
+      throw profile.error ?? new Error("Could not fetch usage counters.");
+    }
 
-  const currentValue = profile.data[field] ?? 0;
-  const { error: updateError } = await admin
-    .from("profiles")
-    .update({
-      [field]: currentValue + amount,
-      updated_at: new Date().toISOString()
-    })
-    .eq("id", userId);
+    const currentValue = profile.data[field] ?? 0;
+    const { error: updateError } = await admin
+      .from("profiles")
+      .update({
+        [field]: currentValue + amount,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", userId);
 
-  if (updateError) {
-    throw updateError;
+    if (updateError) {
+      throw updateError;
+    }
   }
 
   const { error: usageError } = await admin.from("usage_events").insert({

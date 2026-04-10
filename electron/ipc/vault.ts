@@ -10,10 +10,14 @@ import type {
   CreateStubInput,
   DeleteFolderInput,
   DeleteNoteInput,
+  ExportToObsidianInput,
+  ExportToObsidianResult,
   FolderSummary,
   GraphData,
   GraphEdge,
   GraphNode,
+  ImportFromObsidianInput,
+  ImportFromObsidianResult,
   NoteFrontmatter,
   NoteSummary,
   RenameFolderInput,
@@ -100,6 +104,35 @@ const deleteFolderSchema = z.object({
   vaultId: z.string().min(1).optional()
 });
 
+const selectDirectorySchema = z.object({
+  title: z.string().min(1).max(120).optional(),
+  buttonLabel: z.string().min(1).max(40).optional()
+});
+
+const importFromObsidianSchema = z.object({
+  sourcePath: z.string().min(1),
+  vaultId: z.string().min(1).optional()
+});
+
+const exportToObsidianSchema = z.object({
+  targetPath: z.string().min(1),
+  vaultId: z.string().min(1).optional()
+});
+
+interface ObsidianImportCandidate {
+  content: string;
+  folderPath: string;
+  originalSlug: string;
+  relativePath: string;
+  title: string;
+  frontmatter: Partial<NoteFrontmatter>;
+}
+
+interface ObsidianResolvedImportCandidate extends ObsidianImportCandidate {
+  resolvedSlug: string;
+  resolvedTitle: string;
+}
+
 function slugifyNoteTitle(title: string): string {
   const slug = title
     .trim()
@@ -168,6 +201,18 @@ function humanizeSlug(slug: string): string {
     .join(" ");
 }
 
+function humanizeFileName(fileName: string): string {
+  return fileName
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function buildFrontmatter(
   title: string,
   existing: Partial<NoteFrontmatter> | undefined,
@@ -212,6 +257,15 @@ function toPosixRelative(from: string, targetPath: string): string {
 
 async function ensureDirectory(targetPath: string): Promise<void> {
   await fs.mkdir(targetPath, { recursive: true });
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function ensureVaultLayout(vaultPath: string): Promise<void> {
@@ -507,6 +561,282 @@ async function readExistingFrontmatter(filePath: string): Promise<Partial<NoteFr
   }
 }
 
+function normalizeImportedTags(tags: unknown): string[] {
+  if (Array.isArray(tags)) {
+    return tags
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  if (typeof tags === "string") {
+    return tags
+      .split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function normalizeImportedType(value: unknown): NoteFrontmatter["type"] | undefined {
+  const parsed = noteTypeSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function normalizeImportedDate(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function rewriteImportedLinks(
+  content: string,
+  titleByOriginalSlug: ReadonlyMap<string, string>
+): string {
+  return content.replace(/\[\[([^\]]+)\]\]/g, (fullMatch, rawTarget: string) => {
+    const target = rawTarget.trim();
+
+    if (!target || target.includes("|") || target.includes("#")) {
+      return fullMatch;
+    }
+
+    const nextTitle = titleByOriginalSlug.get(slugifyNoteTitle(target));
+    return nextTitle ? `[[${nextTitle}]]` : fullMatch;
+  });
+}
+
+function buildImportRootFolder(sourcePath: string): string {
+  const sourceName = slugifyNoteTitle(path.basename(sourcePath)) || "obsidian-vault";
+  return path.posix.join("imports", `obsidian-${sourceName}`);
+}
+
+async function listObsidianMarkdownFiles(rootPath: string): Promise<string[]> {
+  const resolvedRoot = path.resolve(rootPath);
+  const results: string[] = [];
+
+  async function walk(currentPath: string): Promise<void> {
+    const entries = await fs.readdir(currentPath, { withFileTypes: true });
+
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (entry.name.startsWith(".")) {
+        continue;
+      }
+
+      const entryPath = path.join(currentPath, entry.name);
+
+      if (entry.isDirectory()) {
+        await walk(entryPath);
+        continue;
+      }
+
+      if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+        results.push(ensureInsideVault(resolvedRoot, entryPath));
+      }
+    }
+  }
+
+  await walk(resolvedRoot);
+  return results;
+}
+
+async function writeImportedNoteAtRelativePath(
+  vaultPath: string,
+  relativePath: string,
+  title: string,
+  content: string,
+  frontmatterOverrides: Partial<NoteFrontmatter>
+): Promise<void> {
+  const wikiRoot = path.join(vaultPath, "wiki");
+  const targetPath = ensureInsideVault(vaultPath, path.join(wikiRoot, relativePath));
+  const existingFrontmatter = await readExistingFrontmatter(targetPath);
+  const frontmatter = buildFrontmatter(title, existingFrontmatter, frontmatterOverrides);
+
+  await ensureDirectory(path.dirname(targetPath));
+  await fs.writeFile(targetPath, serializeNote(frontmatter, content), "utf8");
+}
+
+async function readObsidianImportCandidates(sourcePath: string): Promise<ObsidianImportCandidate[]> {
+  const markdownFiles = await listObsidianMarkdownFiles(sourcePath);
+
+  return Promise.all(
+    markdownFiles.map(async (filePath) => {
+      const file = await fs.readFile(filePath, "utf8");
+      const parsed = matter(file);
+      const fileName = path.basename(filePath, path.extname(filePath));
+      const wikiTitle =
+        typeof parsed.data.title === "string" && parsed.data.title.trim().length > 0
+          ? parsed.data.title.trim()
+          : humanizeFileName(fileName) || humanizeSlug(slugifyNoteTitle(fileName));
+      const relativePath = toPosixRelative(path.resolve(sourcePath), filePath);
+      const folderPath = path.posix.dirname(relativePath) === "."
+        ? ""
+        : path.posix.dirname(relativePath);
+      const today = getToday();
+
+      return {
+        content: parsed.content.trim(),
+        folderPath,
+        originalSlug: slugifyNoteTitle(wikiTitle),
+        relativePath,
+        title: wikiTitle,
+        frontmatter: {
+          created: normalizeImportedDate(parsed.data.created, today),
+          updated: normalizeImportedDate(parsed.data.updated, today),
+          sources:
+            typeof parsed.data.sources === "number" && Number.isFinite(parsed.data.sources)
+              ? parsed.data.sources
+              : 0,
+          tags: normalizeImportedTags(parsed.data.tags),
+          type: normalizeImportedType(parsed.data.type) ?? "concept",
+          url: typeof parsed.data.url === "string" ? parsed.data.url : undefined
+        }
+      } satisfies ObsidianImportCandidate;
+    })
+  );
+}
+
+function resolveImportedTitles(
+  candidates: ObsidianImportCandidate[],
+  existingSlugs: Set<string>,
+  sourceName: string
+): {
+  resolved: ObsidianResolvedImportCandidate[];
+  titleByOriginalSlug: Map<string, string>;
+} {
+  const usedSlugs = new Set(existingSlugs);
+  const originalSlugCounts = new Map<string, number>();
+
+  for (const candidate of candidates) {
+    originalSlugCounts.set(
+      candidate.originalSlug,
+      (originalSlugCounts.get(candidate.originalSlug) ?? 0) + 1
+    );
+  }
+
+  const titleByOriginalSlug = new Map<string, string>();
+  const resolved = candidates.map((candidate) => {
+    let resolvedTitle = candidate.title;
+    let resolvedSlug = slugifyNoteTitle(resolvedTitle);
+    let suffix = 1;
+
+    while (!resolvedSlug || usedSlugs.has(resolvedSlug)) {
+      const suffixLabel = suffix === 1 ? sourceName : `${sourceName} ${suffix}`;
+      resolvedTitle = `${candidate.title} (${suffixLabel})`;
+      resolvedSlug = slugifyNoteTitle(resolvedTitle);
+      suffix += 1;
+    }
+
+    usedSlugs.add(resolvedSlug);
+
+    if ((originalSlugCounts.get(candidate.originalSlug) ?? 0) === 1) {
+      titleByOriginalSlug.set(candidate.originalSlug, resolvedTitle);
+    }
+
+    return {
+      ...candidate,
+      resolvedSlug,
+      resolvedTitle
+    };
+  });
+
+  return {
+    resolved,
+    titleByOriginalSlug
+  };
+}
+
+export async function importFromObsidianVault(
+  vaultPath: string,
+  vaultId: string,
+  input: ImportFromObsidianInput
+): Promise<ImportFromObsidianResult> {
+  await ensureVaultLayout(vaultPath);
+  const resolvedSourcePath = path.resolve(input.sourcePath);
+
+  if (!(await pathExists(resolvedSourcePath))) {
+    throw new Error("That Obsidian vault could not be found.");
+  }
+
+  const candidates = await readObsidianImportCandidates(resolvedSourcePath);
+
+  if (candidates.length === 0) {
+    throw new Error("No markdown notes were found in that Obsidian vault.");
+  }
+
+  const sourceName = sanitizePathSegment(path.basename(resolvedSourcePath) || "Obsidian");
+  const existingNotes = await readAllNotes(vaultPath);
+  const importRootFolder = buildImportRootFolder(resolvedSourcePath);
+  const { resolved, titleByOriginalSlug } = resolveImportedTitles(
+    candidates,
+    new Set(existingNotes.map((note) => note.slug)),
+    sourceName
+  );
+
+  for (const candidate of resolved) {
+    const rewrittenContent = rewriteImportedLinks(candidate.content, titleByOriginalSlug);
+    const targetRelativePath = path.posix.join(
+      importRootFolder,
+      candidate.folderPath,
+      `${candidate.resolvedSlug}.md`
+    );
+
+    await writeImportedNoteAtRelativePath(
+      vaultPath,
+      targetRelativePath,
+      candidate.resolvedTitle,
+      rewrittenContent,
+      candidate.frontmatter
+    );
+  }
+
+  const notes = await readAllNotes(vaultPath);
+  await rebuildVaultEmbeddings(vaultId, notes);
+
+  return {
+    sourcePath: resolvedSourcePath,
+    targetPath: ensureInsideVault(vaultPath, path.join(vaultPath, "wiki", importRootFolder)),
+    targetFolder: importRootFolder,
+    importedNoteCount: resolved.length,
+    folderCount: new Set(resolved.map((candidate) => candidate.folderPath).filter(Boolean)).size
+  };
+}
+
+export async function exportToObsidianVault(
+  vaultPath: string,
+  input: ExportToObsidianInput,
+  vaultName: string
+): Promise<ExportToObsidianResult> {
+  await ensureVaultLayout(vaultPath);
+  const resolvedTargetPath = path.resolve(input.targetPath);
+
+  if (!(await pathExists(resolvedTargetPath))) {
+    throw new Error("That Obsidian vault could not be found.");
+  }
+
+  const wikiRoot = path.join(vaultPath, "wiki");
+  const notes = await readAllNotes(vaultPath);
+  const exportRootPath = path.join(
+    resolvedTargetPath,
+    "Trellis",
+    sanitizePathSegment(vaultName)
+  );
+
+  await ensureDirectory(exportRootPath);
+
+  for (const note of notes) {
+    const sourceFilePath = ensureInsideVault(vaultPath, path.join(wikiRoot, note.relativePath));
+    const targetFilePath = path.join(exportRootPath, note.relativePath);
+    await ensureDirectory(path.dirname(targetFilePath));
+    await fs.copyFile(sourceFilePath, targetFilePath);
+  }
+
+  return {
+    targetPath: resolvedTargetPath,
+    exportRootPath,
+    exportedNoteCount: notes.length,
+    folderCount: new Set(notes.map((note) => note.folderPath).filter(Boolean)).size
+  };
+}
+
 async function removeEmptyWikiDirectories(vaultPath: string, startingDirectory: string): Promise<void> {
   const wikiRoot = path.join(vaultPath, "wiki");
   let currentPath = startingDirectory;
@@ -712,18 +1042,29 @@ export function registerVaultIpc(getSettings: () => AppSettings): void {
     const vault = resolveVault(getSettings(), parsed.vaultId);
     return deleteFolder(vault.path, vault.id, parsed);
   });
-  ipcMain.handle(ipcChannels.vaultSelectDirectory, async () => {
+  ipcMain.handle(ipcChannels.vaultSelectDirectory, async (_event, payload: unknown) => {
+    const parsed = selectDirectorySchema.parse(payload ?? {});
     const result = await dialog.showOpenDialog({
       properties: ["openDirectory", "createDirectory"],
-      title: "Choose your Trellis vault"
+      title: parsed.title ?? "Choose a folder",
+      buttonLabel: parsed.buttonLabel
     });
 
     if (result.canceled || !result.filePaths[0]) {
       return null;
     }
 
-    await ensureVaultLayout(result.filePaths[0]);
     return result.filePaths[0];
+  });
+  ipcMain.handle(ipcChannels.vaultImportFromObsidian, async (_event, input: unknown) => {
+    const parsed = importFromObsidianSchema.parse(input);
+    const vault = resolveVault(getSettings(), parsed.vaultId);
+    return importFromObsidianVault(vault.path, vault.id, parsed);
+  });
+  ipcMain.handle(ipcChannels.vaultExportToObsidian, async (_event, input: unknown) => {
+    const parsed = exportToObsidianSchema.parse(input);
+    const vault = resolveVault(getSettings(), parsed.vaultId);
+    return exportToObsidianVault(vault.path, parsed, vault.name);
   });
 }
 

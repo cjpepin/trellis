@@ -125,21 +125,21 @@ export function Ingest({ settings, workspace }: Props) {
   }
 
   return (
-    <div className="grid h-full grid-cols-[minmax(0,1fr)_340px] gap-6 p-6">
+    <div className="grid h-full grid-cols-[minmax(0,1fr)_340px] gap-6 p-6" data-testid="route-ingest">
       <section className="flex min-h-0 flex-col gap-6">
         <div className="trellis-panel px-6 py-6">
           <p className="font-display text-3xl text-trellis-text">Ingest Sources</p>
           <p className="mt-3 max-w-2xl text-sm leading-7 text-trellis-muted">
             Drag in a PDF or clip a URL. Trellis reads it locally first, then folds the
-            useful concepts back into your wiki.
+            useful concepts back into your notes.
           </p>
         </div>
 
-        {workspace.localOnly && (
+        {workspace.isPreview && (
           <div className="trellis-accent-surface rounded-panel border border-trellis-accent/20 px-5 py-4 text-sm text-trellis-text">
-            Preview workspace keeps ingest local. If your on-device note processor is not ready,
-            install the model in Settings or switch to your personal workspace for cloud-backed
-            ingest.
+            Preview starts with seeded local data, but ingest still works here like normal. If your
+            on-device note processor is not ready, sign in for cloud-backed ingest or install the
+            local model in Settings.
           </div>
         )}
 

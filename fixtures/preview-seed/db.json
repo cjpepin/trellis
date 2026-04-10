@@ -1,0 +1,887 @@
+{
+  "sessions": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "title": "Pricing page rewrite",
+      "createdAt": 1760284800000,
+      "updatedAt": 1760285070000,
+      "model": "gpt-4.1-mini",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "title": "Founder retreat agenda",
+      "createdAt": 1761235200000,
+      "updatedAt": 1761235470000,
+      "model": "claude-3-5-haiku-latest",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "title": "Support tags cleanup",
+      "createdAt": 1762185600000,
+      "updatedAt": 1762185870000,
+      "model": "gpt-4.1-mini",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "title": "Design partner follow-up",
+      "createdAt": 1763136000000,
+      "updatedAt": 1763136270000,
+      "model": "gpt-4.1-mini",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000005",
+      "title": "Onboarding checklist",
+      "createdAt": 1764000000000,
+      "updatedAt": 1764000270000,
+      "model": "gpt-4.1-mini",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000006",
+      "title": "Notes from chats",
+      "createdAt": 1764864000000,
+      "updatedAt": 1764864270000,
+      "model": "claude-3-7-sonnet-latest",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000007",
+      "title": "Local-first pitch",
+      "createdAt": 1765728000000,
+      "updatedAt": 1765728270000,
+      "model": "gpt-4.1-mini",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000008",
+      "title": "Usage limits wording",
+      "createdAt": 1766678400000,
+      "updatedAt": 1766678670000,
+      "model": "gpt-4.1-mini",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000009",
+      "title": "Weekly review template",
+      "createdAt": 1767456000000,
+      "updatedAt": 1767456270000,
+      "model": "claude-3-5-haiku-latest",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000000a",
+      "title": "Hiring brief sync",
+      "createdAt": 1768406400000,
+      "updatedAt": 1768406670000,
+      "model": "gpt-4.1-mini",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000000b",
+      "title": "Launch week retro",
+      "createdAt": 1769356800000,
+      "updatedAt": 1769357070000,
+      "model": "gpt-4.1-mini",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000000c",
+      "title": "Meeting note capture",
+      "createdAt": 1770307200000,
+      "updatedAt": 1770307470000,
+      "model": "claude-3-5-haiku-latest",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000000d",
+      "title": "Trust signals audit",
+      "createdAt": 1771344000000,
+      "updatedAt": 1771344270000,
+      "model": "gpt-4.1-mini",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000000e",
+      "title": "Graph reading habits",
+      "createdAt": 1772294400000,
+      "updatedAt": 1772294670000,
+      "model": "gpt-4.1-mini",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000000f",
+      "title": "River Studio debrief",
+      "createdAt": 1773244800000,
+      "updatedAt": 1773245430000,
+      "model": "claude-sonnet-4-20250514",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000010",
+      "title": "Maple Clinic interview",
+      "createdAt": 1773936000000,
+      "updatedAt": 1773936630000,
+      "model": "gpt-4.1-mini",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000011",
+      "title": "Office hours plan",
+      "createdAt": 1774454400000,
+      "updatedAt": 1774455030000,
+      "model": "gpt-4.1-mini",
+      "vaultId": "preview-main-vault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000012",
+      "title": "Roadmap trimming",
+      "createdAt": 1774800000000,
+      "updatedAt": 1774800630000,
+      "model": "claude-sonnet-4-20250514",
+      "vaultId": "preview-main-vault"
+    }
+  ],
+  "messages": [
+    {
+      "id": "00000000-0000-4000-8000-0000000003e8",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "role": "user",
+      "content": "I want the pricing page to sound less like we are selling models and more like we are selling compounding memory.",
+      "createdAt": 1760284800000,
+      "tokens": null,
+      "attachments": [
+        {
+          "kind": "file",
+          "label": "Pricing Page Feedback",
+          "text": "Prospects responded best when pricing language connected directly to repeated value rather than model access alone.\n\nWords like durable, local, and compounding resonated more than premium."
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003e9",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "role": "assistant",
+      "content": "Lead with durable value: every useful chat should leave behind notes, links, and a graph that feels more helpful over time. That lines up with [[Pricing Notes]] and [[Trust Signals]].",
+      "createdAt": 1760284890000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003ea",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "role": "user",
+      "content": "Can you tighten that into three page sections and keep the tone calm?",
+      "createdAt": 1760284980000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003eb",
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "role": "assistant",
+      "content": "Yes. I would structure it as promise, proof, and boundaries: what compounds, how it stays local-first, and what remains visible when cloud features are unavailable.",
+      "createdAt": 1760285070000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003ec",
+      "sessionId": "00000000-0000-4000-8000-000000000002",
+      "role": "user",
+      "content": "I need a two-day retreat agenda for product decisions that have been dragging.",
+      "createdAt": 1761235200000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003ed",
+      "sessionId": "00000000-0000-4000-8000-000000000002",
+      "role": "assistant",
+      "content": "Anchor the retreat around [[Founder OS]], [[Product Council]], and [[Weekly Review Rhythm]]. Day one should narrow the next quarter's bets. Day two should test which rituals keep those bets alive.",
+      "createdAt": 1761235290000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003ee",
+      "sessionId": "00000000-0000-4000-8000-000000000002",
+      "role": "user",
+      "content": "I also want a short prep memo for everyone.",
+      "createdAt": 1761235380000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003ef",
+      "sessionId": "00000000-0000-4000-8000-000000000002",
+      "role": "assistant",
+      "content": "Frame the memo around open tensions, not polished answers. Ask each person to bring one decision, one risk, and one piece of design partner evidence.",
+      "createdAt": 1761235470000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003f0",
+      "sessionId": "00000000-0000-4000-8000-000000000003",
+      "role": "user",
+      "content": "Support tickets keep piling up without enough structure. I need a calmer tagging scheme.",
+      "createdAt": 1762185600000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003f1",
+      "sessionId": "00000000-0000-4000-8000-000000000003",
+      "role": "assistant",
+      "content": "Group tags around product signals instead of surfaces: onboarding, trust, and compounding value. That mirrors [[Support Inbox Patterns]] and [[Synthesis Support Signals]].",
+      "createdAt": 1762185690000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003f2",
+      "sessionId": "00000000-0000-4000-8000-000000000003",
+      "role": "user",
+      "content": "Can you suggest a weekly review loop for that?",
+      "createdAt": 1762185780000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003f3",
+      "sessionId": "00000000-0000-4000-8000-000000000003",
+      "role": "assistant",
+      "content": "Review the tags once a week, summarize the top three shifts, and route only those themes into roadmap discussion.",
+      "createdAt": 1762185870000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003f4",
+      "sessionId": "00000000-0000-4000-8000-000000000004",
+      "role": "user",
+      "content": "I need a better follow-up note after today's design partner calls.",
+      "createdAt": 1763136000000,
+      "tokens": null,
+      "attachments": [
+        {
+          "kind": "file",
+          "label": "Ada Partner Call",
+          "text": "Ada wanted the app to explain what changed after a chat without forcing her to inspect each note manually.\n\nShe also preferred warmer, steadier interface language."
+        },
+        {
+          "kind": "file",
+          "label": "Maple Clinic Call",
+          "text": "Maple Clinic cared about local storage boundaries first, then workflow speed.\n\nThe team said trust would depend on whether the product could fail gracefully when cloud services disappeared."
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003f5",
+      "sessionId": "00000000-0000-4000-8000-000000000004",
+      "role": "assistant",
+      "content": "Summarize each call into one sharp need, one trust concern, and one workflow moment. That keeps [[Field Notes Design Partners]] compact and comparable.",
+      "createdAt": 1763136090000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003f6",
+      "sessionId": "00000000-0000-4000-8000-000000000004",
+      "role": "user",
+      "content": "Ada and Maple both cared about boundaries, but in different language.",
+      "createdAt": 1763136180000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003f7",
+      "sessionId": "00000000-0000-4000-8000-000000000004",
+      "role": "assistant",
+      "content": "Name the shared theme as trust and keep the phrasing separate underneath so you do not flatten the nuance too early.",
+      "createdAt": 1763136270000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003f8",
+      "sessionId": "00000000-0000-4000-8000-000000000005",
+      "role": "user",
+      "content": "New users still stare at an empty app. I need a first-run checklist that does not feel technical.",
+      "createdAt": 1764000000000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003f9",
+      "sessionId": "00000000-0000-4000-8000-000000000005",
+      "role": "assistant",
+      "content": "Keep it to three visible steps: choose a vault, start a first chat, and open the first generated note. That directly addresses [[Onboarding Friction]].",
+      "createdAt": 1764000090000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003fa",
+      "sessionId": "00000000-0000-4000-8000-000000000005",
+      "role": "user",
+      "content": "What language would you use?",
+      "createdAt": 1764000180000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003fb",
+      "sessionId": "00000000-0000-4000-8000-000000000005",
+      "role": "assistant",
+      "content": "Use steady verbs: choose, ask, open. Avoid setup-heavy language unless a failure state requires more detail.",
+      "createdAt": 1764000270000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003fc",
+      "sessionId": "00000000-0000-4000-8000-000000000006",
+      "role": "user",
+      "content": "I keep saying notes from chats compound, but the product still explains it awkwardly.",
+      "createdAt": 1764864000000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003fd",
+      "sessionId": "00000000-0000-4000-8000-000000000006",
+      "role": "assistant",
+      "content": "Show the sequence plainly: chat, extract, link, revisit. [[Notes From Chats]] should feel like a working loop, not a hidden feature.",
+      "createdAt": 1764864090000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003fe",
+      "sessionId": "00000000-0000-4000-8000-000000000006",
+      "role": "user",
+      "content": "What should the graph say in that frame?",
+      "createdAt": 1764864180000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000003ff",
+      "sessionId": "00000000-0000-4000-8000-000000000006",
+      "role": "assistant",
+      "content": "That it is a reading surface for the growing body of notes, not just a map for its own sake.",
+      "createdAt": 1764864270000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000400",
+      "sessionId": "00000000-0000-4000-8000-000000000007",
+      "role": "user",
+      "content": "I need a short local-first pitch that feels practical, not ideological.",
+      "createdAt": 1765728000000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000401",
+      "sessionId": "00000000-0000-4000-8000-000000000007",
+      "role": "assistant",
+      "content": "Describe what the user keeps: local chats, local notes, and usefulness during outages. That is the strongest expression of [[Local First Principles]].",
+      "createdAt": 1765728090000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000402",
+      "sessionId": "00000000-0000-4000-8000-000000000007",
+      "role": "user",
+      "content": "What should I avoid saying?",
+      "createdAt": 1765728180000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000403",
+      "sessionId": "00000000-0000-4000-8000-000000000007",
+      "role": "assistant",
+      "content": "Avoid implying the cloud disappears. The strength is that the local layer remains trustworthy even when the cloud is unavailable.",
+      "createdAt": 1765728270000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000404",
+      "sessionId": "00000000-0000-4000-8000-000000000008",
+      "role": "user",
+      "content": "How should we explain usage limits without making the product feel stingy?",
+      "createdAt": 1766678400000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000405",
+      "sessionId": "00000000-0000-4000-8000-000000000008",
+      "role": "assistant",
+      "content": "Tie limits to predictable operating costs and keep the upgrade language anchored in value moments, not fear. [[Pricing Notes]] and [[Trust Signals]] both point that way.",
+      "createdAt": 1766678490000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000406",
+      "sessionId": "00000000-0000-4000-8000-000000000008",
+      "role": "user",
+      "content": "Can I say premium models in the first sentence?",
+      "createdAt": 1766678580000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000407",
+      "sessionId": "00000000-0000-4000-8000-000000000008",
+      "role": "assistant",
+      "content": "Only after you've reminded the reader what the product helps them keep.",
+      "createdAt": 1766678670000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000408",
+      "sessionId": "00000000-0000-4000-8000-000000000009",
+      "role": "user",
+      "content": "I want a tighter weekly review template for the team.",
+      "createdAt": 1767456000000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000409",
+      "sessionId": "00000000-0000-4000-8000-000000000009",
+      "role": "assistant",
+      "content": "Use four blocks: what compounded, where users hesitated, what changed in the graph, and what gets dropped next week. That links [[Weekly Review Rhythm]] to [[Retention Loop]].",
+      "createdAt": 1767456090000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000040a",
+      "sessionId": "00000000-0000-4000-8000-000000000009",
+      "role": "user",
+      "content": "Should support sit inside that or separate?",
+      "createdAt": 1767456180000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000040b",
+      "sessionId": "00000000-0000-4000-8000-000000000009",
+      "role": "assistant",
+      "content": "Keep support inside as evidence, not as its own silo.",
+      "createdAt": 1767456270000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000040c",
+      "sessionId": "00000000-0000-4000-8000-00000000000a",
+      "role": "user",
+      "content": "I'm hiring a product engineer and the brief still sounds generic.",
+      "createdAt": 1768406400000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000040d",
+      "sessionId": "00000000-0000-4000-8000-00000000000a",
+      "role": "assistant",
+      "content": "Name the actual edge: someone who can tighten product language, reason about local-first architecture, and turn user signals into implementation decisions. [[Hiring Product Engineer]] needs that specificity.",
+      "createdAt": 1768406490000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000040e",
+      "sessionId": "00000000-0000-4000-8000-00000000000a",
+      "role": "user",
+      "content": "Should I mention design taste directly?",
+      "createdAt": 1768406580000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000040f",
+      "sessionId": "00000000-0000-4000-8000-00000000000a",
+      "role": "assistant",
+      "content": "Yes, but tie it to concrete responsibilities like onboarding, failure states, and note workflows.",
+      "createdAt": 1768406670000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000410",
+      "sessionId": "00000000-0000-4000-8000-00000000000b",
+      "role": "user",
+      "content": "Give me a short retro outline after launch week.",
+      "createdAt": 1769356800000,
+      "tokens": null,
+      "attachments": [
+        {
+          "kind": "file",
+          "label": "Launch Week Retro",
+          "text": "Support volume was low, but confusion clustered around what counted as saved knowledge versus transient chat.\n\nThe next launch should explain the compounding loop earlier."
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000411",
+      "sessionId": "00000000-0000-4000-8000-00000000000b",
+      "role": "assistant",
+      "content": "Start with what users understood immediately, where support questions clustered, and what the team had to explain repeatedly. [[Launch Week Checklist]] and [[Support Inbox Patterns]] are the right anchors.",
+      "createdAt": 1769356890000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000412",
+      "sessionId": "00000000-0000-4000-8000-00000000000b",
+      "role": "user",
+      "content": "Can we turn that into next sprint input?",
+      "createdAt": 1769356980000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000413",
+      "sessionId": "00000000-0000-4000-8000-00000000000b",
+      "role": "assistant",
+      "content": "Yes. Translate each repeated explanation into one product or copy decision.",
+      "createdAt": 1769357070000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000414",
+      "sessionId": "00000000-0000-4000-8000-00000000000c",
+      "role": "user",
+      "content": "I want meeting notes to become more reusable. Right now they just pile up.",
+      "createdAt": 1770307200000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000415",
+      "sessionId": "00000000-0000-4000-8000-00000000000c",
+      "role": "assistant",
+      "content": "Shorten the residue. Pull out decisions, tensions, and follow-up notes instead of preserving full transcripts. [[Meeting Distillation]] and [[Ambient Capture]] should drive the pattern.",
+      "createdAt": 1770307290000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000416",
+      "sessionId": "00000000-0000-4000-8000-00000000000c",
+      "role": "user",
+      "content": "What if I still want access to the raw material?",
+      "createdAt": 1770307380000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000417",
+      "sessionId": "00000000-0000-4000-8000-00000000000c",
+      "role": "assistant",
+      "content": "Keep raw material in the vault, but make the working note the obvious entry point.",
+      "createdAt": 1770307470000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000418",
+      "sessionId": "00000000-0000-4000-8000-00000000000d",
+      "role": "user",
+      "content": "Help me audit the product for trust signals before the next release.",
+      "createdAt": 1771344000000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000419",
+      "sessionId": "00000000-0000-4000-8000-00000000000d",
+      "role": "assistant",
+      "content": "Review every place the app touches uncertainty: loading, empty states, cloud failures, and where notes are written. [[Trust Signals]] should connect those moments into one standard.",
+      "createdAt": 1771344090000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000041a",
+      "sessionId": "00000000-0000-4000-8000-00000000000d",
+      "role": "user",
+      "content": "What's the quickest pass?",
+      "createdAt": 1771344180000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000041b",
+      "sessionId": "00000000-0000-4000-8000-00000000000d",
+      "role": "assistant",
+      "content": "Look for places where the app implies progress without showing what changed.",
+      "createdAt": 1771344270000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000041c",
+      "sessionId": "00000000-0000-4000-8000-00000000000e",
+      "role": "user",
+      "content": "People either love the graph or ignore it. I need a clearer framing.",
+      "createdAt": 1772294400000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000041d",
+      "sessionId": "00000000-0000-4000-8000-00000000000e",
+      "role": "assistant",
+      "content": "Position it as a reading ritual for connected ideas, not a universal control panel. That is the core of [[Graph Reading Ritual]].",
+      "createdAt": 1772294490000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000041e",
+      "sessionId": "00000000-0000-4000-8000-00000000000e",
+      "role": "user",
+      "content": "What should the empty state say?",
+      "createdAt": 1772294580000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000041f",
+      "sessionId": "00000000-0000-4000-8000-00000000000e",
+      "role": "assistant",
+      "content": "Invite the user to start with one note cluster or recent session, not the whole graph at once.",
+      "createdAt": 1772294670000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000420",
+      "sessionId": "00000000-0000-4000-8000-00000000000f",
+      "role": "user",
+      "content": "River Studio liked the product but worried about where context lives between projects.",
+      "createdAt": 1773244800000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000421",
+      "sessionId": "00000000-0000-4000-8000-00000000000f",
+      "role": "assistant",
+      "content": "That suggests we should sharpen the vault story and explain project separation more clearly. [[River Studio]] connects nicely to [[Vault Layout]] and [[Trust Signals]].",
+      "createdAt": 1773244890000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000422",
+      "sessionId": "00000000-0000-4000-8000-00000000000f",
+      "role": "user",
+      "content": "Anything else worth logging?",
+      "createdAt": 1773244980000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000423",
+      "sessionId": "00000000-0000-4000-8000-00000000000f",
+      "role": "assistant",
+      "content": "Yes: they treated repeatable recovery of context as the real wow moment, not the model output itself.",
+      "createdAt": 1773245070000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000424",
+      "sessionId": "00000000-0000-4000-8000-00000000000f",
+      "role": "user",
+      "content": "They also asked whether each client could have its own vault without losing the cross-project references the team relies on.",
+      "createdAt": 1773245160000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000425",
+      "sessionId": "00000000-0000-4000-8000-00000000000f",
+      "role": "assistant",
+      "content": "Capture that as a structural tension: separation by default, intentional bridges when the work genuinely overlaps. [[Vault Layout]] should explain the boundary, while [[River Studio]] can hold the agency-specific examples.",
+      "createdAt": 1773245250000,
+      "tokens": 440
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000426",
+      "sessionId": "00000000-0000-4000-8000-00000000000f",
+      "role": "user",
+      "content": "What's the cleanest follow-up question for the next call?",
+      "createdAt": 1773245340000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000427",
+      "sessionId": "00000000-0000-4000-8000-00000000000f",
+      "role": "assistant",
+      "content": "Ask them to walk through one real handoff: where context currently lives, when it gets lost, and what they would need to trust a vault-per-client setup. That will surface whether the problem is navigation, permissions, or retrieval.",
+      "createdAt": 1773245430000,
+      "tokens": 488
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000428",
+      "sessionId": "00000000-0000-4000-8000-000000000010",
+      "role": "user",
+      "content": "Maple Clinic reacted strongly to the local-first story. I want a succinct readout.",
+      "createdAt": 1773936000000,
+      "tokens": null,
+      "attachments": [
+        {
+          "kind": "file",
+          "label": "Maple Clinic Call",
+          "text": "Maple Clinic cared about local storage boundaries first, then workflow speed.\n\nThe team said trust would depend on whether the product could fail gracefully when cloud services disappeared."
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000429",
+      "sessionId": "00000000-0000-4000-8000-000000000010",
+      "role": "assistant",
+      "content": "Record the priority order clearly: local storage boundaries first, offline usefulness second, workflow speed third. [[Maple Clinic]] and [[Source Summary Privacy Report]] should carry that thread.",
+      "createdAt": 1773936090000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000042a",
+      "sessionId": "00000000-0000-4000-8000-000000000010",
+      "role": "user",
+      "content": "Should the product copy mention clinics specifically?",
+      "createdAt": 1773936180000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000042b",
+      "sessionId": "00000000-0000-4000-8000-000000000010",
+      "role": "assistant",
+      "content": "Not yet. Keep the copy general and let the case notes remain specific.",
+      "createdAt": 1773936270000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000042c",
+      "sessionId": "00000000-0000-4000-8000-000000000010",
+      "role": "user",
+      "content": "They kept asking what still works if cloud models are down for the day.",
+      "createdAt": 1773936360000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000042d",
+      "sessionId": "00000000-0000-4000-8000-000000000010",
+      "role": "assistant",
+      "content": "That is worth highlighting because it turns local-first from philosophy into an operational promise. Tie the readout to note access, search, and the ability to continue organizing the vault even when generation pauses.",
+      "createdAt": 1773936450000,
+      "tokens": 440
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000042e",
+      "sessionId": "00000000-0000-4000-8000-000000000010",
+      "role": "user",
+      "content": "Should I capture the compliance angle too or is that too early?",
+      "createdAt": 1773936540000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000042f",
+      "sessionId": "00000000-0000-4000-8000-000000000010",
+      "role": "assistant",
+      "content": "Capture it as an emerging theme, not a product claim. Say that explicit storage boundaries lowered anxiety, while formal compliance questions still need separate validation.",
+      "createdAt": 1773936630000,
+      "tokens": 488
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000430",
+      "sessionId": "00000000-0000-4000-8000-000000000011",
+      "role": "user",
+      "content": "I want office hours to produce more than scattered follow-ups.",
+      "createdAt": 1774454400000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000431",
+      "sessionId": "00000000-0000-4000-8000-000000000011",
+      "role": "assistant",
+      "content": "Ask one product question each week, log patterns in the same format, and connect the output back into [[Office Hours Format]] and [[Support Inbox Patterns]].",
+      "createdAt": 1774454490000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000432",
+      "sessionId": "00000000-0000-4000-8000-000000000011",
+      "role": "user",
+      "content": "What's the smallest template?",
+      "createdAt": 1774454580000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000433",
+      "sessionId": "00000000-0000-4000-8000-000000000011",
+      "role": "assistant",
+      "content": "Theme, quote, friction, next decision.",
+      "createdAt": 1774454670000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000434",
+      "sessionId": "00000000-0000-4000-8000-000000000011",
+      "role": "user",
+      "content": "I also want the notes to roll up into something the team can scan in five minutes.",
+      "createdAt": 1774454760000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000435",
+      "sessionId": "00000000-0000-4000-8000-000000000011",
+      "role": "assistant",
+      "content": "Then standardize the residue. End each session with one sentence on the user's goal, one quote, one friction point, and the next decision it informs. That gives [[Office Hours Format]] a repeatable shape.",
+      "createdAt": 1774454850000,
+      "tokens": 440
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000436",
+      "sessionId": "00000000-0000-4000-8000-000000000011",
+      "role": "user",
+      "content": "Could that feed the weekly review automatically?",
+      "createdAt": 1774454940000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000437",
+      "sessionId": "00000000-0000-4000-8000-000000000011",
+      "role": "assistant",
+      "content": "Yes, if the format stays consistent. Treat office hours as a lightweight evidence stream that lands inside [[Weekly Review Rhythm]] instead of becoming a separate reporting ritual.",
+      "createdAt": 1774455030000,
+      "tokens": 488
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000438",
+      "sessionId": "00000000-0000-4000-8000-000000000012",
+      "role": "user",
+      "content": "The roadmap is sprawling again. Help me trim it to three bets.",
+      "createdAt": 1774800000000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000439",
+      "sessionId": "00000000-0000-4000-8000-000000000012",
+      "role": "assistant",
+      "content": "Bias toward compounding loops: stronger first-run clarity, better note extraction, and clearer trust boundaries. That keeps [[Trellis Roadmap]] aligned with [[Activation Metrics]] and [[Trust Signals]].",
+      "createdAt": 1774800090000,
+      "tokens": 344
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000043a",
+      "sessionId": "00000000-0000-4000-8000-000000000012",
+      "role": "user",
+      "content": "What do I defer?",
+      "createdAt": 1774800180000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000043b",
+      "sessionId": "00000000-0000-4000-8000-000000000012",
+      "role": "assistant",
+      "content": "Anything that adds surface area without making the core loop easier to understand or revisit.",
+      "createdAt": 1774800270000,
+      "tokens": 392
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000043c",
+      "sessionId": "00000000-0000-4000-8000-000000000012",
+      "role": "user",
+      "content": "I keep wanting to add collaboration polish and more graph controls because they feel strategic.",
+      "createdAt": 1774800360000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000043d",
+      "sessionId": "00000000-0000-4000-8000-000000000012",
+      "role": "assistant",
+      "content": "They may be strategic later, but right now they widen the product before the core loop is dependable. Ask whether each idea helps a new user move from first chat to a revisitable note with more confidence.",
+      "createdAt": 1774800450000,
+      "tokens": 440
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000043e",
+      "sessionId": "00000000-0000-4000-8000-000000000012",
+      "role": "user",
+      "content": "Can you restate the three bets as outcomes instead of features?",
+      "createdAt": 1774800540000,
+      "tokens": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000043f",
+      "sessionId": "00000000-0000-4000-8000-000000000012",
+      "role": "assistant",
+      "content": "Yes: new users understand what to do within minutes, important conversations turn into useful notes without cleanup, and people trust where their context lives when cloud features or providers are unavailable.",
+      "createdAt": 1774800630000,
+      "tokens": 488
+    }
+  ]
+}

@@ -2,7 +2,7 @@ import type {
   ExtractionContextNote,
   ExtractionIndexEntry,
   ExtractionSourceType
-} from "./contracts";
+} from "./contracts.ts";
 
 export interface ExtractionPromptInput {
   transcript: Array<{ role: "user" | "assistant"; content: string }>;
@@ -35,7 +35,7 @@ export function buildExtractionUserMessage(input: ExtractionPromptInput): string
               }`
           )
           .join("\n")
-      : "(empty wiki)";
+      : "(empty notes index)";
   const relatedNotesBlock =
     input.relatedNotes && input.relatedNotes.length > 0
       ? input.relatedNotes
@@ -49,7 +49,7 @@ export function buildExtractionUserMessage(input: ExtractionPromptInput): string
       : "(none)";
 
   return [
-    "## Current Wiki Index",
+    "## Current Notes Index",
     indexBlock,
     "",
     "## Relevant Existing Notes",

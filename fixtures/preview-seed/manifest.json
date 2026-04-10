@@ -1,0 +1,6 @@
+{
+  "version": "preview-v4",
+  "vaultName": "Preview Vault",
+  "vaultFolder": "vault",
+  "databaseFile": "db.json"
+}

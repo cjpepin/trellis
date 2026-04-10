@@ -23,6 +23,7 @@ import type {
 } from "@electron/ipc/types";
 import { NoteViewer } from "@/components/wiki/NoteViewer";
 import { cn } from "@/lib/utils";
+import { notesRoutePath } from "@/lib/noteRoutes";
 import { readWorkspaceLocalStorage, writeWorkspaceLocalStorage } from "@/lib/workspace";
 import { useUiStore } from "@/store/uiStore";
 import { useWikiStore } from "@/store/wikiStore";
@@ -449,9 +450,9 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     setActiveNote(nextActiveSlug);
 
     if (nextActiveSlug) {
-      navigate(`/wiki?note=${encodeURIComponent(nextActiveSlug)}`);
+      navigate(notesRoutePath(nextActiveSlug));
     } else {
-      navigate("/wiki");
+      navigate(notesRoutePath());
     }
   }
 
@@ -471,7 +472,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
         return next;
       });
       setActiveNote(slug);
-      navigate(`/wiki?note=${encodeURIComponent(slug)}`);
+      navigate(notesRoutePath(slug));
 
       if (!noteCache[slug]) {
         const note = await window.trellis.vault.readNote(slug);
@@ -1139,10 +1140,14 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     const isCollapsed = !expandedFolders.has(folder.path);
     const isDropTarget = dropTargetId === `folder:${folder.path}`;
     const isRenaming = pendingFolderRenamePath === folder.path;
+    const folderRowClassName =
+      "flex min-w-0 flex-1 items-center gap-2 rounded-field border border-transparent px-2.5 py-1.5 text-left transition hover:border-trellis-border hover:bg-trellis-surface-2";
+    const folderRowPadding = { paddingLeft: `${10 + depth * 18}px` };
 
     return (
       <div key={folder.path} className="space-y-1 transition-all duration-200">
         <div
+          data-testid={`wiki-folder-row-${folder.path}`}
           className={`group flex items-center gap-1 rounded-field transition-all duration-150 ${
             isDropTarget ? "bg-trellis-surface-2/70 ring-1 ring-inset ring-trellis-accent/35" : ""
           }`}
@@ -1191,43 +1196,18 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
           >
             {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
           </button>
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 items-center gap-2 rounded-field border border-transparent px-2.5 py-1.5 text-left transition hover:border-trellis-border hover:bg-trellis-surface-2"
-            style={{ paddingLeft: `${10 + depth * 18}px` }}
-            draggable
-            disabled={isRenaming}
-            onDragStart={(event) => {
-              const payload: DragPayload = {
-                kind: "folder",
-                path: folder.path,
-                name: folder.name
-              };
-              setDragPayload(payload);
-              event.dataTransfer.effectAllowed = "move";
-              event.dataTransfer.setData("text/plain", folder.path);
-            }}
-            onDragEnd={() => {
-              clearDragState();
-            }}
-            onClick={() => {
-              toggleFolderExpanded(folder.path);
-            }}
-          >
-            {isCollapsed ? (
-              <Folder className="h-4 w-4 shrink-0 text-trellis-faint" />
-            ) : (
-              <FolderOpen className="h-4 w-4 shrink-0 text-trellis-accent/80" />
-            )}
-            {isRenaming ? (
+          {isRenaming ? (
+            <div className={folderRowClassName} style={folderRowPadding}>
+              {isCollapsed ? (
+                <Folder className="h-4 w-4 shrink-0 text-trellis-faint" />
+              ) : (
+                <FolderOpen className="h-4 w-4 shrink-0 text-trellis-accent/80" />
+              )}
               <div className="flex min-w-0 flex-1 items-center gap-1">
                 <input
                   ref={renameFolderRef}
                   value={draftName}
                   onChange={(event) => setDraftName(event.target.value)}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                  }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
                       event.preventDefault();
@@ -1247,8 +1227,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
                   className="rounded-field border border-transparent p-1 text-trellis-faint transition hover:border-trellis-border hover:text-trellis-text"
                   aria-label="Save folder name"
                   title="Save folder name"
-                  onClick={(event) => {
-                    event.stopPropagation();
+                  onClick={() => {
                     void handleRenameFolder(folder, draftName);
                   }}
                 >
@@ -1259,28 +1238,56 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
                   className="rounded-field border border-transparent p-1 text-trellis-faint transition hover:border-trellis-border hover:text-trellis-text"
                   aria-label="Cancel rename"
                   title="Cancel rename"
-                  onClick={(event) => {
-                    event.stopPropagation();
+                  onClick={() => {
                     closeRenameFolderForm();
                   }}
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
-            ) : (
+            </div>
+          ) : (
+            <button
+              type="button"
+              className={folderRowClassName}
+              style={folderRowPadding}
+              draggable
+              onDragStart={(event) => {
+                const payload: DragPayload = {
+                  kind: "folder",
+                  path: folder.path,
+                  name: folder.name
+                };
+                setDragPayload(payload);
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", folder.path);
+              }}
+              onDragEnd={() => {
+                clearDragState();
+              }}
+              onClick={() => {
+                toggleFolderExpanded(folder.path);
+              }}
+            >
+              {isCollapsed ? (
+                <Folder className="h-4 w-4 shrink-0 text-trellis-faint" />
+              ) : (
+                <FolderOpen className="h-4 w-4 shrink-0 text-trellis-accent/80" />
+              )}
               <>
                 <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-trellis-text">
                   {folder.name}
                 </span>
                 <span className="text-[11px] text-trellis-faint">{folder.noteCount}</span>
               </>
-            )}
-          </button>
+            </button>
+          )}
           <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
             <button
               type="button"
               className="rounded-field border border-transparent p-1 text-trellis-faint transition hover:border-trellis-border hover:text-trellis-text"
               title="Rename folder"
+              data-testid={`wiki-folder-rename-${folder.path}`}
               onClick={(event) => {
                 event.stopPropagation();
                 openRenameFolderForm(folder);
@@ -1336,7 +1343,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
   const wikiListOpenWidth = listCollapsed ? 0 : listWidth;
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-1 gap-0 p-6">
+    <div className="flex h-full min-h-0 w-full flex-1 gap-0 p-6" data-testid="route-notes">
       <div
         className={cn(
           "shrink-0 overflow-hidden transition-[width,opacity] duration-300 ease-out motion-reduce:transition-none motion-reduce:duration-0",
@@ -1363,7 +1370,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
                   >
                     <ChevronLeft className="h-4 w-4" aria-hidden />
                   </button>
-                  <p className="font-display text-2xl text-trellis-text">Wiki</p>
+                  <p className="font-display text-2xl text-trellis-text">Notes</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -1506,7 +1513,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
                   <div className="rounded-panel border border-dashed border-trellis-border px-4 py-5 text-sm text-trellis-muted">
                     {hasSidebarFilters
                       ? "No notes match the current search or tag filter."
-                      : "No notes yet. Create a note or folder to start shaping the wiki."}
+                      : "No notes yet. Create a note or folder to start building your knowledge base."}
                   </div>
                 ) : null}
               </div>
@@ -1552,8 +1559,8 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
           <button
             type="button"
             className="absolute left-4 top-4 z-20 inline-flex h-9 w-9 items-center justify-center rounded-field border border-trellis-border bg-trellis-surface-2 text-trellis-muted shadow-[var(--trellis-elevated-shadow)] transition hover:border-trellis-accent/30 hover:text-trellis-text md:left-6 motion-reduce:transition-none"
-            aria-label="Show wiki note list"
-            title="Show wiki note list"
+            aria-label="Show note list"
+            title="Show note list"
             onClick={() => {
               setListCollapsed(false);
             }}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
+import { HashRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import type { Session } from "@supabase/supabase-js";
 import type {
   AppBootstrap,
@@ -39,6 +39,11 @@ const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 360;
 const SIDEBAR_COLLAPSED_WIDTH = 78;
 
+function LegacyWikiNotesRedirect(): JSX.Element {
+  const { search } = useLocation();
+  return <Navigate to={`/notes${search}`} replace />;
+}
+
 function clampSidebarWidth(value: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, value));
 }
@@ -60,6 +65,7 @@ function AppFrame({
   workspace,
   workspaces,
   onUpdateSettings,
+  onRefreshVault,
   onSwitchWorkspace,
   onResetPreview
 }: {
@@ -68,6 +74,7 @@ function AppFrame({
   workspace: WorkspaceInfo;
   workspaces: WorkspaceInfo[];
   onUpdateSettings: (settings: AppSettings) => Promise<void>;
+  onRefreshVault: (vaultId?: string) => Promise<void>;
   onSwitchWorkspace: (workspaceId: AppWorkspaceId) => Promise<void>;
   onResetPreview: () => Promise<void>;
 }) {
@@ -124,7 +131,7 @@ function AppFrame({
   const displayedSidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full" data-testid="app-frame">
       <div
         className="relative shrink-0 transition-[width] duration-150 ease-out"
         style={{ width: displayedSidebarWidth }}
@@ -173,13 +180,14 @@ function AppFrame({
             }
           />
           <Route
-            path="/wiki"
+            path="/notes"
             element={
               <RouteErrorBoundary>
                 <Wiki workspaceId={workspace.id} />
               </RouteErrorBoundary>
             }
           />
+          <Route path="/wiki" element={<LegacyWikiNotesRedirect />} />
           <Route
             path="/graph"
             element={
@@ -206,6 +214,7 @@ function AppFrame({
                   workspace={workspace}
                   workspaces={workspaces}
                   onUpdateSettings={onUpdateSettings}
+                  onRefreshVault={onRefreshVault}
                   onSwitchWorkspace={onSwitchWorkspace}
                   onResetPreview={onResetPreview}
                 />
@@ -241,6 +250,7 @@ export default function App() {
   const setConfigured = useAuthStore((state) => state.setConfigured);
   const setLoading = useAuthStore((state) => state.setLoading);
   const setAuthenticated = useAuthStore((state) => state.setAuthenticated);
+  const setProviderKeys = useAuthStore((state) => state.setProviderKeys);
   const setAnonymous = useAuthStore((state) => state.setAnonymous);
   const setError = useAuthStore((state) => state.setError);
   const setCommandPaletteOpen = useUiStore((state) => state.setCommandPaletteOpen);
@@ -263,6 +273,7 @@ export default function App() {
       setWorkspace(payload.workspace);
       workspaceRef.current = payload.workspace;
       setWorkspaces(payload.workspaces);
+      setProviderKeys(payload.providerKeys);
       setNeedsWorkspaceChoice(payload.needsWorkspaceChoice);
       rememberSessionRef.current = payload.settings.rememberSession;
       applyTheme(payload.settings.theme);
@@ -275,16 +286,11 @@ export default function App() {
       });
       setConfigured(hasSupabaseConfig());
     },
-    [hydrateWiki, hydrateWorkspace, setConfigured]
+    [hydrateWiki, hydrateWorkspace, setConfigured, setProviderKeys]
   );
 
   const syncAuth = useCallback(
     async (session: Session | null, rememberSession: boolean): Promise<void> => {
-      if (workspaceRef.current?.localOnly) {
-        setAnonymous();
-        return;
-      }
-
       if (!session) {
         await persistSession(null);
         setAnonymous();
@@ -336,7 +342,7 @@ export default function App() {
 
   const refreshAuthForWorkspace = useCallback(
     async (payload: AppBootstrap): Promise<void> => {
-      if (payload.workspace.localOnly || !hasSupabaseConfig()) {
+      if (!hasSupabaseConfig()) {
         setAnonymous();
         return;
       }
@@ -362,7 +368,6 @@ export default function App() {
 
       if (
         workspace &&
-        !workspace.localOnly &&
         savedSettings.rememberSession !== previousSettings?.rememberSession &&
         !savedSettings.rememberSession
       ) {
@@ -434,7 +439,7 @@ export default function App() {
       }
 
       applyBootstrapPayload(payload);
-      if (hasSupabaseConfig() && !payload.workspace.localOnly) {
+      if (hasSupabaseConfig()) {
         setLoading();
       }
       await refreshAuthForWorkspace(payload);
@@ -527,7 +532,7 @@ export default function App() {
                 title:
                   error instanceof Error
                     ? error.message
-                    : "Could not refresh the wiki after your notes were processed.",
+                    : "Could not refresh your notes after processing.",
                 tone: "warning"
               });
             });
@@ -605,6 +610,7 @@ export default function App() {
             workspace={workspace}
             workspaces={workspaces}
             onUpdateSettings={handleSettingsUpdate}
+            onRefreshVault={loadVaultSnapshot}
             onSwitchWorkspace={handleWorkspaceSwitch}
             onResetPreview={handleResetPreview}
           />

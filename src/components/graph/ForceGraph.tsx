@@ -4,6 +4,7 @@ import type { GraphData } from "@electron/ipc/types";
 
 interface Props {
   graph: GraphData;
+  focusedNodeId?: string | null;
   onSelectNode: (slug: string) => void;
   onHoverNode: (payload: { title: string; x: number; y: number } | null) => void;
 }
@@ -21,13 +22,17 @@ type SimLink = d3.SimulationLinkDatum<SimNode> & {
   id: string;
 };
 
-export function ForceGraph({ graph, onSelectNode, onHoverNode }: Props) {
+export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverNode }: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const onSelectNodeRef = useRef(onSelectNode);
   const onHoverNodeRef = useRef(onHoverNode);
+  const focusedNodeIdRef = useRef<string | null>(focusedNodeId);
+  const refreshVisualStateRef = useRef<(() => void) | null>(null);
+  const focusNodeInViewRef = useRef<((nodeId: string | null) => void) | null>(null);
 
   onSelectNodeRef.current = onSelectNode;
   onHoverNodeRef.current = onHoverNode;
+  focusedNodeIdRef.current = focusedNodeId;
 
   function getNodeFill(node: SimNode): string {
     return node.isPlaceholder
@@ -41,12 +46,25 @@ export function ForceGraph({ graph, onSelectNode, onHoverNode }: Props) {
       : "var(--trellis-surface-2)";
   }
 
+  function getLinkNodeId(node: string | number | SimNode): string {
+    if (typeof node === "string") {
+      return node;
+    }
+
+    if (typeof node === "number") {
+      return String(node);
+    }
+
+    return node.id;
+  }
+
   useEffect(() => {
     if (!svgRef.current) {
       return;
     }
 
-    const svg = d3.select(svgRef.current);
+    const svgElement = svgRef.current;
+    const svg = d3.select(svgElement);
     const width = svgRef.current.clientWidth || 960;
     const height = svgRef.current.clientHeight || 640;
     svg.selectAll("*").remove();
@@ -117,16 +135,101 @@ export function ForceGraph({ graph, onSelectNode, onHoverNode }: Props) {
 
     const link = container
       .append("g")
-      .attr("stroke", "var(--trellis-edge)")
-      .attr("stroke-opacity", 1)
       .selectAll<SVGLineElement, SimLink>("line")
       .data(links)
       .join("line")
-      .attr("stroke-width", 1);
+      .attr("stroke", "var(--trellis-edge)")
+      .attr("stroke-opacity", 1)
+      .attr("stroke-width", 1)
+      .style("transition", "stroke 0.15s ease, stroke-opacity 0.15s ease, stroke-width 0.15s ease");
 
     let simulation: d3.Simulation<SimNode, SimLink>;
     /** True after pointer moved during drag; pure clicks do not run the drag handler. */
     let didDrag = false;
+    let hoveredNodeId: string | null = null;
+
+    function getActiveNodeId(): string | null {
+      return hoveredNodeId ?? focusedNodeIdRef.current;
+    }
+
+    function isConnectedToActiveNode(item: SimLink): boolean {
+      const activeNodeId = getActiveNodeId();
+
+      if (activeNodeId == null) {
+        return false;
+      }
+
+      return (
+        getLinkNodeId(item.source) === activeNodeId || getLinkNodeId(item.target) === activeNodeId
+      );
+    }
+
+    function isFocusedNode(item: SimNode): boolean {
+      return focusedNodeIdRef.current === item.id;
+    }
+
+    function isHoveredNode(item: SimNode): boolean {
+      return hoveredNodeId === item.id;
+    }
+
+    function refreshVisualState(): void {
+      link
+        .attr("stroke", (item) =>
+          isConnectedToActiveNode(item) ? "var(--trellis-accent)" : "var(--trellis-edge)"
+        )
+        .attr("stroke-opacity", (item) => {
+          if (getActiveNodeId() == null) {
+            return 1;
+          }
+
+          return isConnectedToActiveNode(item) ? 0.95 : 0.2;
+        })
+        .attr("stroke-width", (item) => (isConnectedToActiveNode(item) ? 2.25 : 1));
+
+      node
+        .attr("fill", (item) =>
+          isHoveredNode(item) || isFocusedNode(item) ? "var(--trellis-accent)" : getNodeFill(item)
+        )
+        .attr("stroke", (item) =>
+          isHoveredNode(item) || isFocusedNode(item) ? "var(--trellis-accent)" : getNodeStroke(item)
+        )
+        .attr("stroke-width", (item) => {
+          if (isHoveredNode(item)) {
+            return 2.5;
+          }
+
+          return isFocusedNode(item) ? 2.25 : 1.5;
+        });
+
+      if (getActiveNodeId() != null) {
+        link.filter(isConnectedToActiveNode).raise();
+      }
+
+      node.filter((item) => isHoveredNode(item) || isFocusedNode(item)).raise();
+      label.filter((item) => isHoveredNode(item) || isFocusedNode(item)).raise();
+    }
+
+    function focusNodeInView(nodeId: string | null): void {
+      if (nodeId == null) {
+        return;
+      }
+
+      const target = nodes.find((item) => item.id === nodeId);
+
+      if (!target) {
+        return;
+      }
+
+      const currentTransform = d3.zoomTransform(svgElement);
+      const nextScale = Math.max(currentTransform.k, 1.15);
+      const targetX = target.x ?? width / 2;
+      const targetY = target.y ?? height / 2;
+      const nextTransform = d3.zoomIdentity
+        .translate(width / 2 - targetX * nextScale, height / 2 - targetY * nextScale)
+        .scale(nextScale);
+
+      svg.transition().duration(220).call(zoom.transform, nextTransform);
+    }
 
     const node = container
       .append("g")
@@ -222,12 +325,18 @@ export function ForceGraph({ graph, onSelectNode, onHoverNode }: Props) {
         label.attr("x", (item) => item.x ?? 0).attr("y", (item) => item.y ?? 0);
       });
 
+    refreshVisualStateRef.current = refreshVisualState;
+    focusNodeInViewRef.current = focusNodeInView;
+    refreshVisualState();
+
+    if (focusedNodeIdRef.current != null) {
+      focusNodeInView(focusedNodeIdRef.current);
+    }
+
     node
       .on("mouseenter", function (event: MouseEvent, item: SimNode) {
-        d3.select(this)
-          .attr("fill", "var(--trellis-accent)")
-          .attr("stroke", "var(--trellis-accent)")
-          .attr("stroke-width", 2.5);
+        hoveredNodeId = item.id;
+        refreshVisualState();
 
         onHoverNodeRef.current({
           title: item.title,
@@ -242,11 +351,9 @@ export function ForceGraph({ graph, onSelectNode, onHoverNode }: Props) {
           y: event.clientY
         });
       })
-      .on("mouseleave", function (_event: MouseEvent, item: SimNode) {
-        d3.select(this)
-          .attr("fill", getNodeFill(item))
-          .attr("stroke", getNodeStroke(item))
-          .attr("stroke-width", 1.5);
+      .on("mouseleave", function (_event: MouseEvent) {
+        hoveredNodeId = null;
+        refreshVisualState();
 
         onHoverNodeRef.current(null);
       })
@@ -265,9 +372,20 @@ export function ForceGraph({ graph, onSelectNode, onHoverNode }: Props) {
 
     return () => {
       simulation.stop();
+      refreshVisualStateRef.current = null;
+      focusNodeInViewRef.current = null;
       onHoverNodeRef.current(null);
     };
   }, [graph]);
+
+  useEffect(() => {
+    focusedNodeIdRef.current = focusedNodeId;
+    refreshVisualStateRef.current?.();
+
+    if (focusedNodeId != null) {
+      focusNodeInViewRef.current?.(focusedNodeId);
+    }
+  }, [focusedNodeId]);
 
   return <svg ref={svgRef} className="h-full w-full" />;
 }

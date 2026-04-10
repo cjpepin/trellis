@@ -23,6 +23,14 @@ const chatAttachmentSchema = z.object({
   sourceUrl: z.string().url().optional()
 });
 
+const chatMediaArtifactSeedSchema = z.object({
+  kind: z.enum(["image", "generated_image"]),
+  fileId: z.string().uuid(),
+  mimeType: z.string().min(1),
+  label: z.string().min(1),
+  prompt: z.string().optional()
+});
+
 const seedFixtureSchema = z.object({
   sessions: z.array(
     z.object({
@@ -42,7 +50,8 @@ const seedFixtureSchema = z.object({
       content: z.string(),
       createdAt: z.number().int(),
       tokens: z.number().int().nullable(),
-      attachments: z.array(chatAttachmentSchema).optional()
+      attachments: z.array(chatAttachmentSchema).optional(),
+      mediaArtifacts: z.array(chatMediaArtifactSeedSchema).optional()
     })
   )
 });
@@ -69,7 +78,7 @@ interface EnsurePreviewSeedOptions {
 }
 
 function getPreviewSeedPaths(): PreviewSeedPaths {
-  const root = path.join(app.getAppPath(), "preview-seed");
+  const root = path.join(app.getAppPath(), "fixtures", "preview-seed");
 
   return {
     root,

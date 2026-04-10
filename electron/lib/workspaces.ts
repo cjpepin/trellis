@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { app } from "electron";
 import { z } from "zod";
 import type { AppWorkspaceId, WorkspaceInfo } from "../ipc/types";
+import { getUserDataRoot } from "./appPaths";
 
 export const workspaceIds = ["personal", "preview"] as const satisfies readonly AppWorkspaceId[];
 
@@ -20,16 +20,22 @@ export interface WorkspacePaths {
   root: string;
   settingsPath: string;
   authPath: string;
+  providerKeysPath: string;
   databasePath: string;
   previewSeedStatePath: string;
 }
 
+export interface SharedAccountStoragePaths {
+  authPath: string;
+  providerKeysPath: string;
+}
+
 function getGlobalStatePath(): string {
-  return path.join(app.getPath("userData"), "workspace-state.json");
+  return path.join(getUserDataRoot(), "workspace-state.json");
 }
 
 export function getLegacyStoragePaths() {
-  const baseRoot = app.getPath("userData");
+  const baseRoot = getUserDataRoot();
   return {
     settingsPath: path.join(baseRoot, "settings.json"),
     authPath: path.join(baseRoot, "supabase-session.bin"),
@@ -38,14 +44,24 @@ export function getLegacyStoragePaths() {
 }
 
 export function getWorkspacePaths(workspaceId: AppWorkspaceId): WorkspacePaths {
-  const root = path.join(app.getPath("userData"), "workspaces", workspaceId);
+  const root = path.join(getUserDataRoot(), "workspaces", workspaceId);
 
   return {
     root,
     settingsPath: path.join(root, "settings.json"),
     authPath: path.join(root, "supabase-session.bin"),
+    providerKeysPath: path.join(root, "provider-keys.bin"),
     databasePath: path.join(root, "pglite-data"),
     previewSeedStatePath: path.join(root, "preview-seed-state.json")
+  };
+}
+
+export function getSharedAccountStoragePaths(): SharedAccountStoragePaths {
+  const personalPaths = getWorkspacePaths("personal");
+
+  return {
+    authPath: personalPaths.authPath,
+    providerKeysPath: personalPaths.providerKeysPath
   };
 }
 
@@ -131,8 +147,9 @@ export function getWorkspaceInfo(
     return {
       id: "preview",
       label: "Preview workspace",
-      description: "Synthetic six-month sandbox with seeded chats, notes, and graph state.",
-      localOnly: true,
+      description:
+        "Seeded six-month workspace with realistic chats, notes, and graph state. Your normal account session and live cloud chat still work here.",
+      localOnly: false,
       canReset: true,
       isPreview: true,
       seedVersion: previewSeedVersion

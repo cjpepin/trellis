@@ -26,9 +26,15 @@ import type {
   ExtractionUpdate
 } from "../../../shared/extraction/contracts.ts";
 
+export interface ChatImagePart {
+  mimeType: string;
+  dataBase64: string;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  imageParts?: ChatImagePart[];
 }
 
 export interface ChatReference extends ChatPromptReference {}
@@ -239,20 +245,36 @@ function stripAttachmentContextForTitle(content: string): string {
   return content.slice(0, idx).trim();
 }
 
-function deriveSessionTitle(messages: ChatMessage[]): string {
-  const lastUserMessage = [...messages]
-    .reverse()
-    .find((message) => message.role === "user")?.content;
+function userMessageBodyForTitle(message: ChatMessage | undefined): string {
+  if (!message || message.role !== "user") {
+    return "";
+  }
 
-  if (!lastUserMessage) {
+  const trimmed = message.content.trim();
+
+  if (trimmed.length > 0) {
+    return stripAttachmentContextForTitle(trimmed);
+  }
+
+  if (message.imageParts && message.imageParts.length > 0) {
+    return "Image message";
+  }
+
+  return "";
+}
+
+function deriveSessionTitle(messages: ChatMessage[]): string {
+  const lastUserMessage = [...messages].reverse().find((message) => message.role === "user");
+  const lastUserBody = userMessageBodyForTitle(lastUserMessage);
+
+  if (!lastUserBody) {
     return "New Conversation";
   }
 
-  const withoutAttachments = stripAttachmentContextForTitle(lastUserMessage);
   const body =
-    withoutAttachments.length === 0 || withoutAttachments === "(No message text.)"
+    lastUserBody.length === 0 || lastUserBody === "(No message text.)"
       ? "Attached context"
-      : withoutAttachments;
+      : lastUserBody;
 
   const keywords = extractKeywords(body);
 
@@ -263,12 +285,61 @@ function deriveSessionTitle(messages: ChatMessage[]): string {
   return titleCase(keywords.slice(0, 3).join(" "));
 }
 
+function toOpenAiApiMessage(message: ChatMessage): Record<string, unknown> {
+  if (message.role === "assistant") {
+    return { role: "assistant", content: message.content };
+  }
+
+  if (!message.imageParts?.length) {
+    return { role: "user", content: message.content };
+  }
+
+  return {
+    role: "user",
+    content: [
+      { type: "text", text: message.content },
+      ...message.imageParts.map((part) => ({
+        type: "image_url",
+        image_url: {
+          url: `data:${part.mimeType};base64,${part.dataBase64}`
+        }
+      }))
+    ]
+  };
+}
+
+function toAnthropicApiMessage(message: ChatMessage): Record<string, unknown> {
+  if (message.role === "assistant") {
+    return { role: "assistant", content: message.content };
+  }
+
+  if (!message.imageParts?.length) {
+    return { role: "user", content: message.content };
+  }
+
+  return {
+    role: "user",
+    content: [
+      ...message.imageParts.map((part) => ({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: part.mimeType,
+          data: part.dataBase64
+        }
+      })),
+      { type: "text", text: message.content }
+    ]
+  };
+}
+
 async function callOpenAi(
   messages: ChatMessage[],
   references: ChatReference[],
-  model: ChatModel
+  model: ChatModel,
+  apiKeyOverride?: string
 ): Promise<string> {
-  const apiKey = readEnvironmentValue("OPENAI_API_KEY");
+  const apiKey = apiKeyOverride ?? readEnvironmentValue("OPENAI_API_KEY");
   const modelLabel = getChatModelLabel(model);
 
   if (!apiKey) {
@@ -293,7 +364,7 @@ async function callOpenAi(
             role: "system",
             content: buildChatSystemPrompt(references)
           },
-          ...messages
+          ...messages.map(toOpenAiApiMessage)
         ]
       })
     });
@@ -326,9 +397,10 @@ async function callOpenAi(
 async function callAnthropic(
   messages: ChatMessage[],
   references: ChatReference[],
-  model: ChatModel
+  model: ChatModel,
+  apiKeyOverride?: string
 ): Promise<string> {
-  const apiKey = readEnvironmentValue("ANTHROPIC_API_KEY");
+  const apiKey = apiKeyOverride ?? readEnvironmentValue("ANTHROPIC_API_KEY");
   const modelLabel = getChatModelLabel(model);
 
   if (!apiKey) {
@@ -351,7 +423,7 @@ async function callAnthropic(
         model,
         max_tokens: 1024,
         system: buildChatSystemPrompt(references),
-        messages
+        messages: messages.map(toAnthropicApiMessage)
       })
     });
   } catch {
@@ -444,7 +516,10 @@ function extractAnthropicText(payload: unknown): string | null {
 export async function generateChatReply(
   messages: ChatMessage[],
   model: ChatModel,
-  references: ChatReference[] = []
+  references: ChatReference[] = [],
+  options?: {
+    providerApiKey?: string;
+  }
 ): Promise<{
   text: string;
   sessionTitle: string;
@@ -452,8 +527,8 @@ export async function generateChatReply(
 }> {
   const text =
     getChatModelProvider(model) === "openai"
-      ? await callOpenAi(messages, references, model)
-      : await callAnthropic(messages, references, model);
+      ? await callOpenAi(messages, references, model, options?.providerApiKey)
+      : await callAnthropic(messages, references, model, options?.providerApiKey);
 
   return {
     text,

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Senior QA Agent"
+  short_description: "Checks Trellis acceptance, regression risk, and release readiness"

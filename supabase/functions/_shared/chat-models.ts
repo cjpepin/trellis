@@ -93,7 +93,11 @@ export function isPremiumChatModel(model: ChatModel): boolean {
 }
 
 export function assertChatModelAccess(profile: ProfileRow, model: ChatModel): void {
-  if (profile.subscription_tier === "pro" || !isPremiumChatModel(model)) {
+  if (
+    profile.subscription_tier === "pro" ||
+    profile.subscription_tier === "byok" ||
+    !isPremiumChatModel(model)
+  ) {
     return;
   }
 

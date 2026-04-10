@@ -5,18 +5,29 @@ import {
   type AppSettings,
   type AuthSessionSnapshot,
   type ChatModel,
+  type ChatStreamEvent,
+  type ChatStreamInput,
   type CreateFolderInput,
   type CreateStubInput,
+  type CreateCheckoutSessionInput,
+  type CreateCheckoutSessionResult,
+  type DeleteProviderKeyInput,
   type DeleteFolderInput,
   type DeleteNoteInput,
+  type ExportToObsidianInput,
+  type ExportToObsidianResult,
   type ExtractionInstallProgressEvent,
   type ExtractionJobNotification,
+  type ImportFromObsidianInput,
+  type ImportFromObsidianResult,
   type MessageRecord,
   type RenameFolderInput,
   type TrellisBridge,
   type ParsePdfInput,
   type RecordWikiOpInput,
-  type SaveNoteInput
+  type SaveNoteInput,
+  type SelectDirectoryInput,
+  type SetProviderKeyInput
 } from "./ipc/types";
 
 const trellis: TrellisBridge = {
@@ -35,6 +46,13 @@ const trellis: TrellisBridge = {
       ipcRenderer.invoke(ipcChannels.authGet) as Promise<AuthSessionSnapshot | null>,
     setSession: (session) => ipcRenderer.invoke(ipcChannels.authSet, session) as Promise<void>,
     clearSession: () => ipcRenderer.invoke(ipcChannels.authClear) as Promise<void>
+  },
+  billing: {
+    createCheckoutSession: (input: CreateCheckoutSessionInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.billingCreateCheckoutSession,
+        input
+      ) as Promise<CreateCheckoutSessionResult>
   },
   db: {
     listSessions: () => ipcRenderer.invoke(ipcChannels.dbListSessions),
@@ -98,7 +116,18 @@ const trellis: TrellisBridge = {
       ipcRenderer.invoke(ipcChannels.vaultRenameFolder, input),
     deleteFolder: (input: DeleteFolderInput) =>
       ipcRenderer.invoke(ipcChannels.vaultDeleteFolder, input),
-    selectDirectory: () => ipcRenderer.invoke(ipcChannels.vaultSelectDirectory)
+    selectDirectory: (input?: SelectDirectoryInput) =>
+      ipcRenderer.invoke(ipcChannels.vaultSelectDirectory, input ?? {}),
+    importFromObsidian: (input: ImportFromObsidianInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.vaultImportFromObsidian,
+        input
+      ) as Promise<ImportFromObsidianResult>,
+    exportToObsidian: (input: ExportToObsidianInput) =>
+      ipcRenderer.invoke(
+        ipcChannels.vaultExportToObsidian,
+        input
+      ) as Promise<ExportToObsidianResult>
   },
   retrieval: {
     searchNotes: (input) => ipcRenderer.invoke(ipcChannels.retrievalSearchNotes, input),
@@ -111,7 +140,70 @@ const trellis: TrellisBridge = {
     clipUrl: (input) => ipcRenderer.invoke(ipcChannels.ingestClipUrl, input)
   },
   chat: {
-    pickAttachment: () => ipcRenderer.invoke(ipcChannels.chatPickAttachment)
+    pickAttachment: () => ipcRenderer.invoke(ipcChannels.chatPickAttachment),
+    buildContext: (input) => ipcRenderer.invoke(ipcChannels.chatBuildContext, input),
+    storeMemory: (input) => ipcRenderer.invoke(ipcChannels.chatStoreMemory, input),
+    runLocalReply: (input) => ipcRenderer.invoke(ipcChannels.chatRunLocalReply, input),
+    stream: async (input: ChatStreamInput) => {
+      const requestId = crypto.randomUUID();
+      const channel = ipcChannels.chatStreamEvent;
+
+      return new Promise<void>((resolve, reject) => {
+        const handler = (_event: unknown, payload: ChatStreamEvent) => {
+          if (payload.requestId !== requestId) {
+            return;
+          }
+
+          if (payload.type === "token") {
+            input.onToken(payload.payload);
+            return;
+          }
+
+          if (payload.type === "status") {
+            void input.onStatus(payload.payload);
+            return;
+          }
+
+          if (payload.type === "title") {
+            void input.onTitle(payload.payload);
+          }
+        };
+
+        ipcRenderer.on(channel, handler);
+
+        void ipcRenderer.invoke(ipcChannels.chatStream, {
+          requestId,
+          accessToken: input.accessToken,
+          subscriptionTier: input.subscriptionTier,
+          model: input.model,
+          sessionId: input.sessionId,
+          messages: input.messages,
+          references: input.references ?? []
+        })
+          .then(() => {
+            ipcRenderer.removeListener(channel, handler);
+            resolve();
+          })
+          .catch((error) => {
+            ipcRenderer.removeListener(channel, handler);
+            reject(error);
+          });
+      });
+    },
+    getProviderKeyStatus: () => ipcRenderer.invoke(ipcChannels.providerKeysGet),
+    setProviderKey: (input: SetProviderKeyInput) =>
+      ipcRenderer.invoke(ipcChannels.providerKeysSet, input),
+    deleteProviderKey: (input: DeleteProviderKeyInput) =>
+      ipcRenderer.invoke(ipcChannels.providerKeysDelete, input)
+  },
+  media: {
+    writeCache: (input) => ipcRenderer.invoke(ipcChannels.mediaCacheWrite, input),
+    readDataUrl: (fileId: string) =>
+      ipcRenderer.invoke(ipcChannels.mediaCacheReadDataUrl, fileId) as Promise<string | null>,
+    pickImage: () => ipcRenderer.invoke(ipcChannels.mediaPickImage),
+    transcribe: (input) => ipcRenderer.invoke(ipcChannels.mediaTranscribe, input),
+    synthesizeSpeech: (input) => ipcRenderer.invoke(ipcChannels.mediaSynthesizeSpeech, input),
+    generateImage: (input) => ipcRenderer.invoke(ipcChannels.mediaGenerateImage, input)
   },
   shell: {
     openPath: (targetPath: string) => ipcRenderer.invoke(ipcChannels.shellOpenPath, targetPath),

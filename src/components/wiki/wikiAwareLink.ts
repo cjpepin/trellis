@@ -1,15 +1,16 @@
 import { mergeAttributes } from "@tiptap/core";
 import Link from "@tiptap/extension-link";
+import { isInternalNoteHashHref } from "@/lib/noteRoutes";
 
 /**
- * Renders wiki internal links (`#/wiki?note=…`) with distinct classes from web links.
+ * Renders in-app note links (`#/notes?note=…`, including legacy `#/wiki?note=…`) with distinct classes from web links.
  */
 export const WikiAwareLink = Link.extend({
   name: "link",
 
   renderHTML({ HTMLAttributes }) {
     const href = String(HTMLAttributes.href ?? "");
-    const isWiki = href.startsWith("#/wiki?note=");
+    const isWiki = isInternalNoteHashHref(href);
     const isHttp = href.startsWith("http://") || href.startsWith("https://");
     const cls = isWiki
       ? "trellis-link trellis-link-internal"

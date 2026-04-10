@@ -15,6 +15,7 @@ import {
   getSkipCloudPromptAfterLocalModelCancel,
   setSkipCloudPromptAfterLocalModelCancel
 } from "@/lib/localModelInstallPrefs";
+import { resolveExtractionModeForSubscription } from "@/lib/settings";
 import {
   readWorkspaceSessionStorage,
   removeWorkspaceSessionStorage,
@@ -81,8 +82,13 @@ function layerPercent(event: ExtractionInstallProgressEvent | null): number | nu
 
 export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSettings }: Props) {
   const accessToken = useAuthStore((state) => state.accessToken);
+  const subscriptionTier = useAuthStore((state) => state.subscriptionTier);
   const accessTokenRef = useRef(accessToken);
   accessTokenRef.current = accessToken;
+  const effectiveExtractionMode = resolveExtractionModeForSubscription(
+    settings.extraction.mode,
+    subscriptionTier
+  );
   const [phase, setPhase] = useState<
     "idle" | "checking" | "blocked" | "installing" | "confirm-cloud" | "hidden"
   >("idle");
@@ -104,7 +110,7 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
   }, []);
 
   useEffect(() => {
-    if (!features.localExtraction || settings.extraction.mode === "cloud") {
+    if (!features.localExtraction || effectiveExtractionMode === "cloud") {
       setPhase("hidden");
       return;
     }
@@ -121,7 +127,7 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
 
       try {
         const status = await window.trellis.extraction.getRuntimeStatus({
-          mode: settings.extraction.mode,
+          mode: effectiveExtractionMode,
           cloud: getOptionalExtractionCloudConfig(accessTokenRef.current ?? null)
         });
 
@@ -153,7 +159,7 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
     return () => {
       cancelled = true;
     };
-  }, [features.localExtraction, settings.extraction.mode]);
+  }, [effectiveExtractionMode, features.localExtraction]);
 
   useEffect(() => {
     if (phase !== "installing" || installStartedRef.current) {
@@ -182,6 +188,8 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
           if (getSkipCloudPromptAfterLocalModelCancel()) {
             dismissForSessionStorage();
             setPhase("hidden");
+          } else if (subscriptionTier === "byok") {
+            setPhase("blocked");
           } else {
             setPhase("confirm-cloud");
           }
@@ -193,7 +201,7 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
         setInstallProgress(null);
       }
     })();
-  }, [phase]);
+  }, [phase, subscriptionTier]);
 
   async function handleCancelDownload(): Promise<void> {
     await window.trellis.extraction.cancelInstallLocalModel();
@@ -223,7 +231,7 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
   async function goBackFromConfirmCloud(): Promise<void> {
     try {
       const status = await window.trellis.extraction.getRuntimeStatus({
-        mode: settings.extraction.mode,
+        mode: effectiveExtractionMode,
         cloud: getOptionalExtractionCloudConfig(accessTokenRef.current ?? null)
       });
       setRuntimeStatus(status);
@@ -251,6 +259,7 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 px-4 py-8 backdrop-blur-sm"
+      data-testid="local-note-processor-first-run"
       role="dialog"
       aria-modal="true"
       aria-labelledby="local-note-processor-first-run-title"
@@ -259,6 +268,7 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
         {phase === "installing" && (
           <button
             type="button"
+            data-testid="local-note-processor-cancel-download"
             className="absolute right-3 top-3 rounded-field border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:text-trellis-text"
             aria-label="Cancel download"
             onClick={() => {
@@ -323,6 +333,7 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
               <button
                 type="button"
+                data-testid="local-note-processor-go-back"
                 className="rounded-field border border-trellis-border px-3 py-2 text-sm text-trellis-text transition hover:border-trellis-accent/35"
                 onClick={() => {
                   void goBackFromConfirmCloud();
@@ -332,6 +343,7 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
               </button>
               <button
                 type="button"
+                data-testid="local-note-processor-not-now"
                 className="rounded-field border border-trellis-border px-3 py-2 text-sm text-trellis-text transition hover:border-trellis-accent/35"
                 onClick={() => {
                   dismissForSession();
@@ -341,6 +353,7 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
               </button>
               <button
                 type="button"
+                data-testid="local-note-processor-use-cloud"
                 className="trellis-accent-button rounded-field border px-3 py-2 text-sm transition"
                 onClick={() => {
                   void switchToCloudNoteProcessing();
@@ -356,17 +369,20 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
           <div className="mt-3 space-y-4">
             <p className="text-sm leading-relaxed text-trellis-muted">
               {runtimeStatus?.providers.find((p) => p.id === "embedded")?.reason ??
-                "The download did not finish. Check your network and try again, or use cloud processing for now."}
+                (subscriptionTier === "byok"
+                  ? "The download did not finish. Check your network and try again to keep notes from chats on-device."
+                  : "The download did not finish. Check your network and try again, or use cloud processing for now.")}
             </p>
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               <button
                 type="button"
+                data-testid="local-note-processor-check-again"
                 className="rounded-field border border-trellis-border px-3 py-2 text-sm text-trellis-text transition hover:border-trellis-accent/35"
                 onClick={() => {
                   void (async () => {
                     try {
                       const status = await window.trellis.extraction.getRuntimeStatus({
-                        mode: settings.extraction.mode,
+                        mode: effectiveExtractionMode,
                         cloud: getOptionalExtractionCloudConfig(accessTokenRef.current ?? null)
                       });
                       setRuntimeStatus(status);
@@ -388,17 +404,21 @@ export function LocalNoteProcessorFirstRun({ settings, features, onUpdateSetting
                   Check again
                 </span>
               </button>
+              {subscriptionTier !== "byok" && (
+                <button
+                  type="button"
+                  data-testid="local-note-processor-use-cloud"
+                  className="rounded-field border border-trellis-border px-3 py-2 text-sm text-trellis-text transition hover:border-trellis-accent/35"
+                  onClick={() => {
+                    setPhase("confirm-cloud");
+                  }}
+                >
+                  Use cloud processing…
+                </button>
+              )}
               <button
                 type="button"
-                className="rounded-field border border-trellis-border px-3 py-2 text-sm text-trellis-text transition hover:border-trellis-accent/35"
-                onClick={() => {
-                  setPhase("confirm-cloud");
-                }}
-              >
-                Use cloud processing…
-              </button>
-              <button
-                type="button"
+                data-testid="local-note-processor-remind-later"
                 className={cn(
                   "text-sm text-trellis-faint underline-offset-2 transition hover:text-trellis-muted"
                 )}

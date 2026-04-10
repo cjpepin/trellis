@@ -1,8 +1,9 @@
+import type { SubscriptionTier } from "@electron/ipc/types";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabase, hasSupabaseConfig } from "./supabase";
 
 export interface ProfileSnapshot {
-  subscriptionTier: "trial" | "pro";
+  subscriptionTier: SubscriptionTier;
   subscriptionStatus: "trialing" | "active" | "expired";
   usage: {
     messagesUsed: number;
@@ -13,8 +14,15 @@ export interface ProfileSnapshot {
 }
 
 function mapProfileRow(row: Record<string, unknown> | null): ProfileSnapshot {
+  const subscriptionTier: SubscriptionTier =
+    row?.subscription_tier === "pro"
+      ? "pro"
+      : row?.subscription_tier === "byok"
+        ? "byok"
+        : "trial";
+
   return {
-    subscriptionTier: row?.subscription_tier === "pro" ? "pro" : "trial",
+    subscriptionTier,
     subscriptionStatus:
       row?.subscription_status === "active"
         ? "active"

@@ -1,10 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fromRepoRoot } from "./lib/repo-paths.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const rootDir = path.join(__dirname, "..");
-const seedDir = path.join(rootDir, "preview-seed");
+const seedDir = fromRepoRoot("fixtures", "preview-seed");
 const vaultDir = path.join(seedDir, "vault");
 const wikiDir = path.join(vaultDir, "wiki");
 const rawDir = path.join(vaultDir, "raw");
@@ -140,7 +138,19 @@ const rawSources = [
 
 const sessionBlueprints = [
   ["Pricing page rewrite", 171, "gpt-4.1-mini", [
-    ["user", "I want the pricing page to sound less like we are selling models and more like we are selling compounding memory."],
+    {
+      role: "user",
+      content:
+        "I want the pricing page to sound less like we are selling models and more like we are selling compounding memory.",
+      attachments: [
+        {
+          kind: "file",
+          label: "Pricing Page Feedback",
+          text:
+            "Prospects responded best when pricing language connected directly to repeated value rather than model access alone.\n\nWords like durable, local, and compounding resonated more than premium."
+        }
+      ]
+    },
     ["assistant", "Lead with durable value: every useful chat should leave behind notes, links, and a graph that feels more helpful over time. That lines up with [[Pricing Notes]] and [[Trust Signals]]."],
     ["user", "Can you tighten that into three page sections and keep the tone calm?"],
     ["assistant", "Yes. I would structure it as promise, proof, and boundaries: what compounds, how it stays local-first, and what remains visible when cloud features are unavailable."]
@@ -158,7 +168,24 @@ const sessionBlueprints = [
     ["assistant", "Review the tags once a week, summarize the top three shifts, and route only those themes into roadmap discussion."]
   ]],
   ["Design partner follow-up", 138, "gpt-4.1-mini", [
-    ["user", "I need a better follow-up note after today's design partner calls."],
+    {
+      role: "user",
+      content: "I need a better follow-up note after today's design partner calls.",
+      attachments: [
+        {
+          kind: "file",
+          label: "Ada Partner Call",
+          text:
+            "Ada wanted the app to explain what changed after a chat without forcing her to inspect each note manually.\n\nShe also preferred warmer, steadier interface language."
+        },
+        {
+          kind: "file",
+          label: "Maple Clinic Call",
+          text:
+            "Maple Clinic cared about local storage boundaries first, then workflow speed.\n\nThe team said trust would depend on whether the product could fail gracefully when cloud services disappeared."
+        }
+      ]
+    },
     ["assistant", "Summarize each call into one sharp need, one trust concern, and one workflow moment. That keeps [[Field Notes Design Partners]] compact and comparable."],
     ["user", "Ada and Maple both cared about boundaries, but in different language."],
     ["assistant", "Name the shared theme as trust and keep the phrasing separate underneath so you do not flatten the nuance too early."]
@@ -200,7 +227,18 @@ const sessionBlueprints = [
     ["assistant", "Yes, but tie it to concrete responsibilities like onboarding, failure states, and note workflows."]
   ]],
   ["Launch week retro", 66, "gpt-4.1-mini", [
-    ["user", "Give me a short retro outline after launch week."],
+    {
+      role: "user",
+      content: "Give me a short retro outline after launch week.",
+      attachments: [
+        {
+          kind: "file",
+          label: "Launch Week Retro",
+          text:
+            "Support volume was low, but confusion clustered around what counted as saved knowledge versus transient chat.\n\nThe next launch should explain the compounding loop earlier."
+        }
+      ]
+    },
     ["assistant", "Start with what users understood immediately, where support questions clustered, and what the team had to explain repeatedly. [[Launch Week Checklist]] and [[Support Inbox Patterns]] are the right anchors."],
     ["user", "Can we turn that into next sprint input?"],
     ["assistant", "Yes. Translate each repeated explanation into one product or copy decision."]
@@ -227,25 +265,52 @@ const sessionBlueprints = [
     ["user", "River Studio liked the product but worried about where context lives between projects."],
     ["assistant", "That suggests we should sharpen the vault story and explain project separation more clearly. [[River Studio]] connects nicely to [[Vault Layout]] and [[Trust Signals]]."],
     ["user", "Anything else worth logging?"],
-    ["assistant", "Yes: they treated repeatable recovery of context as the real wow moment, not the model output itself."]
+    ["assistant", "Yes: they treated repeatable recovery of context as the real wow moment, not the model output itself."],
+    ["user", "They also asked whether each client could have its own vault without losing the cross-project references the team relies on."],
+    ["assistant", "Capture that as a structural tension: separation by default, intentional bridges when the work genuinely overlaps. [[Vault Layout]] should explain the boundary, while [[River Studio]] can hold the agency-specific examples."],
+    ["user", "What's the cleanest follow-up question for the next call?"],
+    ["assistant", "Ask them to walk through one real handoff: where context currently lives, when it gets lost, and what they would need to trust a vault-per-client setup. That will surface whether the problem is navigation, permissions, or retrieval."]
   ]],
   ["Maple Clinic interview", 13, "gpt-4.1-mini", [
-    ["user", "Maple Clinic reacted strongly to the local-first story. I want a succinct readout."],
+    {
+      role: "user",
+      content: "Maple Clinic reacted strongly to the local-first story. I want a succinct readout.",
+      attachments: [
+        {
+          kind: "file",
+          label: "Maple Clinic Call",
+          text:
+            "Maple Clinic cared about local storage boundaries first, then workflow speed.\n\nThe team said trust would depend on whether the product could fail gracefully when cloud services disappeared."
+        }
+      ]
+    },
     ["assistant", "Record the priority order clearly: local storage boundaries first, offline usefulness second, workflow speed third. [[Maple Clinic]] and [[Source Summary Privacy Report]] should carry that thread."],
     ["user", "Should the product copy mention clinics specifically?"],
-    ["assistant", "Not yet. Keep the copy general and let the case notes remain specific."]
+    ["assistant", "Not yet. Keep the copy general and let the case notes remain specific."],
+    ["user", "They kept asking what still works if cloud models are down for the day."],
+    ["assistant", "That is worth highlighting because it turns local-first from philosophy into an operational promise. Tie the readout to note access, search, and the ability to continue organizing the vault even when generation pauses."],
+    ["user", "Should I capture the compliance angle too or is that too early?"],
+    ["assistant", "Capture it as an emerging theme, not a product claim. Say that explicit storage boundaries lowered anxiety, while formal compliance questions still need separate validation."]
   ]],
   ["Office hours plan", 7, "gpt-4.1-mini", [
     ["user", "I want office hours to produce more than scattered follow-ups."],
     ["assistant", "Ask one product question each week, log patterns in the same format, and connect the output back into [[Office Hours Format]] and [[Support Inbox Patterns]]."],
     ["user", "What's the smallest template?"],
-    ["assistant", "Theme, quote, friction, next decision."]
+    ["assistant", "Theme, quote, friction, next decision."],
+    ["user", "I also want the notes to roll up into something the team can scan in five minutes."],
+    ["assistant", "Then standardize the residue. End each session with one sentence on the user's goal, one quote, one friction point, and the next decision it informs. That gives [[Office Hours Format]] a repeatable shape."],
+    ["user", "Could that feed the weekly review automatically?"],
+    ["assistant", "Yes, if the format stays consistent. Treat office hours as a lightweight evidence stream that lands inside [[Weekly Review Rhythm]] instead of becoming a separate reporting ritual."]
   ]],
   ["Roadmap trimming", 3, "claude-sonnet-4-20250514", [
     ["user", "The roadmap is sprawling again. Help me trim it to three bets."],
     ["assistant", "Bias toward compounding loops: stronger first-run clarity, better note extraction, and clearer trust boundaries. That keeps [[Trellis Roadmap]] aligned with [[Activation Metrics]] and [[Trust Signals]]."],
     ["user", "What do I defer?"],
-    ["assistant", "Anything that adds surface area without making the core loop easier to understand or revisit."]
+    ["assistant", "Anything that adds surface area without making the core loop easier to understand or revisit."],
+    ["user", "I keep wanting to add collaboration polish and more graph controls because they feel strategic."],
+    ["assistant", "They may be strategic later, but right now they widen the product before the core loop is dependable. Ask whether each idea helps a new user move from first chat to a revisitable note with more confidence."],
+    ["user", "Can you restate the three bets as outcomes instead of features?"],
+    ["assistant", "Yes: new users understand what to do within minutes, important conversations turn into useful notes without cleanup, and people trust where their context lives when cloud features or providers are unavailable."]
   ]]
 ];
 
@@ -415,14 +480,23 @@ function generateSessions() {
   return sessionBlueprints.map(([title, daysAgo, model, transcript], sessionIndex) => {
     const sessionId = uuidFromNumber(sessionIndex + 1);
     const createdAt = formatTimestamp(daysAgo);
-    const messages = transcript.map(([role, content], messageIndex) => ({
-      id: uuidFromNumber(messageCounter++),
-      sessionId,
-      role,
-      content,
-      createdAt: createdAt + messageIndex * 90_000,
-      tokens: role === "assistant" ? 320 + messageIndex * 24 : null
-    }));
+    const messages = transcript.map((entry, messageIndex) => {
+      const turn = Array.isArray(entry)
+        ? { role: entry[0], content: entry[1] }
+        : entry;
+
+      return {
+        id: uuidFromNumber(messageCounter++),
+        sessionId,
+        role: turn.role,
+        content: turn.content,
+        createdAt: createdAt + messageIndex * 90_000,
+        tokens: turn.role === "assistant" ? 320 + messageIndex * 24 : null,
+        ...(turn.attachments && turn.attachments.length > 0
+          ? { attachments: turn.attachments }
+          : {})
+      };
+    });
 
     return {
       session: {
@@ -464,7 +538,7 @@ function main() {
     path.join(seedDir, "manifest.json"),
     `${JSON.stringify(
         {
-        version: "preview-v2",
+        version: "preview-v4",
         vaultName: "Preview Vault",
         vaultFolder: "vault",
         databaseFile: "db.json"

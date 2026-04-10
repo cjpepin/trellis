@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/core";
 import { Link2, Trash2, X } from "lucide-react";
+import { isInternalNoteHashHref, notesHashHref } from "@/lib/noteRoutes";
 import { slugifyNoteTitle } from "@/lib/noteReferences";
 
 function readWikiLinkLabel(editor: Editor): string {
@@ -60,7 +61,7 @@ function resolveLinkInput(raw: string): { href: string; label: string } | "empty
   }
 
   return {
-    href: `#/wiki?note=${encodeURIComponent(slug)}`,
+    href: notesHashHref(slug),
     label: trimmed
   };
 }
@@ -90,7 +91,7 @@ export function WikiLinkEditBubble({ editor, manualOpen, onManualOpenChange }: P
     function syncDraft(): void {
       if (ed.isActive("link")) {
         const href = ed.getAttributes("link").href;
-        if (typeof href === "string" && href.startsWith("#/wiki?note=")) {
+        if (typeof href === "string" && isInternalNoteHashHref(href)) {
           setDraft(readWikiLinkLabel(ed));
         } else {
           setDraft(typeof href === "string" ? href : "");
@@ -267,7 +268,7 @@ export function WikiLinkEditBubble({ editor, manualOpen, onManualOpenChange }: P
         }}
       >
         <label className="block text-[11px] font-medium uppercase tracking-[0.12em] text-trellis-muted">
-          {isWebUrl ? "Web URL" : "Wiki note title"}
+          {isWebUrl ? "Web URL" : "Linked note title"}
           <input
             type="text"
             className="trellis-input mt-1 w-full py-1.5 text-xs"

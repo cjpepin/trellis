@@ -2,7 +2,9 @@ import {
   defaultChatModel,
   type ChatModel,
   type ChatModelTier,
-  type ChatProvider
+  type ChatProvider,
+  type ProviderKeyStatus,
+  type SubscriptionTier
 } from "@electron/ipc/types";
 
 export interface ChatModelOption {
@@ -100,6 +102,75 @@ export function isPremiumChatModel(model: ChatModel): boolean {
   return getChatModelOption(model).tier === "premium";
 }
 
-export function canUseChatModel(model: ChatModel, subscriptionTier: "trial" | "pro"): boolean {
-  return subscriptionTier === "pro" || !isPremiumChatModel(model);
+function hasProviderKey(
+  provider: ChatProvider,
+  providerKeys: ProviderKeyStatus[] | undefined
+): boolean {
+  return providerKeys?.some((status) => status.provider === provider && status.configured) ?? false;
+}
+
+export function getChatModelAccess(
+  model: ChatModel,
+  subscriptionTier: SubscriptionTier,
+  providerKeys?: ProviderKeyStatus[]
+): {
+  allowed: boolean;
+  reason: string | null;
+} {
+  if (subscriptionTier === "pro") {
+    return {
+      allowed: true,
+      reason: null
+    };
+  }
+
+  if (subscriptionTier === "trial") {
+    if (!isPremiumChatModel(model)) {
+      return {
+        allowed: true,
+        reason: null
+      };
+    }
+
+    return {
+      allowed: false,
+      reason: `${getChatModelLabel(model)} is available on Pro. Upgrade to use premium models.`
+    };
+  }
+
+  const provider = getChatModelOption(model).provider;
+
+  if (hasProviderKey(provider, providerKeys)) {
+    return {
+      allowed: true,
+      reason: null
+    };
+  }
+
+  return {
+    allowed: false,
+    reason: `Add your ${provider === "openai" ? "OpenAI" : "Anthropic"} API key in Settings to use ${getChatModelLabel(model)} on the BYOK plan.`
+  };
+}
+
+export function canUseChatModel(
+  model: ChatModel,
+  subscriptionTier: SubscriptionTier,
+  providerKeys?: ProviderKeyStatus[]
+): boolean {
+  return getChatModelAccess(model, subscriptionTier, providerKeys).allowed;
+}
+
+export function getFirstAccessibleChatModel(
+  subscriptionTier: SubscriptionTier,
+  providerKeys?: ProviderKeyStatus[]
+): ChatModel {
+  return (
+    chatModelOptions.find((option) => canUseChatModel(option.id, subscriptionTier, providerKeys))
+      ?.id ?? defaultChatModel
+  );
+}
+
+export function isPaidSubscriptionTier(subscriptionTier: SubscriptionTier): boolean {
+  return subscriptionTier === "pro" || subscriptionTier === "byok";
 }

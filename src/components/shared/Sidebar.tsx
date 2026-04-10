@@ -27,7 +27,7 @@ interface Props {
 
 const navItems = [
   { to: "/chat", label: "Chat", icon: MessageSquare },
-  { to: "/wiki", label: "Wiki", icon: ScrollText },
+  { to: "/notes", label: "Notes", icon: ScrollText },
   { to: "/graph", label: "Graph", icon: Network },
   { to: "/ingest", label: "Ingest", icon: Upload },
   { to: "/settings", label: "Settings", icon: Settings2 }
@@ -44,7 +44,8 @@ function buildSessionBadgeLabel(title: string): string {
   }
 
   if (parts.length === 1) {
-    return parts[0].slice(0, 2).toUpperCase();
+    const first = parts[0];
+    return first === undefined ? "•" : first.slice(0, 2).toUpperCase();
   }
 
   return parts
@@ -121,7 +122,10 @@ export function Sidebar({
   }
 
   return (
-    <aside className="app-region-drag trellis-sidebar flex h-full w-full flex-col border-r border-trellis-border">
+    <aside
+      className="app-region-drag trellis-sidebar flex h-full w-full flex-col border-r border-trellis-border"
+      data-testid="app-sidebar"
+    >
       <div className={cn("border-b border-trellis-border", collapsed ? "px-2 py-4" : "px-4 py-5")}>
         <div className={cn("flex", collapsed ? "flex-col items-center gap-3" : "items-start justify-between gap-3")}>
           {collapsed ? (
@@ -179,6 +183,7 @@ export function Sidebar({
               key={item.to}
               to={item.to}
               title={item.label}
+              data-testid={`sidebar-nav-${item.to.slice(1)}`}
               className={({ isActive }) =>
                 `flex items-center rounded-field text-sm transition ${
                   collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2"
@@ -206,7 +211,7 @@ export function Sidebar({
           </div>
           {!collapsed && <p className="text-xs text-trellis-faint">{sessions.length}</p>}
         </div>
-        <div className={cn(collapsed ? "flex flex-col items-center gap-1.5" : "space-y-1.5")}>
+        <div className={cn(collapsed ? "flex flex-col items-center gap-1.5" : "space-y-0")}>
           {collapsed
             ? (
                 <>
@@ -242,7 +247,7 @@ export function Sidebar({
                 <button
                   key={session.id}
                   type="button"
-                  className={`w-full rounded-field border px-3 py-1.5 text-left transition ${
+                  className={`w-full rounded-field border px-3 py-1 text-left transition ${
                     activeSessionId === session.id
                       ? "trellis-selected-surface border-trellis-accent/25"
                       : "border-transparent bg-transparent hover:border-trellis-border hover:bg-trellis-surface"
@@ -251,8 +256,8 @@ export function Sidebar({
                     void selectSession(session.id, session.vaultId);
                   }}
                 >
-                  <p className="text-sm leading-5 text-trellis-text">{truncate(session.title, 28)}</p>
-                  <p className="mt-0.5 text-xs leading-4 text-trellis-muted">{formatTimestamp(session.updatedAt)}</p>
+                  <p className="text-[13px] leading-4 text-trellis-text">{truncate(session.title, 28)}</p>
+                  <p className="text-[11px] leading-4 text-trellis-muted">{formatTimestamp(session.updatedAt)}</p>
                 </button>
               ))}
 

@@ -6,6 +6,14 @@ import {
 
 /** Client-only id for pending chips in the composer. */
 export type PendingChatAttachment = ChatAttachment & { clientId: string };
+
+/** Pending image already written to the app media cache via IPC. */
+export type PendingImageAttachment = {
+  clientId: string;
+  fileId: string;
+  mimeType: string;
+  label: string;
+};
 export { CHAT_ATTACHMENT_CONTEXT_MARKER };
 
 export function toChatAttachments(pending: PendingChatAttachment[]): ChatAttachment[] {

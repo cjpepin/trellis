@@ -259,6 +259,204 @@
     0 12px 32px rgba(0, 0, 0, 0.42);
 }
 
+:root[data-theme="twilight"] {
+  --trellis-bg: #13101a;
+  --trellis-surface: #1a1622;
+  --trellis-surface-2: #221c2c;
+  --trellis-sidebar: #110e17;
+  --trellis-border: #362d44;
+  --trellis-text: #ebe6f4;
+  --trellis-text-muted: #9a8fb0;
+  --trellis-text-faint: #5c5268;
+  --trellis-accent: #b8a3e8;
+  --trellis-accent-dim: #7d6aad;
+  --trellis-accent-hover: #d4c4f5;
+  --trellis-success: #8fbc8f;
+  --trellis-warning: #d4b56f;
+  --trellis-error: #e08a8a;
+  --trellis-node: #b8a3e8;
+  --trellis-node-hover: #d4c4f5;
+  --trellis-edge: #3d3548;
+  --trellis-edge-hover: #524a66;
+  --trellis-input-bg: #0f0c14;
+  --trellis-accent-surface: #251f32;
+  --trellis-selected-surface: #2e263d;
+  --trellis-overlay-surface: rgba(19, 16, 26, 0.94);
+  --trellis-chip-surface: #1a1620;
+  --trellis-code-surface: #221b2c;
+  --trellis-selection: rgba(184, 163, 232, 0.28);
+  --trellis-bg-glow: rgba(184, 163, 232, 0.1);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.02);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(184, 163, 232, 0.16),
+    0 12px 32px rgba(0, 0, 0, 0.32);
+}
+
+:root[data-theme="dawn"] {
+  --trellis-bg: #faf5f2;
+  --trellis-surface: #fffbf9;
+  --trellis-surface-2: #f5ebe6;
+  --trellis-sidebar: #f3eae4;
+  --trellis-border: #e2d0c7;
+  --trellis-text: #2a211c;
+  --trellis-text-muted: #6b5248;
+  --trellis-text-faint: #9a857a;
+  --trellis-accent: #b75c5c;
+  --trellis-accent-dim: #8f4545;
+  --trellis-accent-hover: #d07070;
+  --trellis-success: #3d7350;
+  --trellis-warning: #b8860b;
+  --trellis-error: #a84040;
+  --trellis-node: #b75c5c;
+  --trellis-node-hover: #d07070;
+  --trellis-edge: #d4bfb4;
+  --trellis-edge-hover: #c0a898;
+  --trellis-input-bg: #ffffff;
+  --trellis-accent-surface: #f5e4e0;
+  --trellis-selected-surface: #edd8d3;
+  --trellis-overlay-surface: rgba(255, 251, 249, 0.94);
+  --trellis-chip-surface: #f0e6e0;
+  --trellis-code-surface: #efe0dc;
+  --trellis-selection: rgba(183, 92, 92, 0.2);
+  --trellis-bg-glow: rgba(183, 92, 92, 0.07);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.5);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(183, 92, 92, 0.1),
+    0 6px 18px rgba(90, 60, 55, 0.07);
+}
+
+:root[data-theme="graphite"] {
+  --trellis-bg: #131518;
+  --trellis-surface: #1a1d21;
+  --trellis-surface-2: #21252b;
+  --trellis-sidebar: #0f1114;
+  --trellis-border: #323842;
+  --trellis-text: #e8ecf1;
+  --trellis-text-muted: #8b96a3;
+  --trellis-text-faint: #4f5863;
+  --trellis-accent: #8eb9e0;
+  --trellis-accent-dim: #5a8ab8;
+  --trellis-accent-hover: #b3d4f0;
+  --trellis-success: #6cbc8f;
+  --trellis-warning: #d4b56f;
+  --trellis-error: #e08080;
+  --trellis-node: #8eb9e0;
+  --trellis-node-hover: #b3d4f0;
+  --trellis-edge: #343c48;
+  --trellis-edge-hover: #4a5566;
+  --trellis-input-bg: #0c0e11;
+  --trellis-accent-surface: #1a2430;
+  --trellis-selected-surface: #1f2c3a;
+  --trellis-overlay-surface: rgba(19, 21, 24, 0.94);
+  --trellis-chip-surface: #181b20;
+  --trellis-code-surface: #1c2228;
+  --trellis-selection: rgba(142, 185, 224, 0.26);
+  --trellis-bg-glow: rgba(142, 185, 224, 0.09);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.02);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(142, 185, 224, 0.15),
+    0 12px 32px rgba(0, 0, 0, 0.32);
+}
+
+:root[data-theme="cream"] {
+  --trellis-bg: #f4efe6;
+  --trellis-surface: #faf7f0;
+  --trellis-surface-2: #f0ebe0;
+  --trellis-sidebar: #ebe4d6;
+  --trellis-border: #d4c9b4;
+  --trellis-text: #2b261c;
+  --trellis-text-muted: #6a5f4a;
+  --trellis-text-faint: #8f8472;
+  --trellis-accent: #9a7238;
+  --trellis-accent-dim: #7a5a2c;
+  --trellis-accent-hover: #b8894a;
+  --trellis-success: #4a6e45;
+  --trellis-warning: #a67c32;
+  --trellis-error: #9a4040;
+  --trellis-node: #9a7238;
+  --trellis-node-hover: #b8894a;
+  --trellis-edge: #c9bba5;
+  --trellis-edge-hover: #b5a590;
+  --trellis-input-bg: #fffefb;
+  --trellis-accent-surface: #ede4d2;
+  --trellis-selected-surface: #e5dac4;
+  --trellis-overlay-surface: rgba(250, 247, 240, 0.94);
+  --trellis-chip-surface: #ebe3d4;
+  --trellis-code-surface: #e8e0d0;
+  --trellis-selection: rgba(154, 114, 56, 0.2);
+  --trellis-bg-glow: rgba(154, 114, 56, 0.08);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.55);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(154, 114, 56, 0.1),
+    0 6px 18px rgba(80, 70, 50, 0.08);
+}
+
+:root[data-theme="ember"] {
+  --trellis-bg: #161210;
+  --trellis-surface: #1f1a16;
+  --trellis-surface-2: #2a221c;
+  --trellis-sidebar: #120f0c;
+  --trellis-border: #3d3328;
+  --trellis-text: #f2ebe4;
+  --trellis-text-muted: #a89888;
+  --trellis-text-faint: #5c5248;
+  --trellis-accent: #e8956a;
+  --trellis-accent-dim: #b86d48;
+  --trellis-accent-hover: #f0ae8c;
+  --trellis-success: #7cb87a;
+  --trellis-warning: #d4a85c;
+  --trellis-error: #d07070;
+  --trellis-node: #e8956a;
+  --trellis-node-hover: #f0ae8c;
+  --trellis-edge: #4a3f34;
+  --trellis-edge-hover: #5f5144;
+  --trellis-input-bg: #100d0a;
+  --trellis-accent-surface: #2c1f18;
+  --trellis-selected-surface: #36261c;
+  --trellis-overlay-surface: rgba(22, 18, 16, 0.94);
+  --trellis-chip-surface: #1c1814;
+  --trellis-code-surface: #221c18;
+  --trellis-selection: rgba(232, 149, 106, 0.25);
+  --trellis-bg-glow: rgba(232, 149, 106, 0.1);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.015);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(232, 149, 106, 0.14),
+    0 12px 32px rgba(0, 0, 0, 0.32);
+}
+
+:root[data-theme="fog"] {
+  --trellis-bg: #eceef2;
+  --trellis-surface: #f5f6f9;
+  --trellis-surface-2: #e4e8ef;
+  --trellis-sidebar: #e0e4ec;
+  --trellis-border: #c2cad6;
+  --trellis-text: #1c2230;
+  --trellis-text-muted: #4d5768;
+  --trellis-text-faint: #788293;
+  --trellis-accent: #4a6590;
+  --trellis-accent-dim: #3a5070;
+  --trellis-accent-hover: #5c7aad;
+  --trellis-success: #3d7358;
+  --trellis-warning: #b8860b;
+  --trellis-error: #a04848;
+  --trellis-node: #4a6590;
+  --trellis-node-hover: #5c7aad;
+  --trellis-edge: #b4bcc8;
+  --trellis-edge-hover: #9ca8b8;
+  --trellis-input-bg: #fcfcfe;
+  --trellis-accent-surface: #dce2ec;
+  --trellis-selected-surface: #cfd8e6;
+  --trellis-overlay-surface: rgba(245, 246, 249, 0.94);
+  --trellis-chip-surface: #e2e7ef;
+  --trellis-code-surface: #dee5ee;
+  --trellis-selection: rgba(74, 101, 144, 0.2);
+  --trellis-bg-glow: rgba(74, 101, 144, 0.06);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.45);
+  --trellis-elevated-shadow:
+    0 0 0 1px rgba(74, 101, 144, 0.09),
+    0 6px 18px rgba(40, 55, 80, 0.07);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -359,12 +557,14 @@
     text-decoration-color: color-mix(in srgb, var(--trellis-accent) 36%, transparent);
   }
 
+  .trellis-rich-text a[href^="#/notes?note="],
   .trellis-rich-text a[href^="#/wiki?note="],
   .trellis-link.trellis-link-internal {
     color: var(--trellis-accent);
     text-decoration-style: solid;
   }
 
+  .trellis-rich-text a[href^="#/notes?note="]:hover,
   .trellis-rich-text a[href^="#/wiki?note="]:hover,
   .trellis-link.trellis-link-internal:hover {
     color: var(--trellis-accent-hover);
@@ -381,6 +581,11 @@
   .trellis-link[href^="http"]:hover {
     color: var(--trellis-text);
     text-decoration-color: color-mix(in srgb, var(--trellis-text) 40%, transparent);
+  }
+
+  /* Cmd/Ctrl+click navigates; show pointer while modifier is held */
+  .trellis-rich-text-modifier-nav .trellis-rich-text a[href] {
+    cursor: pointer;
   }
 
   .trellis-link.trellis-link-missing {
@@ -492,6 +697,11 @@
 
   .trellis-chat-copy h3 {
     @apply text-lg;
+  }
+
+  /* Keep list markers readable when the bubble uses right alignment */
+  .trellis-chat-copy.text-right .trellis-rich-text :is(ul, ol) {
+    @apply ml-auto inline-block text-left;
   }
 
   /* Wiki note body: max-width column only — the route’s trellis-panel is the single card surface. */

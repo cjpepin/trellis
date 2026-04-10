@@ -3,6 +3,16 @@ import { corsHeaders } from "../_shared/http.ts";
 
 const stripeTimestampToleranceSeconds = 300;
 
+function resolveSubscriptionTier(metadata: Record<string, unknown> | null): "pro" | "byok" | null {
+  const planCode = typeof metadata?.plan_code === "string" ? metadata.plan_code : null;
+
+  if (planCode === "pro" || planCode === "byok") {
+    return planCode;
+  }
+
+  return null;
+}
+
 function parseStripeSignatureHeader(header: string): { timestamp: string; signatures: string[] } {
   const pairs = header.split(",").map((entry) => entry.trim());
   const timestamp = pairs.find((entry) => entry.startsWith("t="))?.slice(2) ?? "";
@@ -124,6 +134,7 @@ Deno.serve(async (request) => {
         : null;
     const type = typeof event.type === "string" ? event.type : null;
     const userId = typeof metadata?.user_id === "string" ? metadata.user_id : null;
+    const subscriptionTier = resolveSubscriptionTier(metadata);
 
     if (!type || !userId) {
       return new Response("Ignored", { status: 202 });
@@ -131,11 +142,14 @@ Deno.serve(async (request) => {
 
     const admin = getAdminClient();
 
-    if (type === "checkout.session.completed" || type === "customer.subscription.updated") {
+    if (
+      (type === "checkout.session.completed" || type === "customer.subscription.updated") &&
+      subscriptionTier
+    ) {
       const { error } = await admin
         .from("profiles")
         .update({
-          subscription_tier: "pro",
+          subscription_tier: subscriptionTier,
           subscription_status: "active",
           stripe_customer_id: object?.customer ?? null,
           updated_at: new Date().toISOString()

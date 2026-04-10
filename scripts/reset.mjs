@@ -2,13 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const rootDir = path.join(__dirname, "..");
+import { fromRepoRoot } from "./lib/repo-paths.mjs";
 
 function readAppName() {
-  const pkgPath = path.join(rootDir, "package.json");
+  const pkgPath = fromRepoRoot("package.json");
   const raw = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
   const name = typeof raw.name === "string" ? raw.name : "trellis";
   return name;

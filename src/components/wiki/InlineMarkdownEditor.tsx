@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { renderWikiMarkdown } from "@/lib/markdown";
+import { isInternalNoteHashHref, slugFromInternalNoteHashHref } from "@/lib/noteRoutes";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -281,9 +282,12 @@ export function InlineMarkdownEditor({
     if (link && (event.metaKey || event.ctrlKey)) {
       const href = link.getAttribute("href");
 
-      if (href?.startsWith("#/wiki?note=") && onOpenNote) {
+      if (href && isInternalNoteHashHref(href) && onOpenNote) {
         event.preventDefault();
-        onOpenNote(decodeURIComponent(href.replace("#/wiki?note=", "")));
+        const slug = slugFromInternalNoteHashHref(href);
+        if (slug) {
+          onOpenNote(slug);
+        }
         return;
       }
 

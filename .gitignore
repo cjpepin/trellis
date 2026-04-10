@@ -1,14 +1,27 @@
+# Dependencies
 node_modules
+
+# Generated app, installers, and test output
+out
 dist
 dist-electron
-.DS_Store
+playwright-report
+test-results
+
+# Local environment files
 .env
 .env.local
 .env.development
 .env.production
-supabase/.env.local
+
+# Generated Supabase metadata
+supabase/.temp
+
+# Local databases and logs
 *.log
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
 
+# OS metadata
+.DS_Store

@@ -79,7 +79,7 @@ export function NoteViewer({
                 >
                   <CircleHelp className="h-4 w-4" />
                   <span className="pointer-events-none absolute right-0 top-full z-20 mt-2 hidden w-72 rounded-panel border border-trellis-border bg-trellis-surface-2 px-3 py-2 text-left text-xs leading-6 text-trellis-muted shadow-lg group-hover:block">
-                    Type [[ to link notes (autocomplete). Wiki links use [[brackets]] in the file; use the Link toolbar control for https links only. Cmd/Ctrl+click a wiki link to open or create the note; Cmd/Ctrl+click a web link to open in the browser.
+                    Type [[ to link notes (autocomplete). Bracket links use [[note title]] in the file; use the Link toolbar control for https links only. Cmd/Ctrl+click a note link to open or create the note; Cmd/Ctrl+click a web link to open in the browser.
                   </span>
                 </button>
               ) : null}

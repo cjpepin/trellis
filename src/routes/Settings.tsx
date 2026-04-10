@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Download,
   FolderOpen,
+  KeyRound,
   LoaderCircle,
   LogOut,
   Palette,
@@ -11,15 +12,18 @@ import {
   RefreshCw,
   Sparkles,
   Trash2,
+  Upload,
   UserRound
 } from "lucide-react";
 import type {
   AppFeatureFlags,
   AppSettings,
+  CheckoutPlanCode,
   ExtractionDebugRun,
   ExtractionInstallProgressEvent,
   ExtractionRuntimeStatus,
   LocalExtractionModelInfo,
+  ChatProvider,
   WorkspaceInfo
 } from "@electron/ipc/types";
 import {
@@ -28,8 +32,10 @@ import {
 } from "@shared/extraction/config";
 import { getOptionalExtractionCloudConfig } from "@/lib/api";
 import {
+  chatPrivacyModeOptions,
   getExtractionModeOptions,
   getActiveVault,
+  resolveExtractionModeForSubscription,
   themeOptions
 } from "@/lib/settings";
 import { cn } from "@/lib/utils";
@@ -47,6 +53,7 @@ interface Props {
   workspace: WorkspaceInfo;
   workspaces: WorkspaceInfo[];
   onUpdateSettings: (settings: AppSettings) => Promise<void>;
+  onRefreshVault: (vaultId?: string) => Promise<void>;
   onSwitchWorkspace: (workspaceId: WorkspaceInfo["id"]) => Promise<void>;
   onResetPreview: () => Promise<void>;
 }
@@ -120,6 +127,19 @@ function formatDebugTimestamp(value: number | null): string {
     hour: "numeric",
     minute: "2-digit",
     second: "2-digit"
+  }).format(value);
+}
+
+function formatProviderKeyTimestamp(value: number | null): string {
+  if (value === null) {
+    return "Not saved";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
   }).format(value);
 }
 
@@ -208,6 +228,7 @@ export function Settings({
   workspace,
   workspaces,
   onUpdateSettings,
+  onRefreshVault,
   onSwitchWorkspace,
   onResetPreview
 }: Props) {
@@ -230,6 +251,16 @@ export function Settings({
   } | null>(null);
   const [extractionAdvancedOpen, setExtractionAdvancedOpen] = useState(false);
   const [premiumPlansModalOpen, setPremiumPlansModalOpen] = useState(false);
+  const [checkoutPlan, setCheckoutPlan] = useState<CheckoutPlanCode | null>(null);
+  const [providerKeyDrafts, setProviderKeyDrafts] = useState<Record<ChatProvider, string>>({
+    openai: "",
+    anthropic: ""
+  });
+  const [busyProvider, setBusyProvider] = useState<{
+    provider: ChatProvider;
+    action: "save" | "delete";
+  } | null>(null);
+  const [obsidianTransfer, setObsidianTransfer] = useState<"import" | "export" | null>(null);
   const [installProgressEvent, setInstallProgressEvent] =
     useState<ExtractionInstallProgressEvent | null>(null);
   const installingModelIdRef = useRef<string | null>(null);
@@ -238,22 +269,25 @@ export function Settings({
   const activeSessionId = useChatStore((state) => state.activeSessionId);
   const pushToast = useUiStore((state) => state.pushToast);
   const configError = getSupabaseConfigError();
-  const stripeCheckoutUrl = import.meta.env.VITE_STRIPE_CHECKOUT_URL;
   const activeVault = getActiveVault(settings);
   const normalizedEmail = email.trim().toLowerCase();
   const localProvider = useMemo(() => findLocalProvider(runtimeStatus), [runtimeStatus]);
   const cloudProvider = useMemo(() => findCloudProvider(runtimeStatus), [runtimeStatus]);
   const localExtractionEnabled = features.localExtraction;
+  const effectiveExtractionMode = resolveExtractionModeForSubscription(
+    settings.extraction.mode,
+    authState.subscriptionTier
+  );
   const availableExtractionModeOptions = useMemo(
-    () => getExtractionModeOptions(localExtractionEnabled),
-    [localExtractionEnabled]
+    () => getExtractionModeOptions(localExtractionEnabled, authState.subscriptionTier),
+    [authState.subscriptionTier, localExtractionEnabled]
   );
   const localModels = localProvider?.models ?? [];
   const extractionModels = localModels.filter((model) => model.purpose === "extraction");
   const embeddingModels = localModels.filter((model) => model.purpose === "embedding");
   const needsLocalSetup =
     localExtractionEnabled &&
-    settings.extraction.mode === "local" &&
+    effectiveExtractionMode === "local" &&
     !localProvider?.available;
 
   const defaultNoteProcessorModel = extractionModels.find(
@@ -263,7 +297,7 @@ export function Settings({
     localExtractionEnabled &&
     Boolean(defaultNoteProcessorModel) &&
     !defaultNoteProcessorModel?.installed &&
-    (settings.extraction.mode === "auto" || settings.extraction.mode === "local");
+    (effectiveExtractionMode === "auto" || effectiveExtractionMode === "local");
   const manualExtractionSession = useMemo(
     () =>
       chatSessions.find((session) => session.id === activeSessionId) ??
@@ -273,6 +307,7 @@ export function Settings({
   );
   const manualExtractionSessionLabel =
     manualExtractionSession?.title.trim() || "your latest chat";
+  const providerKeyStatuses = authState.providerKeys.statuses;
 
   const notesFromChatsStatusLine = useMemo(() => {
     if (isRefreshingRuntime) {
@@ -284,7 +319,7 @@ export function Settings({
         : (cloudProvider?.reason ?? "Cloud unavailable.");
     }
 
-    const mode = settings.extraction.mode;
+    const mode = effectiveExtractionMode;
     const localOk = localProvider?.available;
     const cloudOk = cloudProvider?.available;
 
@@ -308,11 +343,11 @@ export function Settings({
       cloudOk ? "Cloud available" : (cloudProvider?.reason ?? "Cloud unavailable")
     ].join(" · ");
   }, [
+    effectiveExtractionMode,
     isRefreshingRuntime,
     localExtractionEnabled,
     cloudProvider,
-    localProvider,
-    settings.extraction.mode
+    localProvider
   ]);
 
   function isValidEmail(value: string): boolean {
@@ -324,7 +359,7 @@ export function Settings({
 
     try {
       const status = await window.trellis.extraction.getRuntimeStatus({
-        mode: settings.extraction.mode,
+        mode: effectiveExtractionMode,
         cloud: getOptionalExtractionCloudConfig(authState.accessToken ?? null)
       });
       setRuntimeStatus(status);
@@ -394,7 +429,7 @@ export function Settings({
       const result = await window.trellis.extraction.queueSession({
         sessionId: manualExtractionSession.id,
         trigger: "manual",
-        mode: settings.extraction.mode,
+        mode: effectiveExtractionMode,
         cloud: getOptionalExtractionCloudConfig(authState.accessToken ?? null),
         preferredLocalModelId: settings.extraction.preferredLocalModelId ?? undefined,
         force: true
@@ -460,7 +495,7 @@ export function Settings({
 
   useEffect(() => {
     void refreshRuntimeStatus();
-  }, [authState.accessToken, settings.extraction.mode]);
+  }, [authState.accessToken, effectiveExtractionMode]);
 
   useEffect(() => {
     void refreshDebugRuns();
@@ -518,7 +553,10 @@ export function Settings({
     }
 
     try {
-      const selectedPath = await window.trellis.vault.selectDirectory();
+      const selectedPath = await window.trellis.vault.selectDirectory({
+        title: "Choose your Trellis vault",
+        buttonLabel: "Use folder"
+      });
 
       if (!selectedPath) {
         return;
@@ -564,6 +602,71 @@ export function Settings({
         title: error instanceof Error ? error.message : "Could not switch vaults.",
         tone: "error"
       });
+    }
+  }
+
+  async function importFromObsidian(): Promise<void> {
+    setObsidianTransfer("import");
+
+    try {
+      const sourcePath = await window.trellis.vault.selectDirectory({
+        title: "Choose an Obsidian vault to import",
+        buttonLabel: "Import"
+      });
+
+      if (!sourcePath) {
+        return;
+      }
+
+      const result = await window.trellis.vault.importFromObsidian({
+        sourcePath,
+        vaultId: activeVault.id
+      });
+
+      await onRefreshVault(activeVault.id);
+      pushToast({
+        title: `Imported ${result.importedNoteCount} Obsidian notes into ${activeVault.name}.`,
+        tone: "success"
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not import that Obsidian vault.",
+        tone: "error"
+      });
+    } finally {
+      setObsidianTransfer(null);
+    }
+  }
+
+  async function exportToObsidian(): Promise<void> {
+    setObsidianTransfer("export");
+
+    try {
+      const targetPath = await window.trellis.vault.selectDirectory({
+        title: "Choose an Obsidian vault to export into",
+        buttonLabel: "Export"
+      });
+
+      if (!targetPath) {
+        return;
+      }
+
+      const result = await window.trellis.vault.exportToObsidian({
+        targetPath,
+        vaultId: activeVault.id
+      });
+
+      pushToast({
+        title: `Exported ${result.exportedNoteCount} Trellis notes for Obsidian.`,
+        tone: "success"
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not export to that Obsidian vault.",
+        tone: "error"
+      });
+    } finally {
+      setObsidianTransfer(null);
     }
   }
 
@@ -720,12 +823,143 @@ export function Settings({
         ...settings,
         extraction: {
           ...settings.extraction,
-          mode
+          mode: resolveExtractionModeForSubscription(mode, authState.subscriptionTier)
         }
       });
     } catch (error) {
       pushToast({
         title: error instanceof Error ? error.message : "Could not update how chats are turned into notes.",
+        tone: "error"
+      });
+    }
+  }
+
+  async function saveProviderKey(provider: ChatProvider): Promise<void> {
+    const apiKey = providerKeyDrafts[provider].trim();
+
+    if (!apiKey) {
+      pushToast({
+        title: `Paste your ${provider === "openai" ? "OpenAI" : "Anthropic"} key before saving.`,
+        tone: "warning"
+      });
+      return;
+    }
+
+    setBusyProvider({
+      provider,
+      action: "save"
+    });
+
+    try {
+      const nextProviderKeys = await window.trellis.chat.setProviderKey({
+        provider,
+        apiKey
+      });
+      authState.setProviderKeys(nextProviderKeys);
+      setProviderKeyDrafts((current) => ({
+        ...current,
+        [provider]: ""
+      }));
+      pushToast({
+        title: `${provider === "openai" ? "OpenAI" : "Anthropic"} key saved on this device.`,
+        tone: "success"
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not save that provider key.",
+        tone: "error"
+      });
+    } finally {
+      setBusyProvider(null);
+    }
+  }
+
+  async function removeProviderKey(provider: ChatProvider): Promise<void> {
+    setBusyProvider({
+      provider,
+      action: "delete"
+    });
+
+    try {
+      const nextProviderKeys = await window.trellis.chat.deleteProviderKey({
+        provider
+      });
+      authState.setProviderKeys(nextProviderKeys);
+      setProviderKeyDrafts((current) => ({
+        ...current,
+        [provider]: ""
+      }));
+      pushToast({
+        title: `${provider === "openai" ? "OpenAI" : "Anthropic"} key removed from this device.`,
+        tone: "success"
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not remove that provider key.",
+        tone: "error"
+      });
+    } finally {
+      setBusyProvider(null);
+    }
+  }
+
+  async function beginCheckout(plan: CheckoutPlanCode): Promise<void> {
+    if (!authState.accessToken) {
+      pushToast({
+        title: "Sign in before opening checkout.",
+        tone: "warning"
+      });
+      return;
+    }
+
+    setCheckoutPlan(plan);
+
+    try {
+      const result = await window.trellis.billing.createCheckoutSession({
+        accessToken: authState.accessToken,
+        plan
+      });
+      setPremiumPlansModalOpen(false);
+      await window.trellis.shell.openExternal(result.url);
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not open the checkout page.",
+        tone: "warning"
+      });
+    } finally {
+      setCheckoutPlan(null);
+    }
+  }
+
+  async function updateChatPrivacyMode(mode: AppSettings["chat"]["privacyMode"]): Promise<void> {
+    try {
+      await onUpdateSettings({
+        ...settings,
+        chat: {
+          ...settings.chat,
+          privacyMode: mode
+        }
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not update chat privacy.",
+        tone: "error"
+      });
+    }
+  }
+
+  async function updateReadAloudAutoPlay(enabled: boolean): Promise<void> {
+    try {
+      await onUpdateSettings({
+        ...settings,
+        chat: {
+          ...settings.chat,
+          readAloudAutoPlay: enabled
+        }
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not update read-aloud setting.",
         tone: "error"
       });
     }
@@ -826,7 +1060,7 @@ export function Settings({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-6" data-testid="route-settings">
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_360px] gap-6 overflow-hidden">
       <section className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain pr-1">
         <div className="trellis-panel px-4 py-3">
@@ -849,6 +1083,7 @@ export function Settings({
                 <button
                   key={item.id}
                   type="button"
+                  data-testid={`workspace-switch-${item.id}`}
                   className={cn(
                     "rounded-full border px-3 py-1.5 text-xs transition",
                     item.id === workspace.id
@@ -867,6 +1102,7 @@ export function Settings({
               {workspace.canReset && (
                 <button
                   type="button"
+                  data-testid="reset-preview-workspace"
                   className="rounded-full border border-trellis-border px-3 py-1.5 text-xs text-trellis-text transition hover:border-trellis-accent/35"
                   onClick={() => {
                     void onResetPreview();
@@ -1000,6 +1236,71 @@ export function Settings({
                 Add vault
               </button>
             )}
+
+            <div
+              className="mt-4 rounded-panel border border-trellis-border bg-trellis-surface-2 px-3 py-3"
+              data-testid="settings-obsidian-bridge"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 max-w-md">
+                  <p className="text-xs font-medium text-trellis-text">Obsidian import / export</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-trellis-muted">
+                    Bring markdown notes from an Obsidian vault into {activeVault.name}, or export
+                    this Trellis vault back into an Obsidian-friendly folder.
+                  </p>
+                </div>
+                <span className="rounded-full border border-trellis-border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-trellis-faint">
+                  Markdown bridge
+                </span>
+              </div>
+
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  data-testid="settings-obsidian-import"
+                  className="rounded-field border border-trellis-border px-3 py-2 text-left text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:text-trellis-faint"
+                  onClick={() => {
+                    void importFromObsidian();
+                  }}
+                  disabled={obsidianTransfer !== null}
+                >
+                  <span className="flex items-center gap-2">
+                    {obsidianTransfer === "import" ? (
+                      <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
+                    Import from Obsidian
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="settings-obsidian-export"
+                  className="rounded-field border border-trellis-border px-3 py-2 text-left text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:text-trellis-faint"
+                  onClick={() => {
+                    void exportToObsidian();
+                  }}
+                  disabled={obsidianTransfer !== null}
+                >
+                  <span className="flex items-center gap-2">
+                    {obsidianTransfer === "export" ? (
+                      <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="h-3.5 w-3.5" />
+                    )}
+                    Export to Obsidian
+                  </span>
+                </button>
+              </div>
+
+              <p className="mt-3 text-[11px] leading-relaxed text-trellis-muted">
+                Imports land in a dedicated <span className="font-mono text-trellis-text">imports/</span> folder
+                inside your active Trellis vault. Exports write into{" "}
+                <span className="font-mono text-trellis-text">Trellis/{activeVault.name}</span> in the
+                Obsidian vault you choose so existing notes stay untouched.
+              </p>
+            </div>
           </div>
 
           <div className="flex min-w-0 flex-col gap-4">
@@ -1026,6 +1327,56 @@ export function Settings({
             </div>
 
             <div className="trellis-panel px-4 py-3">
+            <label className="block" htmlFor="settings-chat-privacy-mode">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-medium text-trellis-text">Chat privacy</span>
+              </div>
+              <span className="mt-0.5 block text-[11px] leading-snug text-trellis-muted">
+                Keep vault retrieval local and choose how much context Trellis may send with a chat reply.
+              </span>
+            </label>
+            <ListboxSelect
+              id="settings-chat-privacy-mode"
+              className="mt-2"
+              options={chatPrivacyModeOptions}
+              value={settings.chat.privacyMode}
+              listboxAriaLabel="Chat privacy mode"
+              onSelect={(mode) => {
+                void updateChatPrivacyMode(mode);
+              }}
+            />
+            <p className="mt-3 text-[11px] leading-snug text-trellis-muted">
+              {settings.chat.privacyMode === "auto"
+                ? "Auto keeps retrieval on-device and sends only a small selected context packet when it helps."
+                : settings.chat.privacyMode === "off"
+                  ? "Off keeps note and memory context on-device and sends only the live chat transcript."
+                  : "Local only never sends note content to cloud chat. It uses the on-device model and will ask you to install it if needed."}
+            </p>
+            <p className="mt-3 text-[11px] leading-snug text-trellis-muted">
+              Voice dictation, read-aloud, pasted images, and inline image generation use cloud APIs (OpenAI).
+              On the BYOK plan, add an OpenAI API key for those features; Anthropic keys alone cannot drive
+              speech or DALL-E. Local-only chat stays text-first and does not send images or audio to the
+              cloud. Media files are cached under app data unless you save a note explicitly.
+            </p>
+            <label className="mt-4 flex cursor-pointer items-start gap-2.5 text-left">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-trellis-border text-trellis-accent"
+                checked={settings.chat.readAloudAutoPlay ?? false}
+                onChange={(event) => {
+                  void updateReadAloudAutoPlay(event.target.checked);
+                }}
+              />
+              <span>
+                <span className="block text-sm text-trellis-text">Read assistant replies aloud automatically</span>
+                <span className="mt-0.5 block text-[11px] leading-snug text-trellis-muted">
+                  Off by default. When enabled, new assistant messages are spoken after they finish streaming.
+                </span>
+              </span>
+            </label>
+            </div>
+
+            <div className="trellis-panel px-4 py-3">
           <label className="block" htmlFor="settings-notes-from-chats-mode">
             <div className="flex items-center gap-1.5">
               <Sparkles className="h-3.5 w-3.5 text-trellis-accent" aria-hidden />
@@ -1035,6 +1386,15 @@ export function Settings({
               Linked notes from chat into your vault.
             </span>
           </label>
+
+          {authState.subscriptionTier === "byok" && (
+            <div className="mt-3 rounded-panel border border-trellis-border bg-trellis-surface-2 px-3 py-2.5">
+              <p className="text-xs leading-6 text-trellis-muted">
+                BYOK keeps chat inference on your own provider account, so Trellis only turns chats
+                into notes on-device. Cloud note processing is not included on this tier.
+              </p>
+            </div>
+          )}
 
           {localExtractionEnabled && (
             <div
@@ -1053,7 +1413,7 @@ export function Settings({
                     : undefined
                 }
                 options={availableExtractionModeOptions}
-                value={settings.extraction.mode}
+                value={effectiveExtractionMode}
                 onSelect={(mode) => {
                   void updateExtractionMode(mode);
                 }}
@@ -1522,33 +1882,20 @@ export function Settings({
             <UserRound className="h-5 w-5 text-trellis-accent" />
             <p className="text-lg text-trellis-text">Account</p>
           </div>
-
-          {workspace.localOnly ? (
-            <>
-              <p className="mt-2 text-sm leading-6 text-trellis-muted">
-                Preview workspace is intentionally local-only. It never reuses your real account
-                session, so you can explore the seeded data without touching your normal profile.
+          {workspace.isPreview && (
+            <div className="mt-3 rounded-panel border border-trellis-border bg-trellis-surface-2 px-3 py-2.5">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint">
+                Preview mode
               </p>
-              <div className="mt-3 rounded-panel border border-trellis-border bg-trellis-surface-2 px-3 py-2.5">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint">
-                  Preview mode
-                </p>
-                <p className="mt-1 text-sm text-trellis-text">
-                  Browse the seeded history here, then switch to Personal when you want live cloud
-                  chat.
-                </p>
-              </div>
-              <button
-                type="button"
-                className="mt-4 rounded-field border border-trellis-border px-4 py-3 text-sm text-trellis-text transition hover:border-trellis-accent/35"
-                onClick={() => {
-                  void onSwitchWorkspace("personal");
-                }}
-              >
-                Switch to personal workspace
-              </button>
-            </>
-          ) : authState.status === "authenticated" ? (
+              <p className="mt-1 text-sm text-trellis-text">
+                Seeded chats, notes, and graph state live here, but your sign-in, plan, and live
+                chat work the same as your normal workspace. Resetting preview clears only the
+                preview data.
+              </p>
+            </div>
+          )}
+
+          {authState.status === "authenticated" ? (
             <>
               <p className="mt-2 text-sm leading-6 text-trellis-muted">
                 You’re signed in on this device. Trellis keeps you logged in between app launches so you can pick up where you left off.
@@ -1690,43 +2037,165 @@ export function Settings({
           )}
         </div>
 
+        <div className="trellis-panel px-4 py-3">
+          <div className="flex items-center gap-2.5">
+            <KeyRound className="h-5 w-5 text-trellis-accent" />
+            <p className="text-lg text-trellis-text">AI Providers</p>
+          </div>
+          {authState.subscriptionTier !== "byok" ? (
+            <p className="mt-2 text-sm leading-6 text-trellis-muted">
+              The discounted BYOK tier lets you bring your own OpenAI or Anthropic key for chat
+              while Trellis keeps your vault, local history, and app experience intact.
+            </p>
+          ) : (
+            <>
+              <p className="mt-2 text-sm leading-6 text-trellis-muted">
+                Save your provider keys on this device to unlock chat through your own OpenAI or
+                Anthropic account. Trellis stores only masked status in the UI.
+              </p>
+              <div className="mt-3 rounded-panel border border-trellis-border bg-trellis-surface-2 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint">
+                  Storage
+                </p>
+                <p className="mt-1 text-sm text-trellis-text">
+                  {authState.providerKeys.secureStorageAvailable
+                    ? "Encrypted on this device"
+                    : "Session-only for this launch"}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-trellis-muted">
+                  {authState.providerKeys.secureStorageAvailable
+                    ? "Keys stay in Electron secure storage for this device and work across workspaces."
+                    : "Electron secure storage is unavailable here, so keys clear when you quit Trellis."}
+                </p>
+              </div>
+              <div className="mt-4 space-y-4">
+                {providerKeyStatuses.map((status) => {
+                  const providerLabel = status.provider === "openai" ? "OpenAI" : "Anthropic";
+                  const draftValue = providerKeyDrafts[status.provider];
+                  const isSaving =
+                    busyProvider?.provider === status.provider && busyProvider.action === "save";
+                  const isDeleting =
+                    busyProvider?.provider === status.provider && busyProvider.action === "delete";
+
+                  return (
+                    <div
+                      key={status.provider}
+                      className="rounded-panel border border-trellis-border bg-trellis-surface-2 px-3 py-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm text-trellis-text">{providerLabel}</p>
+                          <p className="mt-1 text-xs leading-5 text-trellis-muted">
+                            {status.configured && status.lastFour
+                              ? `Configured · ends in ${status.lastFour} · updated ${formatProviderKeyTimestamp(status.updatedAt)}`
+                              : "Not configured on this device yet."}
+                          </p>
+                        </div>
+                        {status.configured && (
+                          <button
+                            type="button"
+                            disabled={isDeleting}
+                            className="rounded-field border border-trellis-border px-2.5 py-1.5 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:cursor-not-allowed disabled:opacity-70"
+                            onClick={() => {
+                              void removeProviderKey(status.provider);
+                            }}
+                          >
+                            {isDeleting ? "Removing…" : "Remove"}
+                          </button>
+                        )}
+                      </div>
+                      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                        <input
+                          value={draftValue}
+                          onChange={(event) => {
+                            const nextValue = event.target.value;
+                            setProviderKeyDrafts((current) => ({
+                              ...current,
+                              [status.provider]: nextValue
+                            }));
+                          }}
+                          className="trellis-input"
+                          placeholder={`Paste your ${providerLabel} API key`}
+                          type="password"
+                        />
+                        <button
+                          type="button"
+                          disabled={isSaving || draftValue.trim().length === 0}
+                          className="trellis-accent-button rounded-field border px-4 py-2 text-sm transition disabled:border-trellis-border disabled:bg-trellis-surface disabled:text-trellis-faint"
+                          onClick={() => {
+                            void saveProviderKey(status.provider);
+                          }}
+                        >
+                          {isSaving ? "Saving…" : status.configured ? "Update key" : "Save key"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+
         <div className="trellis-panel px-3 py-2">
           <p className="text-lg text-trellis-text">Plan & usage</p>
           <p className="mt-1 text-[11px] leading-snug text-trellis-muted">
-            {workspace.localOnly
-              ? "Preview uses local sample data, so plan limits do not apply here."
-              : "Your subscription tier and limits. View plans to compare tiers or upgrade to Pro."}
+            {workspace.isPreview
+              ? "Preview uses your live account limits against seeded local data."
+              : authState.subscriptionTier === "byok"
+                ? "BYOK chat runs on your own provider account while Trellis still manages the app, local history, and billing tier."
+                : "Your subscription tier and limits. View plans to compare tiers or upgrade."}
           </p>
           <div className="mt-3 space-y-3 text-sm text-trellis-text">
             <div>
               <p className="text-trellis-muted">Tier</p>
-              <p className="mt-1">{workspace.localOnly ? "Preview sandbox" : authState.subscriptionTier === "pro" ? "Trellis Pro" : "Free trial"}</p>
+              <p className="mt-1">
+                {workspace.isPreview
+                  ? authState.subscriptionTier === "pro"
+                    ? "Trellis Pro"
+                    : authState.subscriptionTier === "byok"
+                      ? "Trellis BYOK"
+                      : "Free trial"
+                  : authState.subscriptionTier === "pro"
+                    ? "Trellis Pro"
+                    : authState.subscriptionTier === "byok"
+                      ? "Trellis BYOK"
+                      : "Free trial"}
+              </p>
             </div>
             <div>
               <p className="text-trellis-muted">Messages</p>
-              <p className="mt-1">{workspace.localOnly ? "Seeded history only" : `${authState.usage.messagesUsed} / ${authState.usage.messageLimit}`}</p>
+              <p className="mt-1">
+                {workspace.isPreview
+                  ? authState.subscriptionTier === "byok"
+                    ? "Billed by your provider"
+                    : `${authState.usage.messagesUsed} / ${authState.usage.messageLimit}`
+                  : authState.subscriptionTier === "byok"
+                    ? "Billed by your provider"
+                    : `${authState.usage.messagesUsed} / ${authState.usage.messageLimit}`}
+              </p>
             </div>
             <div>
               <p className="text-trellis-muted">Ingests</p>
-              <p className="mt-1">{workspace.localOnly ? "Local-only when available" : `${authState.usage.ingestsUsed} / ${authState.usage.ingestLimit}`}</p>
+              <p className="mt-1">
+                {`${authState.usage.ingestsUsed} / ${authState.usage.ingestLimit}`}
+              </p>
             </div>
             <div>
               <p className="text-trellis-muted">Status</p>
               <p className="mt-1 capitalize">
-                {workspace.localOnly ? "isolated" : authState.subscriptionStatus}
+                {authState.subscriptionStatus}
               </p>
             </div>
-            {!workspace.localOnly && (
-              <button
-                type="button"
-                className="w-full rounded-field border border-trellis-border px-3 py-2 text-sm text-trellis-text transition hover:border-trellis-accent/35"
-                onClick={() => {
-                  setPremiumPlansModalOpen(true);
-                }}
-              >
-                View plans
-              </button>
-            )}
+            <button
+              type="button"
+              className="w-full rounded-field border border-trellis-border px-3 py-2 text-sm text-trellis-text transition hover:border-trellis-accent/35"
+              onClick={() => {
+                setPremiumPlansModalOpen(true);
+              }}
+            >
+              View plans
+            </button>
           </div>
         </div>
       </aside>
@@ -1738,19 +2207,10 @@ export function Settings({
           setPremiumPlansModalOpen(false);
         }}
         subscriptionTier={authState.subscriptionTier}
-        stripeCheckoutUrl={stripeCheckoutUrl}
-        onSubscribePro={() => {
-          if (!stripeCheckoutUrl) {
-            return;
-          }
-          setPremiumPlansModalOpen(false);
-          void window.trellis.shell.openExternal(stripeCheckoutUrl).catch((error) => {
-            pushToast({
-              title:
-                error instanceof Error ? error.message : "Could not open the upgrade page.",
-              tone: "warning"
-            });
-          });
+        canCheckout={authState.status === "authenticated" && !configError}
+        checkoutPlan={checkoutPlan}
+        onSubscribe={(plan) => {
+          void beginCheckout(plan);
         }}
       />
     </div>

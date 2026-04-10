@@ -23,10 +23,10 @@ Trellis includes a small wrapper around the Supabase CLI so the common workflows
 
 ## Behavior
 
-- The helper loads env values from `.env`, `.env.local`, `supabase/.env`, and `supabase/.env.local`.
+- The helper merges `.env` then `.env.local` at the repo root (later file wins per key), then applies any key not already set in `process.env` (shell or CI still wins).
 - `supabase:login` uses `SUPABASE_ACCESS_TOKEN` automatically when it is set.
 - `supabase:functions:deploy` deploys every function in `supabase/functions/` by default, excluding `_shared/`.
-- `supabase:functions:serve` automatically adds `--env-file supabase/.env.local` when that file exists.
+- `supabase:functions:serve` automatically adds `--env-file` pointing at `.env` when it exists, otherwise `.env.local` (merged values are also on `process.env` before the CLI runs).
 - `supabase:db:push` forwards `SUPABASE_DB_PASSWORD` when it is set.
 - `supabase:db:diff` creates a migration file and defaults to the `public,auth` schemas unless you pass your own schema flags.
 - `supabase:link` uses `SUPABASE_PROJECT_REF` if you do not pass a ref explicitly.
@@ -43,6 +43,11 @@ Trellis includes a small wrapper around the Supabase CLI so the common workflows
 - `SUPABASE_URL`
 - `SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `STRIPE_SECRET_KEY`
+- `STRIPE_PRICE_BYOK_ID`
+- `STRIPE_PRICE_PRO_ID`
+- `STRIPE_CHECKOUT_SUCCESS_URL`
+- `STRIPE_CHECKOUT_CANCEL_URL`
 - `STRIPE_WEBHOOK_SECRET`
 
 ## Notes
@@ -53,5 +58,5 @@ Trellis includes a small wrapper around the Supabase CLI so the common workflows
 - Extraction requests send transcripts or clipped source text to your Supabase `extract` Edge Function, but the current extraction path does not forward that content to third-party model providers.
 - The only cloud metadata written by default is profile and usage state such as counts, session IDs, token counts, and source titles. Message bodies are not written to Postgres tables in this repo.
 - These helpers still rely on the Supabase CLI being installed locally or available on your `PATH`.
-- For local Edge Function work, copy `supabase/.env.local.example` to `supabase/.env.local` and fill in the values you need.
+- For local Edge Function work, put secrets in the root `.env` (or `.env.local` for machine-specific values); do not maintain a separate `supabase/.env` file.
 - A practical workflow is: `supabase:doctor`, `supabase:start`, `supabase:db:diff`, `supabase:types:gen`, and then `supabase:backend:deploy` when you are ready to ship.

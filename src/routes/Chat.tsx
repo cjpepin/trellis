@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  defaultChatModel,
   type AppSettings,
+  type ChatContextPacket,
   type WorkspaceInfo,
   type ChatAttachment,
+  type ChatMediaArtifact,
   type MessageRecord,
   type QueueSessionExtractionResult
 } from "@electron/ipc/types";
+import { getChatModelMediaCapabilities } from "@shared/chat/capabilities";
 import { ChatVaultSelect } from "@/components/chat/ChatVaultSelect";
 import { InputBar } from "@/components/chat/InputBar";
 import { MessageList } from "@/components/chat/MessageList";
@@ -15,18 +17,23 @@ import {
   getOptionalExtractionCloudConfig,
   type ChatNoteReference
 } from "@/lib/api";
-import { canUseChatModel } from "@/lib/chatModels";
-import { selectRelevantReferenceSlugs } from "@/lib/chatReferences";
+import { canUseChatModel, getFirstAccessibleChatModel } from "@/lib/chatModels";
 import {
   formatMessageForApi,
   toChatAttachments,
-  type PendingChatAttachment
+  type PendingChatAttachment,
+  type PendingImageAttachment
 } from "@/lib/chatAttachments";
 import { useStream } from "@/hooks/useStream";
-import { getActiveVault, getVaultById } from "@/lib/settings";
+import {
+  getActiveVault,
+  getVaultById,
+  resolveExtractionModeForSubscription
+} from "@/lib/settings";
 import { useAuthStore } from "@/store/authStore";
 import { useChatStore } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
+import { notesRoutePath } from "@/lib/noteRoutes";
 import { useWikiStore } from "@/store/wikiStore";
 
 interface Props {
@@ -41,11 +48,15 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
   const navigate = useNavigate();
   const [draft, setDraft] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<PendingChatAttachment[]>([]);
+  const [pendingImageAttachments, setPendingImageAttachments] = useState<PendingImageAttachment[]>([]);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [readAloudLoadingMessageId, setReadAloudLoadingMessageId] = useState<string | null>(null);
   const accessToken = useAuthStore((state) => state.accessToken);
   const authStatus = useAuthStore((state) => state.status);
   const subscriptionTier = useAuthStore((state) => state.subscriptionTier);
+  const providerKeys = useAuthStore((state) => state.providerKeys);
   const notes = useWikiStore((state) => state.notes);
+  const activeNoteSlug = useWikiStore((state) => state.activeNoteSlug);
   const setNote = useWikiStore((state) => state.setNote);
   const setActiveNote = useWikiStore((state) => state.setActiveNote);
   const sessions = useChatStore((state) => state.sessions);
@@ -65,12 +76,14 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
   const pushToast = useUiStore((state) => state.pushToast);
   const streamAssistant = useStream({
     accessToken,
-    model: activeModel
+    model: activeModel,
+    privacyMode: settings.chat.privacyMode,
+    subscriptionTier
   });
   const previousSessionId = useRef<string | null>(activeSessionId);
   const activeVault = getActiveVault(settings);
-  const isPreviewWorkspace = workspace.localOnly;
-  const chatDisabled = isPreviewWorkspace || authStatus !== "authenticated";
+  const isPreviewWorkspace = workspace.isPreview;
+  const chatDisabled = settings.chat.privacyMode !== "local" && authStatus !== "authenticated";
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) ?? null,
     [activeSessionId, sessions]
@@ -107,15 +120,20 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
     setEditingMessageId(null);
     setDraft("");
     setPendingAttachments([]);
+    setPendingImageAttachments([]);
   }, [activeSessionId]);
 
   useEffect(() => {
-    if (canUseChatModel(activeModel, subscriptionTier)) {
+    if (canUseChatModel(activeModel, subscriptionTier, providerKeys.statuses)) {
       return;
     }
 
-    setActiveModel(defaultChatModel);
-  }, [activeModel, setActiveModel, subscriptionTier]);
+    const fallbackModel = getFirstAccessibleChatModel(subscriptionTier, providerKeys.statuses);
+
+    if (fallbackModel !== activeModel) {
+      setActiveModel(fallbackModel);
+    }
+  }, [activeModel, providerKeys.statuses, setActiveModel, subscriptionTier]);
 
   const queueExtraction = useCallback(
     async (
@@ -127,7 +145,7 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
         return await window.trellis.extraction.queueSession({
           sessionId,
           trigger,
-          mode: settings.extraction.mode,
+          mode: resolveExtractionModeForSubscription(settings.extraction.mode, subscriptionTier),
           cloud: getOptionalExtractionCloudConfig(accessToken),
           preferredLocalModelId: settings.extraction.preferredLocalModelId ?? undefined,
           force: options?.force ?? false
@@ -143,7 +161,13 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
         return null;
       }
     },
-    [accessToken, pushToast, settings.extraction.mode, settings.extraction.preferredLocalModelId]
+    [
+      accessToken,
+      pushToast,
+      settings.extraction.mode,
+      settings.extraction.preferredLocalModelId,
+      subscriptionTier
+    ]
   );
 
   useEffect(() => {
@@ -184,7 +208,7 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
       try {
         await loadNote(slug, vaultId);
         setActiveNote(slug);
-        navigate(`/wiki?note=${encodeURIComponent(slug)}`);
+        navigate(notesRoutePath(slug));
       } catch (error) {
         pushToast({
           title: error instanceof Error ? error.message : "Could not open that note.",
@@ -195,36 +219,28 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
     [activeSession?.vaultId, activeVault.id, loadNote, navigate, notes, pushToast, setActiveNote]
   );
 
-  const buildChatReferences = useCallback(
+  const buildChatContext = useCallback(
     async (
       messages: Array<Pick<MessageRecord, "role" | "content">>,
       vaultId: string
-    ): Promise<ChatNoteReference[]> => {
-      const referencedSlugs = selectRelevantReferenceSlugs(messages, notes);
-
-      const references = await Promise.all(
-        referencedSlugs.map(async (slug) => {
-          const note = await loadNote(slug, vaultId);
-
-          return {
-            slug,
-            title: note.title,
-            excerpt: note.excerpt,
-            content: note.content.slice(0, 6_000)
-          } satisfies ChatNoteReference;
-        })
-      );
-
-      return references;
+    ): Promise<ChatContextPacket> => {
+      return window.trellis.chat.buildContext({
+        mode: settings.chat.privacyMode,
+        vaultId,
+        activeNoteSlug,
+        sessionTitle: activeSession?.title ?? null,
+        messages
+      });
     },
-    [loadNote, notes]
+    [activeNoteSlug, activeSession?.title, settings.chat.privacyMode]
   );
 
   function buildRetryTranscript(
     sessionId: string,
     targetMessageId: string | undefined,
     nextContent: string | undefined,
-    nextAttachments: ChatAttachment[] | undefined
+    nextAttachments: ChatAttachment[] | undefined,
+    nextMediaArtifacts?: ChatMediaArtifact[]
   ): {
     baseMessages: MessageRecord[];
     userMessage: MessageRecord;
@@ -239,7 +255,10 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
         content: nextContent ?? "",
         createdAt: Date.now(),
         tokens: null,
-        ...(nextAttachments && nextAttachments.length > 0 ? { attachments: nextAttachments } : {})
+        ...(nextAttachments && nextAttachments.length > 0 ? { attachments: nextAttachments } : {}),
+        ...(nextMediaArtifacts && nextMediaArtifacts.length > 0
+          ? { mediaArtifacts: nextMediaArtifacts }
+          : {})
       };
 
       return {
@@ -273,6 +292,15 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
         delete updatedUserMessage.attachments;
       }
     }
+
+    if (nextMediaArtifacts !== undefined) {
+      if (nextMediaArtifacts.length > 0) {
+        updatedUserMessage.mediaArtifacts = nextMediaArtifacts;
+      } else {
+        delete updatedUserMessage.mediaArtifacts;
+      }
+    }
+
     const baseMessages = [...sessionMessages.slice(0, targetIndex), updatedUserMessage];
 
     return {
@@ -284,7 +312,8 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
   async function sendMessage(
     value: string,
     targetMessageId?: string,
-    attachmentPayload?: ChatAttachment[]
+    attachmentPayload?: ChatAttachment[],
+    mediaPayload?: ChatMediaArtifact[]
   ): Promise<void> {
     let optimisticUserMessage: MessageRecord | null = null;
     let sessionId = activeSessionId;
@@ -305,7 +334,8 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
         sessionId,
         targetMessageId,
         value,
-        attachmentPayload
+        attachmentPayload,
+        mediaPayload
       );
       optimisticUserMessage = userMessage;
       replaceSessionMessages(sessionId, baseMessages);
@@ -315,15 +345,34 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
       if (targetMessageId) {
         setEditingMessageId(null);
       }
-      const references = await buildChatReferences(baseMessages, sessionVaultId);
+      let contextPacket: ChatContextPacket = {
+        mode: settings.chat.privacyMode,
+        references: [],
+        sourceLabels: []
+      };
+
+      try {
+        contextPacket = await buildChatContext(
+          baseMessages.map((message) => ({
+            role: message.role,
+            content: formatMessageForApi(message)
+          })),
+          sessionVaultId
+        );
+      } catch (error) {
+        pushToast({
+          title:
+            error instanceof Error
+              ? error.message
+              : "Trellis couldn’t gather local note context for that reply.",
+          tone: "warning"
+        });
+      }
 
       const streamResult = await streamAssistant(
         sessionId,
-        baseMessages.map((message) => ({
-          role: message.role,
-          content: formatMessageForApi(message)
-        })),
-        references
+        baseMessages,
+        contextPacket.references as ChatNoteReference[]
       );
 
       if (!streamResult.assistantMessage) {
@@ -337,11 +386,52 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
       clearMessageMeta(userMessage.id);
       const nextMessages = [...baseMessages, streamResult.assistantMessage];
       replaceSessionMessages(sessionId, nextMessages);
+      if (
+        settings.chat.readAloudAutoPlay &&
+        streamResult.assistantMessage.content.trim().length > 0 &&
+        settings.chat.privacyMode !== "local" &&
+        accessToken
+      ) {
+        try {
+          const spoken = await window.trellis.media.synthesizeSpeech({
+            accessToken,
+            subscriptionTier,
+            text: streamResult.assistantMessage.content.slice(0, 4096)
+          });
+          const audio = new Audio(
+            `data:${spoken.mimeType};base64,${spoken.audioBase64}`
+          );
+          void audio.play();
+        } catch {
+          // Optional: ignore auto read-aloud failures
+        }
+      }
       await window.trellis.db.replaceMessages({
         sessionId,
         messages: nextMessages
       });
+      void window.trellis.chat.storeMemory({
+        vaultId: sessionVaultId,
+        sessionId,
+        messages: nextMessages
+          .slice(-2)
+          .map((message) => ({
+            id: message.id,
+            role: message.role,
+            content: formatMessageForApi(message)
+          })),
+        references: contextPacket.references
+      }).catch((error) => {
+        pushToast({
+          title:
+            error instanceof Error
+              ? error.message
+              : "Trellis couldn’t save local memory from that reply.",
+          tone: "warning"
+        });
+      });
       setPendingAttachments([]);
+      setPendingImageAttachments([]);
       const updatedSession = await window.trellis.db.updateSession({
         id: sessionId,
         model: activeModel
@@ -365,16 +455,49 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
   async function handleSubmit(value: string): Promise<void> {
     const trimmed = value.trim();
     const payload = toChatAttachments(pendingAttachments);
+    const mediaFromImages: ChatMediaArtifact[] = pendingImageAttachments.map((item) => ({
+      kind: "image" as const,
+      fileId: item.fileId,
+      mimeType: item.mimeType,
+      label: item.label
+    }));
 
-    if (!trimmed && payload.length === 0) {
+    if (!trimmed && payload.length === 0 && mediaFromImages.length === 0) {
       return;
     }
 
-    await sendMessage(trimmed, editingMessageId ?? undefined, payload);
+    if (settings.chat.privacyMode === "local" && mediaFromImages.length > 0) {
+      pushToast({
+        title:
+          "Local-only chat cannot send images to the on-device model. Switch privacy to Auto or Off, or remove images.",
+        tone: "warning"
+      });
+      return;
+    }
+
+    if (
+      mediaFromImages.length > 0 &&
+      !getChatModelMediaCapabilities(activeModel).visionInput
+    ) {
+      pushToast({
+        title:
+          "This model does not accept images. Choose GPT-4o Mini, GPT-4o, or a Claude model with vision.",
+        tone: "warning"
+      });
+      return;
+    }
+
+    const mediaForSend = editingMessageId
+      ? mediaFromImages
+      : mediaFromImages.length > 0
+        ? mediaFromImages
+        : undefined;
+
+    await sendMessage(trimmed, editingMessageId ?? undefined, payload, mediaForSend);
   }
 
   async function handleAttachFile(): Promise<void> {
-    if (pendingAttachments.length >= 12) {
+    if (pendingAttachments.length + pendingImageAttachments.length >= 12) {
       pushToast({
         title: "You can attach up to 12 items per message.",
         tone: "warning"
@@ -406,25 +529,13 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
     }
   }
 
-  async function handleAttachLink(): Promise<void> {
-    if (pendingAttachments.length >= 12) {
+  async function clipPublicUrl(url: string): Promise<boolean> {
+    if (pendingAttachments.length + pendingImageAttachments.length >= 12) {
       pushToast({
         title: "You can attach up to 12 items per message.",
         tone: "warning"
       });
-      return;
-    }
-
-    const raw = window.prompt("Paste a public https URL to clip");
-
-    if (raw === null) {
-      return;
-    }
-
-    const url = raw.trim();
-
-    if (!url) {
-      return;
+      return false;
     }
 
     try {
@@ -446,11 +557,13 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
           sourceUrl: clipped.sourcePath
         }
       ]);
+      return true;
     } catch (error) {
       pushToast({
         title: error instanceof Error ? error.message : "Could not clip that URL.",
         tone: "warning"
       });
+      return false;
     }
   }
 
@@ -469,6 +582,16 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
         clientId: crypto.randomUUID()
       }))
     );
+    setPendingImageAttachments(
+      (message.mediaArtifacts ?? [])
+        .filter((artifact) => artifact.kind === "image")
+        .map((artifact) => ({
+          clientId: crypto.randomUUID(),
+          fileId: artifact.fileId,
+          mimeType: artifact.mimeType,
+          label: artifact.label
+        }))
+    );
   }
 
   async function handleRetryMessage(messageId: string): Promise<void> {
@@ -478,21 +601,186 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
       return;
     }
 
-    await sendMessage(message.content, messageId, message.attachments);
+    await sendMessage(
+      message.content,
+      messageId,
+      message.attachments,
+      message.mediaArtifacts?.filter((artifact) => artifact.kind === "image")
+    );
   }
 
   function cancelEditing(): void {
     setEditingMessageId(null);
     setDraft("");
     setPendingAttachments([]);
+    setPendingImageAttachments([]);
   }
 
   function handleStartNewChat(): void {
     setEditingMessageId(null);
     setDraft("");
     setPendingAttachments([]);
+    setPendingImageAttachments([]);
     setActiveSession(null);
     navigate("/chat");
+  }
+
+  async function handlePasteImage(input: { base64: string; mimeType: string }): Promise<void> {
+    if (pendingAttachments.length + pendingImageAttachments.length >= 12) {
+      pushToast({
+        title: "You can attach up to 12 items per message.",
+        tone: "warning"
+      });
+      return;
+    }
+
+    try {
+      const { fileId } = await window.trellis.media.writeCache(input);
+      setPendingImageAttachments((current) => [
+        ...current,
+        {
+          clientId: crypto.randomUUID(),
+          fileId,
+          mimeType: input.mimeType,
+          label: "Pasted image"
+        }
+      ]);
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not paste that image.",
+        tone: "warning"
+      });
+    }
+  }
+
+  async function handleAttachImage(): Promise<void> {
+    if (pendingAttachments.length + pendingImageAttachments.length >= 12) {
+      pushToast({
+        title: "You can attach up to 12 items per message.",
+        tone: "warning"
+      });
+      return;
+    }
+
+    try {
+      const picked = await window.trellis.media.pickImage();
+
+      if (!picked) {
+        return;
+      }
+
+      setPendingImageAttachments((current) => [
+        ...current,
+        {
+          clientId: crypto.randomUUID(),
+          fileId: picked.fileId,
+          mimeType: picked.mimeType,
+          label: picked.name
+        }
+      ]);
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not add that image.",
+        tone: "warning"
+      });
+    }
+  }
+
+  async function handleGenerateImageWithPrompt(prompt: string): Promise<boolean> {
+    if (chatDisabled || settings.chat.privacyMode === "local") {
+      pushToast({
+        title:
+          "Image generation needs cloud access. Sign in and switch privacy away from local-only.",
+        tone: "warning"
+      });
+      return false;
+    }
+
+    if (!getChatModelMediaCapabilities(activeModel).imageGeneration) {
+      pushToast({
+        title: "Image generation uses OpenAI. Switch to the GPT-4o chat model first.",
+        tone: "warning"
+      });
+      return false;
+    }
+
+    const trimmed = prompt.trim();
+
+    if (!trimmed) {
+      return false;
+    }
+
+    try {
+      const result = await window.trellis.media.generateImage({
+        accessToken: accessToken ?? "",
+        subscriptionTier,
+        prompt: trimmed
+      });
+      const { fileId } = await window.trellis.media.writeCache({
+        base64: result.imageBase64,
+        mimeType: "image/png"
+      });
+
+      let sessionId = activeSessionId;
+      const sessionVaultId = activeSession?.vaultId || activeVault.id;
+
+      if (!sessionId) {
+        const session = await window.trellis.db.createSession({
+          model: activeModel,
+          vaultId: activeVault.id
+        });
+        sessionId = session.id;
+        setActiveSession(session.id);
+        upsertSession(session);
+      }
+
+      const userMessage: MessageRecord = {
+        id: crypto.randomUUID(),
+        sessionId,
+        role: "user",
+        content: `(Image request) ${trimmed}`,
+        createdAt: Date.now(),
+        tokens: null
+      };
+
+      const assistantMessage: MessageRecord = {
+        id: crypto.randomUUID(),
+        sessionId,
+        role: "assistant",
+        content: result.revisedPrompt
+          ? `Generated image.\n\n${result.revisedPrompt}`
+          : "Generated image.",
+        createdAt: Date.now(),
+        tokens: null,
+        mediaArtifacts: [
+          {
+            kind: "generated_image",
+            fileId,
+            mimeType: "image/png",
+            label: "Generated image",
+            prompt: trimmed
+          }
+        ]
+      };
+
+      const sessionMessages = useChatStore.getState().messagesBySession[sessionId] ?? [];
+      const nextMessages = [...sessionMessages, userMessage, assistantMessage];
+      replaceSessionMessages(sessionId, nextMessages);
+      await window.trellis.db.replaceMessages({ sessionId, messages: nextMessages });
+      const updatedSession = await window.trellis.db.updateSession({
+        id: sessionId,
+        model: activeModel
+      });
+      upsertSession(updatedSession);
+      void queueExtraction(sessionId, "idle");
+      return true;
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not generate that image.",
+        tone: "warning"
+      });
+      return false;
+    }
   }
 
   async function handleAddVault(): Promise<void> {
@@ -552,28 +840,15 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
   }
 
   return (
-    <div className="flex h-full flex-col">
-      {(isPreviewWorkspace || authStatus !== "authenticated") && (
-        <div className={`trellis-accent-surface mx-auto mt-6 w-full ${chatColumnClassName} rounded-panel border border-trellis-accent/20 px-4 py-3 text-sm text-trellis-text`}>
-          {isPreviewWorkspace ? (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span>
-                Preview stays local and browseable. Switch to your personal workspace for live
-                cloud chat.
-              </span>
-              <button
-                type="button"
-                className="rounded-full border border-trellis-accent/25 px-3 py-1.5 text-xs text-trellis-accent transition hover:border-trellis-accent/45"
-                onClick={() => {
-                  void onSwitchWorkspace("personal");
-                }}
-              >
-                Switch to personal
-              </button>
-            </div>
-          ) : (
-            "Sign in from Settings to start chatting with Trellis and grow what you know."
-          )}
+    <div className="flex h-full flex-col" data-testid="route-chat">
+      {chatDisabled && (
+        <div
+          className={`trellis-accent-surface mx-auto mt-6 w-full ${chatColumnClassName} rounded-panel border border-trellis-accent/20 px-4 py-3 text-sm text-trellis-text`}
+          data-testid="chat-auth-banner"
+        >
+          {isPreviewWorkspace
+            ? "Sign in from Settings to continue this seeded workspace with live chat and note extraction."
+            : "Sign in from Settings to start chatting with Trellis and grow what you know."}
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -591,6 +866,36 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
           onRetryMessage={(messageId) => {
             void handleRetryMessage(messageId);
           }}
+          onReadAloud={async (messageId, text) => {
+            if (chatDisabled || settings.chat.privacyMode === "local" || !accessToken) {
+              return;
+            }
+
+            setReadAloudLoadingMessageId(messageId);
+
+            try {
+              const spoken = await window.trellis.media.synthesizeSpeech({
+                accessToken,
+                subscriptionTier,
+                text: text.slice(0, 4096)
+              });
+              const audio = new Audio(
+                `data:${spoken.mimeType};base64,${spoken.audioBase64}`
+              );
+              void audio.play();
+            } catch (error) {
+              pushToast({
+                title: error instanceof Error ? error.message : "Could not play audio.",
+                tone: "warning"
+              });
+            } finally {
+              setReadAloudLoadingMessageId(null);
+            }
+          }}
+          readAloudLoadingMessageId={readAloudLoadingMessageId}
+          readAloudDisabled={
+            chatDisabled || settings.chat.privacyMode === "local" || !accessToken
+          }
         />
       </div>
       <div className="trellis-overlay-surface border-t border-trellis-border px-5 py-4 backdrop-blur">
@@ -608,6 +913,7 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
               isStreaming={isStreaming}
               model={activeModel}
               subscriptionTier={subscriptionTier}
+              providerKeys={providerKeys.statuses}
               notes={notes}
               value={draft}
               submitLabel={editingMessage ? "Save & retry" : "Send"}
@@ -624,9 +930,29 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
               onAttachFile={() => {
                 void handleAttachFile();
               }}
-              onAttachLink={() => {
-                void handleAttachLink();
+              onClipPublicUrl={(url) => clipPublicUrl(url)}
+              pendingImages={pendingImageAttachments}
+              onRemoveImage={(clientId) => {
+                setPendingImageAttachments((current) =>
+                  current.filter((image) => image.clientId !== clientId)
+                );
               }}
+              onAttachImage={() => {
+                void handleAttachImage();
+              }}
+              onPasteImage={(input) => {
+                void handlePasteImage(input);
+              }}
+              onAppendDraft={(text) => {
+                setDraft((current) => `${current}${current && !current.endsWith(" ") ? " " : ""}${text}`);
+              }}
+              onGenerateImageWithPrompt={(prompt) => handleGenerateImageWithPrompt(prompt)}
+              privacyLocal={settings.chat.privacyMode === "local"}
+              cloudMediaAllowed={!chatDisabled && settings.chat.privacyMode !== "local"}
+              visionAllowed={getChatModelMediaCapabilities(activeModel).visionInput}
+              speechAllowed={getChatModelMediaCapabilities(activeModel).speechToText}
+              imageGenAllowed={getChatModelMediaCapabilities(activeModel).imageGeneration}
+              accessToken={accessToken}
             />
           </div>
           <div className="flex w-full max-w-[200px] shrink-0 flex-col gap-2 self-end sm:w-auto">

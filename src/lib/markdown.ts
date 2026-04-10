@@ -1,5 +1,6 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
+import { notesHashHref } from "./noteRoutes";
 import { slugifyNoteTitle } from "./noteReferences";
 
 let wikiSpanColorHookInstalled = false;
@@ -66,7 +67,7 @@ export function renderWikiMarkdown(
       ? "trellis-link trellis-link-internal"
       : "trellis-link trellis-link-internal trellis-link-missing";
 
-    return `<a href="#/wiki?note=${slug}" class="${linkClass}">${escapeHtml(title)}</a>`;
+    return `<a href="${notesHashHref(slug)}" class="${linkClass}">${escapeHtml(title)}</a>`;
   });
   const html = marked.parse(preprocessed, {
     breaks: true,

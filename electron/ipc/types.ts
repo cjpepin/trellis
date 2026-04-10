@@ -46,13 +46,30 @@ export const ipcChannels = {
   vaultRenameFolder: "vault:rename:folder",
   vaultDeleteFolder: "vault:delete:folder",
   vaultSelectDirectory: "vault:select:directory",
+  vaultImportFromObsidian: "vault:import:obsidian",
+  vaultExportToObsidian: "vault:export:obsidian",
   retrievalSearchNotes: "retrieval:search:notes",
   retrievalRebuildIndex: "retrieval:rebuild:index",
   ingestParsePdf: "ingest:parse:pdf",
   ingestClipUrl: "ingest:clip:url",
   chatPickAttachment: "chat:pick:attachment",
+  chatBuildContext: "chat:build:context",
+  chatStoreMemory: "chat:store:memory",
+  chatRunLocalReply: "chat:run:local-reply",
+  chatStream: "chat:stream",
+  chatStreamEvent: "chat:stream:event",
+  providerKeysGet: "provider-keys:get",
+  providerKeysSet: "provider-keys:set",
+  providerKeysDelete: "provider-keys:delete",
+  billingCreateCheckoutSession: "billing:create:checkout-session",
   shellOpenPath: "shell:open:path",
-  shellOpenExternal: "shell:open:external"
+  shellOpenExternal: "shell:open:external",
+  mediaCacheWrite: "media:cache:write",
+  mediaCacheReadDataUrl: "media:cache:read-data-url",
+  mediaPickImage: "media:pick:image",
+  mediaTranscribe: "media:transcribe",
+  mediaSynthesizeSpeech: "media:synthesize-speech",
+  mediaGenerateImage: "media:generate-image"
 } as const;
 
 export const chatModelIds = [
@@ -69,6 +86,13 @@ export const chatModelIds = [
 export type ChatModel = (typeof chatModelIds)[number];
 export type ChatProvider = "openai" | "anthropic";
 export type ChatModelTier = "cheap" | "premium";
+export type SubscriptionTier = "trial" | "byok" | "pro";
+export type CheckoutPlanCode = Exclude<SubscriptionTier, "trial">;
+export type ProviderKeyPersistenceMode = "encrypted" | "session";
+export type ChatBillingMode = "hosted" | "byok";
+export type ChatPrivacyMode = "auto" | "off" | "local";
+export type ChatContextReferenceType = "note" | "memory";
+export type MemoryKind = "preference" | "project" | "open_loop" | "fact" | "task";
 export type ExtractionMode = "auto" | "cloud" | "local";
 export type ExtractionProviderId = "cloud" | "embedded";
 export type ExtractionJobStatus = "pending" | "running" | "completed" | "failed" | "skipped";
@@ -93,7 +117,13 @@ export type ThemeName =
   | "nature-light"
   | "ocean-dark"
   | "ocean-light"
-  | "high-contrast";
+  | "high-contrast"
+  | "twilight"
+  | "dawn"
+  | "graphite"
+  | "cream"
+  | "ember"
+  | "fog";
 
 export function isChatModel(value: string): value is ChatModel {
   return (chatModelIds as readonly string[]).includes(value);
@@ -135,6 +165,19 @@ export interface ChatAttachment {
   sourceUrl?: string;
 }
 
+/** Binary media stored under app userData (not the vault). */
+export type ChatMediaArtifactKind = "image" | "generated_image";
+
+export interface ChatMediaArtifact {
+  kind: ChatMediaArtifactKind;
+  /** Stable id matching a file under the Trellis media cache directory. */
+  fileId: string;
+  mimeType: string;
+  label: string;
+  /** Set for generated images. */
+  prompt?: string;
+}
+
 export interface MessageRecord {
   id: string;
   sessionId: string;
@@ -143,11 +186,30 @@ export interface MessageRecord {
   createdAt: number;
   tokens: number | null;
   attachments?: ChatAttachment[];
+  mediaArtifacts?: ChatMediaArtifact[];
 }
 
 export interface ChatAttachmentPickResult {
   name: string;
   text: string;
+}
+
+export interface ChatReference extends ChatContextReference {}
+
+export interface ChatContextReference {
+  type: ChatContextReferenceType;
+  title: string;
+  excerpt: string;
+  content: string;
+  slug?: string;
+  linkedNoteSlug?: string | null;
+  isExplicitMatch?: boolean;
+}
+
+export interface ChatContextPacket {
+  mode: ChatPrivacyMode;
+  references: ChatContextReference[];
+  sourceLabels: string[];
 }
 
 export interface NoteFrontmatter {
@@ -261,6 +323,36 @@ export interface DeleteFolderInput {
   vaultId?: string;
 }
 
+export interface SelectDirectoryInput {
+  title?: string;
+  buttonLabel?: string;
+}
+
+export interface ImportFromObsidianInput {
+  sourcePath: string;
+  vaultId?: string;
+}
+
+export interface ImportFromObsidianResult {
+  sourcePath: string;
+  targetPath: string;
+  targetFolder: string;
+  importedNoteCount: number;
+  folderCount: number;
+}
+
+export interface ExportToObsidianInput {
+  targetPath: string;
+  vaultId?: string;
+}
+
+export interface ExportToObsidianResult {
+  targetPath: string;
+  exportRootPath: string;
+  exportedNoteCount: number;
+  folderCount: number;
+}
+
 export interface RecordWikiOpInput {
   sessionId?: string;
   file: string;
@@ -281,10 +373,73 @@ export interface RetrievalSearchInput {
   limit?: number;
 }
 
+export interface MemoryItem {
+  id: string;
+  vaultId: string;
+  kind: MemoryKind;
+  content: string;
+  sourceMessageIds: string[];
+  linkedNoteSlug: string | null;
+  confidence: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface BuildChatContextInput {
+  mode: ChatPrivacyMode;
+  vaultId?: string;
+  activeNoteSlug?: string | null;
+  sessionTitle?: string | null;
+  messages: Array<Pick<MessageRecord, "role" | "content">>;
+}
+
+export interface StoreChatMemoryInput {
+  vaultId?: string;
+  sessionId?: string;
+  messages: Array<Pick<MessageRecord, "id" | "role" | "content">>;
+  references?: ChatContextReference[];
+}
+
+export interface LocalChatRunInput {
+  model: ChatModel;
+  messages: Array<Pick<MessageRecord, "role" | "content">>;
+  references?: ChatContextReference[];
+}
+
+export interface LocalChatRunResult {
+  text: string;
+  sessionTitle: string;
+  tokenCount: number;
+  provider: "embedded";
+  model: string | null;
+}
+
 export interface ExtractionCloudConfig {
   functionsBaseUrl: string;
   publishableKey: string;
   accessToken?: string | null;
+}
+
+export interface ProviderKeyStatus {
+  provider: ChatProvider;
+  configured: boolean;
+  lastFour: string | null;
+  updatedAt: number | null;
+}
+
+export interface ProviderKeyStatusSnapshot {
+  statuses: ProviderKeyStatus[];
+  secureStorageAvailable: boolean;
+  persistenceMode: ProviderKeyPersistenceMode;
+}
+
+export interface SetProviderKeyInput {
+  provider: ChatProvider;
+  apiKey: string;
+}
+
+export interface DeleteProviderKeyInput {
+  provider: ChatProvider;
 }
 
 export interface LocalExtractionModelInfo {
@@ -412,6 +567,12 @@ export interface ExtractionSettings {
   preferredLocalModelId: string | null;
 }
 
+export interface ChatSettings {
+  privacyMode: ChatPrivacyMode;
+  /** When true, assistant replies are read aloud automatically after streaming. Default false. */
+  readAloudAutoPlay?: boolean;
+}
+
 export interface AppFeatureFlags {
   localExtraction: boolean;
 }
@@ -448,6 +609,7 @@ export interface AppSettings {
   activeVaultId: string;
   theme: ThemeName;
   rememberSession: boolean;
+  chat: ChatSettings;
   extraction: ExtractionSettings;
 }
 
@@ -466,12 +628,57 @@ export interface AppBootstrap {
   features: AppFeatureFlags;
   workspace: WorkspaceInfo;
   workspaces: WorkspaceInfo[];
+  providerKeys: ProviderKeyStatusSnapshot;
   needsWorkspaceChoice: boolean;
   authSession: AuthSessionSnapshot | null;
   sessions: ChatSessionSummary[];
   notes: NoteSummary[];
   folders: FolderSummary[];
   graph: GraphData;
+}
+
+/** One turn for the chat edge function; `imageFileIds` resolved to base64 in the main process. */
+export interface ChatStreamPayloadMessage {
+  role: MessageRole;
+  content: string;
+  imageFileIds?: string[];
+}
+
+export interface ChatStreamRequest {
+  requestId: string;
+  accessToken: string;
+  subscriptionTier: SubscriptionTier;
+  model: ChatModel;
+  sessionId: string;
+  messages: ChatStreamPayloadMessage[];
+  references?: ChatReference[];
+}
+
+export interface ChatStreamEvent {
+  requestId: string;
+  type: "status" | "token" | "title" | "done";
+  payload: string;
+}
+
+export interface ChatStreamInput {
+  accessToken: string;
+  subscriptionTier: SubscriptionTier;
+  model: ChatModel;
+  sessionId: string;
+  messages: ChatStreamPayloadMessage[];
+  references?: ChatReference[];
+  onToken: (token: string) => void;
+  onStatus: (message: string) => void | Promise<void>;
+  onTitle: (title: string) => void | Promise<void>;
+}
+
+export interface CreateCheckoutSessionInput {
+  accessToken: string;
+  plan: CheckoutPlanCode;
+}
+
+export interface CreateCheckoutSessionResult {
+  url: string;
 }
 
 export interface SwitchWorkspaceInput {
@@ -498,7 +705,9 @@ export interface VaultBridge {
   createFolder: (input: CreateFolderInput) => Promise<VaultSnapshot>;
   renameFolder: (input: RenameFolderInput) => Promise<VaultSnapshot>;
   deleteFolder: (input: DeleteFolderInput) => Promise<VaultSnapshot>;
-  selectDirectory: () => Promise<string | null>;
+  selectDirectory: (input?: SelectDirectoryInput) => Promise<string | null>;
+  importFromObsidian: (input: ImportFromObsidianInput) => Promise<ImportFromObsidianResult>;
+  exportToObsidian: (input: ExportToObsidianInput) => Promise<ExportToObsidianResult>;
 }
 
 export interface IngestBridge {
@@ -531,6 +740,70 @@ export interface ExtractionBridge {
 export interface ChatBridge {
   /** Opens a file dialog and returns extracted text (UTF-8 or PDF). */
   pickAttachment: () => Promise<ChatAttachmentPickResult | null>;
+  buildContext: (input: BuildChatContextInput) => Promise<ChatContextPacket>;
+  storeMemory: (input: StoreChatMemoryInput) => Promise<MemoryItem[]>;
+  runLocalReply: (input: LocalChatRunInput) => Promise<LocalChatRunResult>;
+  stream: (input: ChatStreamInput) => Promise<void>;
+  getProviderKeyStatus: () => Promise<ProviderKeyStatusSnapshot>;
+  setProviderKey: (input: SetProviderKeyInput) => Promise<ProviderKeyStatusSnapshot>;
+  deleteProviderKey: (input: DeleteProviderKeyInput) => Promise<ProviderKeyStatusSnapshot>;
+}
+
+export interface MediaCacheWriteInput {
+  base64: string;
+  mimeType: string;
+}
+
+export interface MediaCacheWriteResult {
+  fileId: string;
+}
+
+export interface MediaPickImageResult {
+  fileId: string;
+  name: string;
+  mimeType: string;
+}
+
+export interface MediaTranscribeInput {
+  accessToken: string;
+  subscriptionTier: SubscriptionTier;
+  audioBase64: string;
+  mimeType: string;
+}
+
+export interface MediaTranscribeResult {
+  text: string;
+}
+
+export interface MediaSpeechInput {
+  accessToken: string;
+  subscriptionTier: SubscriptionTier;
+  text: string;
+}
+
+export interface MediaSpeechResult {
+  audioBase64: string;
+  mimeType: string;
+}
+
+export interface MediaImageGenerateInput {
+  accessToken: string;
+  subscriptionTier: SubscriptionTier;
+  prompt: string;
+}
+
+export interface MediaImageGenerateResult {
+  imageBase64: string;
+  revisedPrompt?: string;
+}
+
+export interface MediaBridge {
+  writeCache: (input: MediaCacheWriteInput) => Promise<MediaCacheWriteResult>;
+  readDataUrl: (fileId: string) => Promise<string | null>;
+  pickImage: () => Promise<MediaPickImageResult | null>;
+  transcribe: (input: MediaTranscribeInput) => Promise<MediaTranscribeResult>;
+  synthesizeSpeech: (input: MediaSpeechInput) => Promise<MediaSpeechResult>;
+  generateImage: (input: MediaImageGenerateInput) => Promise<MediaImageGenerateResult>;
 }
 
 export interface AppBridge {
@@ -549,6 +822,10 @@ export interface AuthBridge {
   clearSession: () => Promise<void>;
 }
 
+export interface BillingBridge {
+  createCheckoutSession: (input: CreateCheckoutSessionInput) => Promise<CreateCheckoutSessionResult>;
+}
+
 export interface ShellBridge {
   openPath: (targetPath: string) => Promise<void>;
   openExternal: (url: string) => Promise<void>;
@@ -557,11 +834,13 @@ export interface ShellBridge {
 export interface TrellisBridge {
   app: AppBridge;
   auth: AuthBridge;
+  billing: BillingBridge;
   db: DatabaseBridge;
   extraction: ExtractionBridge;
   vault: VaultBridge;
   retrieval: RetrievalBridge;
   ingest: IngestBridge;
   chat: ChatBridge;
+  media: MediaBridge;
   shell: ShellBridge;
 }

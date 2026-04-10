@@ -3,6 +3,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { WikiAwareLink } from "@/components/wiki/wikiAwareLink";
 import { renderWikiMarkdown } from "@/lib/markdown";
+import { isInternalNoteHashHref, slugFromInternalNoteHashHref } from "@/lib/noteRoutes";
 import { htmlToMarkdown } from "@/lib/htmlToMarkdown";
 import { cn } from "@/lib/utils";
 
@@ -129,14 +130,17 @@ export function RichTextRenderer({
 
         const href = link.getAttribute("href");
 
-        if (href?.startsWith("#/wiki?note=") && onOpenNote) {
+        if (href && isInternalNoteHashHref(href) && onOpenNote) {
           event.preventDefault();
 
           if (editable && !(event.metaKey || event.ctrlKey)) {
             return;
           }
 
-          const slug = decodeURIComponent(href.replace("#/wiki?note=", ""));
+          const slug = slugFromInternalNoteHashHref(href);
+          if (!slug) {
+            return;
+          }
           const linkText = link.textContent?.trim();
           onOpenNote(slug, { linkText });
           return;

@@ -12,7 +12,6 @@ import {
 import { extractionResponseJsonSchema } from "@shared/extraction/jsonSchema";
 import type { ExtractionInstallProgressEvent } from "@shared/extraction/localModelInstall";
 import { parseExtractionResponseJson } from "@shared/extraction/validate";
-import { app } from "electron";
 import {
   getLlama,
   LlamaChatSession,
@@ -26,6 +25,7 @@ import type {
   ExtractionProviderStatus,
   ExtractionRunResult
 } from "../../../ipc/types";
+import { getUserDataRoot } from "../../appPaths";
 import { ExtractionValidationError } from "../debug";
 import type { ExtractionProvider, ProviderExtractInput } from "./types";
 
@@ -40,7 +40,7 @@ const curatedEmbeddedModels: Array<Omit<LocalExtractionModelInfo, "installed" | 
 ];
 
 function extractionModelsDir(): string {
-  return path.join(app.getPath("userData"), "extraction", "models");
+  return path.join(getUserDataRoot(), "extraction", "models");
 }
 
 export function getEmbeddedExtractionModelPath(): string {

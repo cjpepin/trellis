@@ -25,6 +25,14 @@ const chatAttachmentSchema = z.object({
   sourceUrl: z.string().url().optional()
 });
 
+const chatMediaArtifactSchema = z.object({
+  kind: z.enum(["image", "generated_image"]),
+  fileId: z.string().uuid(),
+  mimeType: z.string().min(1).max(120),
+  label: z.string().min(1).max(500),
+  prompt: z.string().max(4000).optional()
+});
+
 const messageSchema = z
   .object({
     id: z.string().uuid(),
@@ -33,16 +41,18 @@ const messageSchema = z
     content: z.string().max(200_000),
     createdAt: z.number().int(),
     tokens: z.number().int().nullable(),
-    attachments: z.array(chatAttachmentSchema).max(12).optional()
+    attachments: z.array(chatAttachmentSchema).max(12).optional(),
+    mediaArtifacts: z.array(chatMediaArtifactSchema).max(8).optional()
   })
   .superRefine((value, ctx) => {
     const hasText = value.content.trim().length > 0;
     const hasAttachments = (value.attachments?.length ?? 0) > 0;
+    const hasMedia = (value.mediaArtifacts?.length ?? 0) > 0;
 
-    if (!hasText && !hasAttachments) {
+    if (!hasText && !hasAttachments && !hasMedia) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Message needs non-empty content or at least one attachment."
+        message: "Message needs non-empty content, an attachment, or a media item."
       });
     }
   });

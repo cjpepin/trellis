@@ -1,4 +1,8 @@
 import { create } from "zustand";
+import type {
+  ProviderKeyStatusSnapshot,
+  SubscriptionTier
+} from "@electron/ipc/types";
 
 export interface UsageSnapshot {
   messagesUsed: number;
@@ -15,19 +19,21 @@ interface AuthState {
     email: string | null;
   } | null;
   accessToken: string | null;
-  subscriptionTier: "trial" | "pro";
+  subscriptionTier: SubscriptionTier;
   subscriptionStatus: "trialing" | "active" | "expired";
   usage: UsageSnapshot;
+  providerKeys: ProviderKeyStatusSnapshot;
   errorMessage: string | null;
   setConfigured: (configured: boolean) => void;
   setLoading: () => void;
   setAuthenticated: (payload: {
     accessToken: string;
     user: { id: string; email: string | null };
-    subscriptionTier: "trial" | "pro";
+    subscriptionTier: SubscriptionTier;
     subscriptionStatus: "trialing" | "active" | "expired";
     usage: UsageSnapshot;
   }) => void;
+  setProviderKeys: (providerKeys: ProviderKeyStatusSnapshot) => void;
   setAnonymous: () => void;
   setError: (message: string) => void;
 }
@@ -39,6 +45,25 @@ const defaultUsage: UsageSnapshot = {
   ingestLimit: 5
 };
 
+const defaultProviderKeys: ProviderKeyStatusSnapshot = {
+  statuses: [
+    {
+      provider: "openai",
+      configured: false,
+      lastFour: null,
+      updatedAt: null
+    },
+    {
+      provider: "anthropic",
+      configured: false,
+      lastFour: null,
+      updatedAt: null
+    }
+  ],
+  secureStorageAvailable: false,
+  persistenceMode: "session"
+};
+
 export const useAuthStore = create<AuthState>((set) => ({
   status: "idle",
   isConfigured: false,
@@ -47,6 +72,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   subscriptionTier: "trial",
   subscriptionStatus: "trialing",
   usage: defaultUsage,
+  providerKeys: defaultProviderKeys,
   errorMessage: null,
   setConfigured: (configured) => set({ isConfigured: configured }),
   setLoading: () => set({ status: "loading", errorMessage: null }),
@@ -60,6 +86,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       usage: payload.usage,
       errorMessage: null
     }),
+  setProviderKeys: (providerKeys) => set({ providerKeys }),
   setAnonymous: () =>
     set({
       status: "anonymous",
@@ -76,4 +103,3 @@ export const useAuthStore = create<AuthState>((set) => ({
       errorMessage: message
     })
 }));
-

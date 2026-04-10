@@ -13,6 +13,9 @@ interface Props {
   onEditMessage: (messageId: string) => void;
   onOpenNote: (slug: string) => void;
   onRetryMessage: (messageId: string) => void;
+  onReadAloud?: (messageId: string, text: string) => void | Promise<void>;
+  readAloudLoadingMessageId?: string | null;
+  readAloudDisabled?: boolean;
 }
 
 export function MessageList({
@@ -24,7 +27,10 @@ export function MessageList({
   isStreaming,
   onEditMessage,
   onOpenNote,
-  onRetryMessage
+  onRetryMessage,
+  onReadAloud,
+  readAloudLoadingMessageId,
+  readAloudDisabled
 }: Props) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const lastMessageSignature = useMemo(() => {
@@ -73,6 +79,9 @@ export function MessageList({
           onOpenNote={onOpenNote}
           onRetry={() => onRetryMessage(message.id)}
           waitingForTokens={awaitingFirstToken && index === messages.length - 1}
+          onReadAloud={onReadAloud}
+          readAloudLoading={readAloudLoadingMessageId === message.id}
+          readAloudDisabled={readAloudDisabled}
         />
       ))}
       <div ref={endRef} />

@@ -152,7 +152,7 @@ export function CommandPalette({
                   onSelect={() => {
                     setActiveNote(note.slug);
                     setOpen(false);
-                    navigate("/wiki");
+                    navigate("/notes");
                   }}
                 >
                   {note.title}

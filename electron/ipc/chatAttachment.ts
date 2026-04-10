@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import pdfParse from "pdf-parse";
-import { dialog, ipcMain } from "electron";
+import { BrowserWindow, dialog, ipcMain } from "electron";
 import { ipcChannels } from "./types";
 
 const maxTextChars = 120_000;
@@ -17,9 +17,10 @@ function truncateText(value: string): string {
 }
 
 export function registerChatAttachmentIpc(): void {
-  ipcMain.handle(ipcChannels.chatPickAttachment, async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ["openFile"],
+  ipcMain.handle(ipcChannels.chatPickAttachment, async (event) => {
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+    const dialogOptions = {
+      properties: ["openFile" as const],
       filters: [
         {
           name: "Text and documents",
@@ -27,7 +28,10 @@ export function registerChatAttachmentIpc(): void {
         },
         { name: "All files", extensions: ["*"] }
       ]
-    });
+    };
+    const result = parentWindow
+      ? await dialog.showOpenDialog(parentWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
 
     if (result.canceled || !result.filePaths[0]) {
       return null;

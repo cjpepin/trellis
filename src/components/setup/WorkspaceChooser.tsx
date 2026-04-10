@@ -8,7 +8,10 @@ interface Props {
 
 export function WorkspaceChooser({ workspaces, onSelect }: Props) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(200,169,110,0.18),_transparent_42%),linear-gradient(180deg,_rgba(18,18,18,0.98),_rgba(10,10,10,1))] px-6 py-12">
+    <div
+      className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(200,169,110,0.18),_transparent_42%),linear-gradient(180deg,_rgba(18,18,18,0.98),_rgba(10,10,10,1))] px-6 py-12"
+      data-testid="workspace-chooser"
+    >
       <div className="w-full max-w-5xl">
         <div className="mx-auto max-w-2xl text-center">
           <p className="font-display text-5xl text-trellis-text">Choose your workspace</p>
@@ -22,6 +25,7 @@ export function WorkspaceChooser({ workspaces, onSelect }: Props) {
           {workspaces.map((workspace) => (
             <section
               key={workspace.id}
+              data-testid={`workspace-card-${workspace.id}`}
               className="trellis-elevated flex min-h-[320px] flex-col justify-between rounded-panel border border-trellis-border px-6 py-6"
             >
               <div>
@@ -55,13 +59,16 @@ export function WorkspaceChooser({ workspaces, onSelect }: Props) {
                   <p>
                     {workspace.localOnly
                       ? "Local-only by default, editable, and resettable."
-                      : "Best for real work and your normal daily flow."}
+                      : workspace.isPreview
+                        ? "Resettable sample data with your normal account and live chat."
+                        : "Best for real work and your normal daily flow."}
                   </p>
                 </div>
               </div>
 
               <button
                 type="button"
+                data-testid={`workspace-option-${workspace.id}`}
                 className="trellis-accent-button mt-8 rounded-field border px-4 py-3 text-sm transition"
                 onClick={() => {
                   void onSelect(workspace.id);

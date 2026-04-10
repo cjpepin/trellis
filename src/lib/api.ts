@@ -1,11 +1,18 @@
-import type { ChatModel, MessageRecord, NoteSummary } from "@electron/ipc/types";
+import type {
+  ChatContextReference,
+  ChatModel,
+  ExtractionCloudConfig,
+  ExtractionRunInput,
+  MessageRecord,
+  SubscriptionTier
+} from "@electron/ipc/types";
 import type {
   ExtractionContextNote,
   ExtractionIndexEntry,
   ExtractionResponse,
   ExtractionUpdate
 } from "@shared/extraction/contracts";
-import type { ExtractionCloudConfig, ExtractionMode } from "@electron/ipc/types";
+import type { ExtractionMode } from "@electron/ipc/types";
 import { getSupabase, hasSupabaseConfig } from "./supabase";
 
 export type { ExtractionIndexEntry, ExtractionResponse, ExtractionUpdate };
@@ -15,15 +22,11 @@ export interface IngestProgress {
   message: string;
 }
 
-export interface ChatNoteReference {
-  slug: string;
-  title: string;
-  excerpt: string;
-  content: string;
-}
+export type ChatNoteReference = ChatContextReference;
 
 interface StreamChatInput {
   accessToken: string;
+  subscriptionTier: SubscriptionTier;
   model: ChatModel;
   sessionId: string;
   messages: Array<Pick<MessageRecord, "role" | "content">>;
@@ -51,12 +54,6 @@ interface IngestExtractInput extends ExtractInput {
   onProgress: (event: IngestProgress) => void;
 }
 
-interface EdgeFunctionErrorPayload {
-  code?: string;
-  error?: string;
-  message?: string;
-}
-
 export function getOptionalExtractionCloudConfig(
   accessToken: string | null
 ): ExtractionCloudConfig | undefined {
@@ -71,40 +68,6 @@ export function getOptionalExtractionCloudConfig(
     functionsBaseUrl: `${supabaseUrl}/functions/v1`,
     publishableKey,
     accessToken
-  };
-}
-
-function getExtractionCloudConfig(accessToken: string | null): ExtractionCloudConfig {
-  const config = getOptionalExtractionCloudConfig(accessToken);
-
-  if (!config) {
-    throw new Error("Cloud features are not configured for this build yet.");
-  }
-
-  return config;
-}
-
-function getFunctionsBaseUrl(): string {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-
-  if (!supabaseUrl) {
-    throw new Error("Cloud features are not configured for this build yet.");
-  }
-
-  return `${supabaseUrl}/functions/v1`;
-}
-
-function getFunctionHeaders(accessToken: string): HeadersInit {
-  const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
-
-  if (!publishableKey) {
-    throw new Error("Cloud features are not configured for this build yet.");
-  }
-
-  return {
-    "Content-Type": "application/json",
-    apikey: publishableKey,
-    Authorization: `Bearer ${accessToken}`
   };
 }
 
@@ -141,159 +104,56 @@ async function resolveAccessToken(fallbackToken: string): Promise<string> {
   }
 }
 
-async function readSseStream(
-  response: Response,
-  handlers: {
-    onEvent: (type: string, payload: string) => void | Promise<void>;
-  }
-): Promise<void> {
-  const reader = response.body?.getReader();
+async function runExtractionRequest(
+  input: Omit<ExtractionRunInput, "cloud"> & { accessToken: string | null }
+): Promise<ExtractionResponse> {
+  const accessToken = await resolveAccessToken(input.accessToken ?? "");
+  const { accessToken: _accessToken, ...runInput } = input;
+  const result = await window.trellis.extraction.run({
+    ...runInput,
+    cloud: getOptionalExtractionCloudConfig(accessToken)
+  });
 
-  if (!reader) {
-    throw new Error("Streaming response had no body.");
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  function readDataValue(line: string): string {
-    const rawValue = line.slice(5);
-    return rawValue.startsWith(" ") ? rawValue.slice(1) : rawValue;
-  }
-
-  while (true) {
-    const { done, value } = await reader.read();
-
-    if (done) {
-      break;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split("\n\n");
-    buffer = chunks.pop() ?? "";
-
-    for (const chunk of chunks) {
-      const lines = chunk.split("\n");
-      const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() ?? "message";
-      const data = lines
-        .filter((line) => line.startsWith("data:"))
-        .map(readDataValue)
-        .join("\n");
-
-      await handlers.onEvent(event, data);
-    }
-  }
-
-  buffer += decoder.decode();
-
-  if (buffer.trim().length > 0) {
-    const lines = buffer.split("\n");
-    const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() ?? "message";
-    const data = lines
-      .filter((line) => line.startsWith("data:"))
-      .map(readDataValue)
-      .join("\n");
-
-    if (data.length > 0) {
-      await handlers.onEvent(event, data);
-    }
-  }
-}
-
-async function readErrorResponse(response: Response, fallbackMessage: string): Promise<Error> {
-  const text = await response.text();
-
-  try {
-    const payload = JSON.parse(text) as EdgeFunctionErrorPayload;
-
-    if (payload.error === "trial_expired") {
-      return new Error("Your free trial has ended. Upgrade in Settings to continue.");
-    }
-
-    if (response.status === 401) {
-      return new Error(
-        "Trellis couldn't verify your cloud session. Your local notes are still safe. Sign in again from Settings to resume chatting."
-      );
-    }
-
-    if (response.status === 404 || payload.code === "NOT_FOUND") {
-      return new Error("This cloud feature is not available for this build yet.");
-    }
-
-    if (typeof payload.error === "string" && payload.error.length > 0) {
-      return new Error(payload.error);
-    }
-
-    if (typeof payload.message === "string" && payload.message.length > 0) {
-      return new Error(payload.message);
-    }
-  } catch {
-    if (text.length > 0) {
-      return new Error(text);
-    }
-  }
-
-  return new Error(fallbackMessage);
+  return result.response;
 }
 
 export async function streamChat(input: StreamChatInput): Promise<void> {
   const accessToken = await resolveAccessToken(input.accessToken);
-  const response = await fetch(`${getFunctionsBaseUrl()}/chat`, {
-    method: "POST",
-    headers: getFunctionHeaders(accessToken),
-    body: JSON.stringify({
-      sessionId: input.sessionId,
-      model: input.model,
-      messages: input.messages,
-      references: input.references ?? []
-    })
-  });
-
-  if (!response.ok) {
-    throw await readErrorResponse(response, "Chat request failed.");
-  }
-
-  await readSseStream(response, {
-    onEvent: (type, payload) => {
-      if (type === "token") {
-        input.onToken(payload);
-      } else if (type === "status") {
-        input.onStatus(payload);
-      } else if (type === "title") {
-        input.onTitle(payload);
-      } else if (type === "error") {
-        throw new Error(payload);
-      }
-    }
+  await window.trellis.chat.stream({
+    accessToken,
+    subscriptionTier: input.subscriptionTier,
+    model: input.model,
+    sessionId: input.sessionId,
+    messages: input.messages,
+    references: input.references ?? [],
+    onToken: input.onToken,
+    onStatus: input.onStatus,
+    onTitle: input.onTitle
   });
 }
 
 export async function extractTranscript(input: ExtractInput): Promise<ExtractionResponse> {
-  const accessToken = await resolveAccessToken(input.accessToken ?? "");
-  const result = await window.trellis.extraction.run({
+  return runExtractionRequest({
+    accessToken: input.accessToken,
     mode: input.mode,
-    cloud: getOptionalExtractionCloudConfig(accessToken),
     transcript: input.transcript,
     sessionId: input.sessionId,
     index: input.index,
     relatedNotes: input.relatedNotes ?? [],
     preferredLocalModelId: input.preferredLocalModelId ?? undefined
   });
-
-  return result.response;
 }
 
 export async function extractIngestedSource(
   input: IngestExtractInput
 ): Promise<ExtractionResponse> {
-  const accessToken = await resolveAccessToken(input.accessToken ?? "");
   input.onProgress({
     step: "extracting",
     message: "Shaping concepts…"
   });
-  const result = await window.trellis.extraction.run({
+  const response = await runExtractionRequest({
+    accessToken: input.accessToken,
     mode: input.mode,
-    cloud: getOptionalExtractionCloudConfig(accessToken),
     index: input.index,
     sourceType: input.sourceType,
     sourceTitle: input.sourceTitle,
@@ -310,7 +170,7 @@ export async function extractIngestedSource(
   });
   input.onProgress({
     step: "updating",
-    message: `Updating ${result.response.updates.length} notes…`
+    message: `Updating ${response.updates.length} notes…`
   });
-  return result.response;
+  return response;
 }

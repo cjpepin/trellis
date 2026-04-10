@@ -11,7 +11,7 @@ const {
 } = require("../supabase/functions/_shared/models.ts");
 
 const rootDir = path.resolve(__dirname, "..");
-const defaultCorpusPath = path.join(rootDir, "eval", "extraction-corpus.json");
+const defaultCorpusPath = path.join(rootDir, "fixtures", "eval", "extraction-corpus.json");
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -393,7 +393,7 @@ async function main() {
   const corpusPath = path.resolve(rootDir, getFlag(args, "--corpus") ?? defaultCorpusPath);
   const outputPath = path.resolve(
     rootDir,
-    getFlag(args, "--out") ?? path.join("eval", `${command}-results.json`)
+    getFlag(args, "--out") ?? path.join("fixtures", "eval", `${command}-results.json`)
   );
 
   await runMode(command, corpusPath, outputPath);

@@ -2,10 +2,11 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { fromRepoRoot, repoRootDir } from "./lib/repo-paths.mjs";
 
-const rootDir = process.cwd();
-const supabaseDir = path.join(rootDir, "supabase");
-const defaultTypesOutputPath = path.join(rootDir, "src", "lib", "database.types.ts");
+const rootDir = repoRootDir;
+const supabaseDir = fromRepoRoot("supabase");
+const defaultTypesOutputPath = fromRepoRoot("src", "lib", "database.types.ts");
 const flagsWithValues = new Set([
   "--db-url",
   "--dns-resolver",
@@ -75,20 +76,13 @@ function parseEnvFile(filePath) {
 }
 
 function loadEnvironment() {
-  const files = [
-    path.join(rootDir, ".env"),
-    path.join(rootDir, ".env.local"),
-    path.join(supabaseDir, ".env"),
-    path.join(supabaseDir, ".env.local")
-  ];
+  const envPath = path.join(rootDir, ".env");
+  const envLocalPath = path.join(rootDir, ".env.local");
+  const merged = { ...parseEnvFile(envPath), ...parseEnvFile(envLocalPath) };
 
-  for (const filePath of files) {
-    const parsed = parseEnvFile(filePath);
-
-    for (const [key, value] of Object.entries(parsed)) {
-      if (!(key in process.env)) {
-        process.env[key] = value;
-      }
+  for (const [key, value] of Object.entries(merged)) {
+    if (!(key in process.env)) {
+      process.env[key] = value;
     }
   }
 }
@@ -147,13 +141,18 @@ function getFlagValue(flags, ...names) {
   return undefined;
 }
 
+/** Edge Functions need `--env-file`; prefer `.env` when present so the file is usually complete. */
 function getFunctionsEnvFile() {
-  const candidates = [
-    path.join(supabaseDir, ".env.local"),
-    path.join(supabaseDir, ".env")
-  ];
+  const envPath = path.join(rootDir, ".env");
+  const envLocalPath = path.join(rootDir, ".env.local");
 
-  return candidates.find((candidate) => fs.existsSync(candidate));
+  if (fs.existsSync(envPath)) {
+    return envPath;
+  }
+  if (fs.existsSync(envLocalPath)) {
+    return envLocalPath;
+  }
+  return undefined;
 }
 
 function getProjectFlags() {
@@ -511,74 +510,35 @@ async function main() {
   loadEnvironment();
 
   const [action, ...args] = process.argv.slice(2);
+  const actionHandlers = {
+    doctor: handleDoctor,
+    link: handleLink,
+    login: handleLogin,
+    "functions:serve": handleFunctionsServe,
+    "functions:deploy": handleFunctionsDeploy,
+    "db:push": handleDbPush,
+    "db:reset": handleDbReset,
+    "db:diff": handleDbDiff,
+    "migration:new": handleMigrationNew,
+    "types:gen": handleTypesGenerate,
+    "backend:deploy": handleBackendDeploy,
+    start: (forwardedArgs) => handlePassthrough("start", forwardedArgs),
+    stop: (forwardedArgs) => handlePassthrough("stop", forwardedArgs),
+    status: (forwardedArgs) => handlePassthrough("status", forwardedArgs)
+  };
+  const knownActions = Object.keys(actionHandlers).join(", ");
 
   if (!action) {
-    throw new Error("Missing action. Try: doctor, functions:deploy, functions:serve, db:push, db:reset, migration:new, start, stop, status, or link.");
+    throw new Error(`Missing action. Try: ${knownActions}.`);
   }
 
-  if (action === "doctor") {
-    await handleDoctor();
-    return;
+  const actionHandler = actionHandlers[action];
+
+  if (!actionHandler) {
+    throw new Error(`Unknown action: ${action}. Try: ${knownActions}.`);
   }
 
-  if (action === "link") {
-    await handleLink(args);
-    return;
-  }
-
-  if (action === "login") {
-    await handleLogin(args);
-    return;
-  }
-
-  if (action === "functions:serve") {
-    await handleFunctionsServe(args);
-    return;
-  }
-
-  if (action === "functions:deploy") {
-    await handleFunctionsDeploy(args);
-    return;
-  }
-
-  if (action === "db:push") {
-    await handleDbPush(args);
-    return;
-  }
-
-  if (action === "db:reset") {
-    await handleDbReset(args);
-    return;
-  }
-
-  if (action === "db:diff") {
-    await handleDbDiff(args);
-    return;
-  }
-
-  if (action === "migration:new") {
-    await handleMigrationNew(args);
-    return;
-  }
-
-  if (action === "types:gen") {
-    await handleTypesGenerate(args);
-    return;
-  }
-
-  if (action === "backend:deploy") {
-    await handleBackendDeploy(args);
-    return;
-  }
-
-  if (action === "start" || action === "stop" || action === "status") {
-    await handlePassthrough(action, args);
-    return;
-  }
-
-  throw new Error(
-    `Unknown action: ${action}. Try: doctor, login, link, start, stop, status, db:push, db:reset, db:diff, migration:new, types:gen, functions:serve, functions:deploy, or backend:deploy.`
-  );
+  await actionHandler(args);
 }
 
 main().catch((error) => {

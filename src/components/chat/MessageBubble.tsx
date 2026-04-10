@@ -1,4 +1,13 @@
-import { Link2, Paperclip, Pencil, RotateCcw, TriangleAlert } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  Link2,
+  LoaderCircle,
+  Paperclip,
+  Pencil,
+  RotateCcw,
+  TriangleAlert,
+  Volume2
+} from "lucide-react";
 import type { MessageRecord } from "@electron/ipc/types";
 import { cn } from "@/lib/utils";
 import type { MessageMeta } from "@/store/chatStore";
@@ -15,6 +24,9 @@ interface Props {
   onOpenNote?: (slug: string) => void;
   onRetry?: () => void;
   waitingForTokens?: boolean;
+  onReadAloud?: (messageId: string, text: string) => void | Promise<void>;
+  readAloudLoading?: boolean;
+  readAloudDisabled?: boolean;
 }
 
 export function MessageBubble({
@@ -26,13 +38,50 @@ export function MessageBubble({
   onEdit,
   onOpenNote,
   onRetry,
-  waitingForTokens = false
+  waitingForTokens = false,
+  onReadAloud,
+  readAloudLoading = false,
+  readAloudDisabled = false
 }: Props) {
   const isUser = message.role === "user";
   const isFailed = meta?.status === "failed";
   const isPending = meta?.status === "pending";
   const roleLabel = isUser ? "You" : "Trellis";
   const contentWidthClassName = isUser ? "max-w-[38rem]" : "max-w-[42rem]";
+  const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const artifacts = message.mediaArtifacts;
+
+    if (!artifacts?.length) {
+      setMediaUrls({});
+      return;
+    }
+
+    void (async () => {
+      const next: Record<string, string> = {};
+
+      for (const artifact of artifacts) {
+        const url = await window.trellis.media.readDataUrl(artifact.fileId);
+
+        if (url) {
+          next[artifact.fileId] = url;
+        }
+      }
+
+      if (!cancelled) {
+        setMediaUrls(next);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [message.mediaArtifacts, message.id]);
+
+  const hasRenderableText = message.content.trim().length > 0;
+  const hasMedia = (message.mediaArtifacts?.length ?? 0) > 0;
 
   return (
     <div className={cn("flex w-full animate-fade-rise", isUser ? "justify-end" : "justify-start")}>
@@ -57,7 +106,8 @@ export function MessageBubble({
         </div>
         <div
           className={cn(
-            `w-full ${contentWidthClassName} text-left`,
+            `w-full ${contentWidthClassName}`,
+            isUser ? "text-right" : "text-left",
             isUser
               ? "border-r border-trellis-border pr-5 md:pr-6"
               : "border-l border-trellis-accent/25 pl-5 md:pl-6",
@@ -81,17 +131,69 @@ export function MessageBubble({
               ))}
             </div>
           )}
+          {hasMedia && (
+            <div
+              className={cn(
+                "mb-3 flex flex-col gap-2",
+                isUser ? "items-end" : "items-start"
+              )}
+            >
+              {message.mediaArtifacts?.map((artifact) => {
+                const src = mediaUrls[artifact.fileId];
+
+                if (!src) {
+                  return (
+                    <div
+                      key={artifact.fileId}
+                      className="h-40 w-full max-w-sm rounded-field border border-trellis-border bg-trellis-surface-2"
+                    />
+                  );
+                }
+
+                return (
+                  <img
+                    key={artifact.fileId}
+                    src={src}
+                    alt={artifact.label}
+                    className="max-h-80 max-w-full rounded-field border border-trellis-border object-contain"
+                  />
+                );
+              })}
+            </div>
+          )}
           {waitingForTokens && message.content.length === 0 ? (
             <StreamingIndicator />
-          ) : message.content.trim().length > 0 ? (
+          ) : hasRenderableText ? (
             <RichTextRenderer
               markdown={message.content}
               existingSlugs={existingSlugs}
-              className="trellis-chat-copy text-left"
+              className={cn("trellis-chat-copy", isUser ? "text-right" : "text-left")}
               onOpenNote={onOpenNote}
             />
           ) : (
-            <p className="text-sm italic text-trellis-muted">No message text (attachments only).</p>
+            <p className={cn("text-sm italic text-trellis-muted", isUser && "text-right")}>
+              {hasMedia ? "No message text (see image above)." : "No message text (attachments only)."}
+            </p>
+          )}
+          {!isUser && onReadAloud && hasRenderableText && (
+            <div className="mt-3 flex w-full justify-start">
+              <button
+                type="button"
+                disabled={readAloudDisabled || readAloudLoading}
+                className="rounded-full border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-accent disabled:cursor-not-allowed disabled:opacity-40"
+                title={readAloudLoading ? "Preparing audio…" : "Read this reply aloud with text-to-speech"}
+                aria-label={readAloudLoading ? "Preparing read aloud" : "Read aloud"}
+                onClick={() => {
+                  void onReadAloud(message.id, message.content);
+                }}
+              >
+                {readAloudLoading ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin text-trellis-accent" aria-hidden />
+                ) : (
+                  <Volume2 className="h-4 w-4" aria-hidden />
+                )}
+              </button>
+            </div>
           )}
         </div>
         {(isFailed || isPending || canEdit || canRetry) && (

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Product Plan Agent"
+  short_description: "Researches Trellis and produces a decision-complete implementation handoff"

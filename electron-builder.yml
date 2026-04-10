@@ -1,12 +1,12 @@
 appId: com.trellis.app
 productName: Trellis
 directories:
-  output: dist-electron
+  output: out/release
 files:
-  - dist/**
-  - dist-electron/**
+  - out/build/renderer/**
+  - out/build/electron/**
   - package.json
-  - preview-seed/**
+  - fixtures/preview-seed/**
 mac:
   category: public.app-category.productivity
   hardenedRuntime: true

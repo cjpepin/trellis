@@ -16,6 +16,12 @@ port = 54323
 [functions.chat]
 verify_jwt = false
 
+[functions.chat-media]
+verify_jwt = false
+
+[functions.checkout]
+verify_jwt = false
+
 [functions.extract]
 verify_jwt = false
 

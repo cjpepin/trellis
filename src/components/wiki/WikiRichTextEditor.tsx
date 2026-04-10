@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { renderWikiMarkdown } from "@/lib/markdown";
 import { htmlToMarkdown } from "@/lib/htmlToMarkdown";
+import { isInternalNoteHashHref, slugFromInternalNoteHashHref } from "@/lib/noteRoutes";
 import { cn } from "@/lib/utils";
 import { ListboxSelect } from "@/components/ListboxSelect";
 import { WikiLinkEditBubble } from "@/components/wiki/WikiLinkEditBubble";
@@ -56,8 +57,8 @@ interface WikiNoteSummary {
   title: string;
 }
 
-function isWikiInternalHref(href: unknown): href is string {
-  return typeof href === "string" && href.startsWith("#/wiki?note=");
+function isInternalNoteLinkHref(href: unknown): href is string {
+  return typeof href === "string" && isInternalNoteHashHref(href);
 }
 
 interface Props {
@@ -120,7 +121,7 @@ function WikiEditorToolbar({
     : "";
 
   const linkHref = instance.getAttributes("link").href;
-  const isWikiInternalLink = instance.isActive("link") && isWikiInternalHref(linkHref);
+  const isInternalNoteLink = instance.isActive("link") && isInternalNoteLinkHref(linkHref);
 
   return (
     <div
@@ -294,25 +295,25 @@ function WikiEditorToolbar({
       <div className="flex flex-wrap items-center gap-0.5">
         <button
           type="button"
-          className={toolbarButtonClass(editor.isActive("link") && !isWikiInternalLink)}
+          className={toolbarButtonClass(editor.isActive("link") && !isInternalNoteLink)}
           aria-label={
-            isWikiInternalLink
-              ? "Wiki links are edited as text"
+            isInternalNoteLink
+              ? "Note links are edited as text"
               : editor.isActive("link")
                 ? "Edit web link"
                 : "Add web link"
           }
           title={
-            isWikiInternalLink
-              ? "Wiki links use [[note title]] in the text. Use the Link control for https addresses only."
+            isInternalNoteLink
+              ? "Links to other notes use [[note title]] in the text. Use the Link control for https addresses only."
               : editor.isActive("link")
                 ? "Edit web link"
                 : "Add https link"
           }
-          aria-pressed={editor.isActive("link") && !isWikiInternalLink}
+          aria-pressed={editor.isActive("link") && !isInternalNoteLink}
           onClick={() => {
             editor.chain().focus().run();
-            if (isWikiInternalLink) {
+            if (isInternalNoteLink) {
               return;
             }
             onOpenLinkBubble();
@@ -502,7 +503,7 @@ export function WikiRichTextEditor({
         return;
       }
 
-      if (ed.isActive("link") && isWikiInternalHref(ed.getAttributes("link").href)) {
+      if (ed.isActive("link") && isInternalNoteLinkHref(ed.getAttributes("link").href)) {
         setManualLinkOpen(false);
       }
     }
@@ -523,6 +524,35 @@ export function WikiRichTextEditor({
     });
   }, []);
 
+  const [modifierNav, setModifierNav] = useState(false);
+
+  useEffect(() => {
+    function syncModifier(ev: KeyboardEvent | MouseEvent): void {
+      setModifierNav(ev.metaKey || ev.ctrlKey);
+    }
+
+    function onKeyDown(ev: KeyboardEvent): void {
+      syncModifier(ev);
+    }
+
+    function onKeyUp(ev: KeyboardEvent): void {
+      syncModifier(ev);
+    }
+
+    function onWindowBlur(): void {
+      setModifierNav(false);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onWindowBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onWindowBlur);
+    };
+  }, []);
+
   return (
     <div
       className="trellis-panel isolate flex flex-col"
@@ -541,11 +571,14 @@ export function WikiRichTextEditor({
 
         const href = link.getAttribute("href");
 
-        if (href?.startsWith("#/wiki?note=")) {
+        if (href && isInternalNoteHashHref(href)) {
           event.preventDefault();
 
           if (onOpenNote && (event.metaKey || event.ctrlKey)) {
-            const slug = decodeURIComponent(href.replace("#/wiki?note=", ""));
+            const slug = slugFromInternalNoteHashHref(href);
+            if (!slug) {
+              return;
+            }
             const linkText = link.textContent?.trim();
             onOpenNote(slug, { linkText });
             return;
@@ -584,7 +617,15 @@ export function WikiRichTextEditor({
         notes={wikiNotes}
         existingSlugs={existingSlugSet}
       />
-      <div className="relative z-0 min-w-0 bg-trellis-surface">
+      <div
+        className={cn(
+          "relative z-0 min-w-0 bg-trellis-surface",
+          modifierNav && "trellis-rich-text-modifier-nav"
+        )}
+        onMouseMove={(event) => {
+          setModifierNav(event.metaKey || event.ctrlKey);
+        }}
+      >
         <EditorContent editor={editor} />
       </div>
     </div>

@@ -12,6 +12,13 @@ This repository follows [`mvp.md`](/Users/connorpepin/Cursor/mnemo/mvp.md) as th
 - Respect secure boundaries. The renderer never touches Node APIs directly; all privileged work goes through typed IPC.
 - Keep note writes inside the configured vault. Enforce prefix checks before every write or copy operation.
 
+## Agent Workflow
+
+- Use the repo-local role skills in `.codex/skills/` and the operator docs in `docs/agents/`.
+- Default feature flow is: `product-plan-agent` -> `senior-dev-agent` -> `senior-tester-agent` -> `senior-qa-agent`.
+- Use `repo-refactor-agent` only for explicit cleanup, security, or maintenance requests, or as a separate follow-up pass after feature delivery.
+- Keep handoffs structured using `docs/agents/handoffs.md` so downstream agents inherit exact acceptance criteria, verification expectations, and known risks.
+
 ## Architecture Rules
 
 - Electron owns local capabilities: SQLite, vault reads and writes, secure token storage, PDF parsing, and web clipping.
@@ -30,11 +37,48 @@ This repository follows [`mvp.md`](/Users/connorpepin/Cursor/mnemo/mvp.md) as th
 - Use clear, steady language in UI copy. The product should feel calm and precise, not chatty.
 - Respect `prefers-reduced-motion` for route and message entrance animations.
 
+## Verification Expectations
+
+- Every behavior change must run `npm run check`.
+- Canonical automated verification commands are:
+  - `npm run test:node`
+  - `npm run test:e2e`
+  - `npm run verify`
+- Pick the lightest useful layer for the risk, but do not skip automated coverage when the repo already has a suitable seam.
+- New UI behavior should extend Playwright E2E coverage when the flow is user-critical, regression-prone, or difficult to validate reliably through lower layers.
+
+## Code Quality
+
+- Remove dead code, unused branches, stale helpers, and abandoned exports in touched areas instead of leaving cleanup for later.
+- Prefer narrow helpers near the feature they support; avoid growing catch-all utility modules without a clear cross-feature need.
+- New abstractions must solve a real complexity problem or serve at least two concrete call sites.
+- Avoid `TODO` / `FIXME` drift in committed code. If work must be deferred, document it in the agent handoff or relevant docs.
+- New dependencies should be justified in the change summary and should favor stack choices already present in the repo when reasonable.
+
+## React And State
+
+- Use `useMemo` and `useCallback` when they support an existing hot path, dependency-sensitive behavior, or surrounding code style. Do not add prophylactic memoization.
+- Prefer focused Zustand selectors and local state ownership over prop drilling mutable state deep through the tree.
+- New routes and components must account for loading, empty, error, and offline or degraded states where applicable.
+
+## Security And Boundaries
+
+- Keep renderer and main-process boundaries typed and centralized through `electron/ipc/types.ts` and the preload bridge.
+- Never widen vault write scope or bypass prefix validation.
+- Treat auth sessions, provider keys, and filesystem access as sensitive paths that deserve narrow, explicit handling.
+- Never log raw secrets, provider keys, or private chat bodies to the console or cloud tables.
+
+## Testability
+
+- Add stable selectors or semantics for new user-critical UI actions when Playwright coverage is appropriate.
+- Electron startup and workspace behavior should remain deterministic under an isolated test `userData` directory.
+- Prefer the preview workspace as the seeded surface for smoke and regression tests unless the scenario specifically depends on personal workspace behavior.
+
 ## Data Standards
 
-- Wiki notes use YAML frontmatter with `title`, `created`, `updated`, `sources`, `tags`, and `type`.
-- Wiki filenames are `kebab-case.md`.
-- Graph edges come from `[[wiki links]]`.
+- Vault markdown notes use YAML frontmatter with `title`, `created`, `updated`, `sources`, `tags`, and `type`.
+- Note filenames are `kebab-case.md`.
+- Graph edges come from `[[bracket links]]` between notes.
 - Session titles must stay at six words or fewer.
 - Never log private message bodies to cloud tables; only usage and operational metadata may leave the device.
 
@@ -42,6 +86,5 @@ This repository follows [`mvp.md`](/Users/connorpepin/Cursor/mnemo/mvp.md) as th
 
 - New users can choose a vault, authenticate, and begin a chat quickly.
 - Every major route handles loading, error, and empty states gracefully.
-- Chat, extraction, graph, wiki, and ingest flows all degrade cleanly when Supabase or AI providers are unreachable.
+- Chat, extraction, graph, notes, and ingest flows all degrade cleanly when Supabase or AI providers are unreachable.
 - Code additions keep the repository coherent for the next agent. If a new pattern is introduced, document it here or in `docs/schema.md`.
-

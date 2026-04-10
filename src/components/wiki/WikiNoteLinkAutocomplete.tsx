@@ -5,6 +5,7 @@ import { FileText, Plus } from "lucide-react";
 import { slugifyNoteTitle } from "@/lib/noteReferences";
 import { cn } from "@/lib/utils";
 import { findWikiBracketQuery } from "@/components/wiki/findWikiBracketQuery";
+import { notesHashHref } from "@/lib/noteRoutes";
 
 export interface WikiNoteSuggestion {
   slug: string;
@@ -291,7 +292,7 @@ function insertWikiLink(editor: Editor, from: number, to: number, title: string)
     return;
   }
 
-  const href = `#/wiki?note=${encodeURIComponent(slug)}`;
+  const href = notesHashHref(slug);
 
   editor
     .chain()

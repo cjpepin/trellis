@@ -1,6 +1,6 @@
 import {
   extractionThresholds
-} from "./config";
+} from "./config.ts";
 import {
   extractionEvidenceKindValues,
   extractionNoteTypeValues,
@@ -13,8 +13,8 @@ import {
   type ExtractionValidationIssue,
   type ExtractionValidationOptions,
   type ExtractionValidationResult
-} from "./contracts";
-import { extractWikiLinkTitles, normalizeTitleKey, slugifyExtractionTitle } from "./wikiLinks";
+} from "./contracts.ts";
+import { extractWikiLinkTitles, normalizeTitleKey, slugifyExtractionTitle } from "./wikiLinks.ts";
 
 const noteTypeSet = new Set<string>(extractionNoteTypeValues);
 const evidenceKindSet = new Set<string>(extractionEvidenceKindValues);

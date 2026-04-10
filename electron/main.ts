@@ -3,7 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
 import { z } from "zod";
+import { registerChatIpc } from "./ipc/chat";
 import { registerChatAttachmentIpc } from "./ipc/chatAttachment";
+import { registerMediaIpc } from "./ipc/media";
 import { registerDatabaseIpc } from "./ipc/db";
 import { registerExtractionIpc } from "./ipc/extraction";
 import { registerIngestIpc } from "./ipc/ingest";
@@ -13,13 +15,16 @@ import {
   getLocalExtractionFeatureDisabledReason,
   isLocalExtractionFeatureEnabled
 } from "./lib/extraction/rollout";
+import { applyElectronTestPathOverrides } from "./lib/appPaths";
 import { ensurePreviewWorkspaceSeed, readPreviewSeedManifest, resetPreviewWorkspaceSeed } from "./lib/previewSeed";
 import {
+  getSharedAccountStoragePaths,
   getWorkspaceInfo,
   getWorkspacePaths,
   listWorkspaceInfos,
   migrateLegacyPersonalWorkspace,
   readWorkspaceState,
+  workspaceIds,
   writeWorkspaceState,
   type WorkspaceState
 } from "./lib/workspaces";
@@ -28,12 +33,14 @@ import {
   ensureVaultLayout,
   registerVaultIpc
 } from "./ipc/vault";
+import { getProviderKeyStatusSnapshot } from "./lib/providerKeys";
 import { defaultLocalExtractionModelId } from "../shared/extraction/config";
 import {
   ipcChannels,
   type AppBootstrap,
   type AppFeatureFlags,
   type AppSettings,
+  type ChatSettings,
   type AppWorkspaceId,
   type AuthSessionSnapshot,
   type ExtractionSettings,
@@ -50,7 +57,13 @@ const themeValues = [
   "nature-light",
   "ocean-dark",
   "ocean-light",
-  "high-contrast"
+  "high-contrast",
+  "twilight",
+  "dawn",
+  "graphite",
+  "cream",
+  "ember",
+  "fog"
 ] as const satisfies readonly ThemeName[];
 
 const themeSchema = z.preprocess(
@@ -69,6 +82,12 @@ const settingsSchema = z.object({
   activeVaultId: z.string().min(1),
   theme: themeSchema,
   rememberSession: z.boolean().optional(),
+  chat: z
+    .object({
+      privacyMode: z.enum(["auto", "off", "local"]).optional(),
+      readAloudAutoPlay: z.boolean().optional()
+    })
+    .optional(),
   extraction: z
     .object({
       mode: z.enum(["auto", "cloud", "local"]).optional(),
@@ -116,7 +135,7 @@ function getSettingsPath(): string {
 }
 
 function getAuthPath(): string {
-  return getCurrentWorkspacePaths().authPath;
+  return getSharedAccountStoragePaths().authPath;
 }
 
 function getDefaultVaultPath(workspaceId: AppWorkspaceId): string {
@@ -152,6 +171,30 @@ function getWindowBackgroundColor(theme: ThemeName): string {
     return "#000000";
   }
 
+  if (theme === "twilight") {
+    return "#13101a";
+  }
+
+  if (theme === "dawn") {
+    return "#faf5f2";
+  }
+
+  if (theme === "graphite") {
+    return "#131518";
+  }
+
+  if (theme === "cream") {
+    return "#f4efe6";
+  }
+
+  if (theme === "ember") {
+    return "#161210";
+  }
+
+  if (theme === "fog") {
+    return "#eceef2";
+  }
+
   return "#0f0f0f";
 }
 
@@ -173,6 +216,13 @@ function createDefaultExtractionSettings(): ExtractionSettings {
   };
 }
 
+function createDefaultChatSettings(): ChatSettings {
+  return {
+    privacyMode: "auto",
+    readAloudAutoPlay: false
+  };
+}
+
 function createDefaultSettings(workspaceId: AppWorkspaceId = getCurrentWorkspaceId()): AppSettings {
   const vault = createVaultDefinition(
     getDefaultVaultPath(workspaceId),
@@ -182,8 +232,9 @@ function createDefaultSettings(workspaceId: AppWorkspaceId = getCurrentWorkspace
   return {
     vaults: [vault],
     activeVaultId: vault.id,
-    theme: "dark",
+    theme: "light",
     rememberSession: true,
+    chat: createDefaultChatSettings(),
     extraction: createDefaultExtractionSettings()
   };
 }
@@ -202,8 +253,9 @@ function normalizeSettings(rawSettings: unknown): AppSettings {
     return {
       vaults: [vault],
       activeVaultId: vault.id,
-      theme: "dark",
+      theme: "light",
       rememberSession: true,
+      chat: createDefaultChatSettings(),
       extraction: createDefaultExtractionSettings()
     };
   }
@@ -225,6 +277,10 @@ function normalizeSettings(rawSettings: unknown): AppSettings {
     activeVaultId: activeVaultExists ? parsed.activeVaultId : firstVault.id,
     theme: parsed.theme,
     rememberSession: parsed.rememberSession ?? true,
+    chat: {
+      privacyMode: parsed.chat?.privacyMode ?? "auto",
+      readAloudAutoPlay: parsed.chat?.readAloudAutoPlay ?? false
+    },
     extraction: {
       mode:
         localExtractionEnabled || extractionMode === "cloud"
@@ -260,8 +316,9 @@ function createPreviewSettings(vaultPath: string, vaultName: string): AppSetting
   return {
     vaults: [vault],
     activeVaultId: vault.id,
-    theme: "dark",
-    rememberSession: false,
+    theme: "light",
+    rememberSession: getSharedRememberSessionDefault(),
+    chat: createDefaultChatSettings(),
     extraction: {
       mode: isLocalExtractionFeatureEnabled() ? "local" : "cloud",
       preferredLocalModelId: isLocalExtractionFeatureEnabled()
@@ -269,6 +326,27 @@ function createPreviewSettings(vaultPath: string, vaultName: string): AppSetting
         : null
     }
   };
+}
+
+function getSharedRememberSessionDefault(): boolean {
+  const settingsCandidates = [
+    getWorkspacePaths("personal").settingsPath,
+    getWorkspacePaths("preview").settingsPath
+  ];
+
+  for (const settingsPath of settingsCandidates) {
+    if (!fs.existsSync(settingsPath)) {
+      continue;
+    }
+
+    try {
+      return normalizeSettings(JSON.parse(fs.readFileSync(settingsPath, "utf8"))).rememberSession;
+    } catch (error) {
+      console.warn("Could not read remembered sign-in preference, trying the next workspace.", error);
+    }
+  }
+
+  return true;
 }
 
 function canPersistAuthSession(): boolean {
@@ -294,6 +372,51 @@ function parseExternalUrl(url: unknown): string {
   return parsedUrl.toString();
 }
 
+function getFunctionsBaseUrl(): string {
+  const supabaseUrl = process.env.VITE_SUPABASE_URL?.trim();
+
+  if (!supabaseUrl) {
+    throw new Error("Cloud features are not configured for this build yet.");
+  }
+
+  return `${supabaseUrl}/functions/v1`;
+}
+
+function getPublishableKey(): string {
+  const publishableKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
+
+  if (!publishableKey) {
+    throw new Error("Cloud features are not configured for this build yet.");
+  }
+
+  return publishableKey;
+}
+
+async function readFunctionError(response: Response, fallbackMessage: string): Promise<Error> {
+  const text = await response.text();
+
+  try {
+    const payload = JSON.parse(text) as {
+      error?: string;
+      message?: string;
+    };
+
+    if (typeof payload.error === "string" && payload.error.length > 0) {
+      return new Error(payload.error);
+    }
+
+    if (typeof payload.message === "string" && payload.message.length > 0) {
+      return new Error(payload.message);
+    }
+  } catch {
+    if (text.length > 0) {
+      return new Error(text);
+    }
+  }
+
+  return new Error(fallbackMessage);
+}
+
 function readSettingsFromPath(settingsPath: string, workspaceId: AppWorkspaceId): AppSettings {
   if (!fs.existsSync(settingsPath)) {
     return createDefaultSettings(workspaceId);
@@ -314,8 +437,44 @@ function readSettings(): AppSettings {
 
 function writeSettings(nextSettings: AppSettings): AppSettings {
   currentSettings = normalizeSettings(nextSettings);
-  fs.writeFileSync(getSettingsPath(), JSON.stringify(currentSettings, null, 2), "utf8");
+  const settingsPath = getSettingsPath();
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  fs.writeFileSync(settingsPath, JSON.stringify(currentSettings, null, 2), "utf8");
+  syncRememberSessionAcrossWorkspaces(currentSettings.rememberSession, getCurrentWorkspaceId());
   return currentSettings;
+}
+
+function syncRememberSessionAcrossWorkspaces(
+  rememberSession: boolean,
+  sourceWorkspaceId: AppWorkspaceId
+): void {
+  for (const workspaceId of workspaceIds) {
+    if (workspaceId === sourceWorkspaceId) {
+      continue;
+    }
+
+    const settingsPath = getWorkspacePaths(workspaceId).settingsPath;
+
+    if (!fs.existsSync(settingsPath)) {
+      continue;
+    }
+
+    try {
+      const nextSettings = readSettingsFromPath(settingsPath, workspaceId);
+
+      if (nextSettings.rememberSession === rememberSession) {
+        continue;
+      }
+
+      fs.writeFileSync(
+        settingsPath,
+        JSON.stringify({ ...nextSettings, rememberSession }, null, 2),
+        "utf8"
+      );
+    } catch (error) {
+      console.warn("Could not sync sign-in persistence across workspaces.", error);
+    }
+  }
 }
 
 async function ensureWorkspaceReady(
@@ -391,6 +550,7 @@ function writeAuthSession(session: AuthSessionSnapshot): void {
   const payload = JSON.stringify(parsed);
   const serialized = safeStorage.encryptString(payload);
 
+  fs.mkdirSync(path.dirname(getAuthPath()), { recursive: true });
   fs.writeFileSync(getAuthPath(), serialized);
 }
 
@@ -437,8 +597,9 @@ async function buildBootstrapPayload(): Promise<AppBootstrap> {
     features: getAppFeatureFlags(),
     workspace: getWorkspace(),
     workspaces: listWorkspaceInfos(previewSeedVersion),
+    providerKeys: getProviderKeyStatusSnapshot(getCurrentWorkspaceId()),
     needsWorkspaceChoice: !currentWorkspaceState.hasCompletedSelection,
-    authSession: getCurrentWorkspaceId() === "preview" ? null : readAuthSession(),
+    authSession: readAuthSession(),
     sessions: sessions.map((session) => ({
       ...session,
       vaultId: session.vaultId || activeVault.id
@@ -466,7 +627,7 @@ async function rebindWorkspace(
   await initializeDatabase(getWorkspacePaths(workspaceId).databasePath);
   extractionOrchestrator = createExtractionOrchestrator({
     getSettings,
-    getAuthSession: () => (workspaceId === "preview" ? null : readAuthSession()),
+    getAuthSession: () => readAuthSession(),
     notifyJobUpdate: notifyExtractionJobUpdate
   });
   await extractionOrchestrator.resumePendingJobs();
@@ -495,7 +656,7 @@ function createMainWindow(): void {
   });
 
   const devServerUrl = app.isPackaged ? undefined : process.env.VITE_DEV_SERVER_URL;
-  const builtIndexPath = path.join(__dirname, "../dist/index.html");
+  const builtIndexPath = path.join(__dirname, "../renderer/index.html");
 
   if (devServerUrl) {
     mainWindow
@@ -525,6 +686,11 @@ function createMainWindow(): void {
 }
 
 function registerAppIpc(): void {
+  const checkoutSessionInputSchema = z.object({
+    accessToken: z.string().min(1),
+    plan: z.enum(["byok", "pro"])
+  });
+
   ipcMain.handle(ipcChannels.appBootstrap, async () => buildBootstrapPayload());
   ipcMain.handle(ipcChannels.settingsGet, async () => currentSettings);
   ipcMain.handle(ipcChannels.settingsSet, async (_event, settings: unknown) => {
@@ -560,17 +726,32 @@ function registerAppIpc(): void {
       forcePreviewReset: true
     });
   });
-  ipcMain.handle(ipcChannels.authGet, async () =>
-    getCurrentWorkspaceId() === "preview" ? null : readAuthSession()
-  );
+  ipcMain.handle(ipcChannels.authGet, async () => readAuthSession());
   ipcMain.handle(ipcChannels.authSet, async (_event, session: unknown) => {
-    if (getCurrentWorkspaceId() === "preview") {
-      throw new Error("Preview workspace does not persist account sessions.");
-    }
     writeAuthSession(authSessionSchema.parse(session));
   });
   ipcMain.handle(ipcChannels.authClear, async () => {
     clearAuthSession();
+  });
+  ipcMain.handle(ipcChannels.billingCreateCheckoutSession, async (_event, input: unknown) => {
+    const parsed = checkoutSessionInputSchema.parse(input);
+    const response = await fetch(`${getFunctionsBaseUrl()}/checkout`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: getPublishableKey(),
+        Authorization: `Bearer ${parsed.accessToken}`
+      },
+      body: JSON.stringify({
+        plan: parsed.plan
+      })
+    });
+
+    if (!response.ok) {
+      throw await readFunctionError(response, "Could not open the checkout page.");
+    }
+
+    return response.json();
   });
   ipcMain.handle(ipcChannels.shellOpenPath, async (_event, targetPath: unknown) => {
     const parsedPath = z.string().min(1).parse(targetPath);
@@ -617,8 +798,7 @@ async function bootstrapApplication(): Promise<void> {
   await initializeDatabase(getWorkspacePaths(currentWorkspaceState.activeWorkspaceId).databasePath);
   extractionOrchestrator = createExtractionOrchestrator({
     getSettings,
-    getAuthSession: () =>
-      getCurrentWorkspaceId() === "preview" ? null : readAuthSession(),
+    getAuthSession: () => readAuthSession(),
     notifyJobUpdate: notifyExtractionJobUpdate
   });
   registerAppIpc();
@@ -635,6 +815,11 @@ async function bootstrapApplication(): Promise<void> {
   registerVaultIpc(getSettings);
   registerRetrievalIpc(getSettings);
   registerIngestIpc(getSettings);
+  registerChatIpc({
+    getSettings,
+    getWorkspaceId: getCurrentWorkspaceId
+  });
+  registerMediaIpc({ getWorkspaceId: getCurrentWorkspaceId });
   registerChatAttachmentIpc();
   createMainWindow();
   await extractionOrchestrator.resumePendingJobs();
@@ -642,6 +827,7 @@ async function bootstrapApplication(): Promise<void> {
 
 app.whenReady()
   .then(async () => {
+    applyElectronTestPathOverrides();
     try {
       await bootstrapApplication();
     } catch (error) {

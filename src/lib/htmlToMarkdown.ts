@@ -1,5 +1,6 @@
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
+import { isInternalNoteHashHref } from "./noteRoutes";
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -11,10 +12,8 @@ gfm(turndown);
 
 turndown.addRule("wikiLink", {
   filter(node) {
-    return (
-      node.nodeName === "A" &&
-      (node.getAttribute("href")?.startsWith("#/wiki?note=") ?? false)
-    );
+    const href = node.getAttribute("href") ?? "";
+    return node.nodeName === "A" && isInternalNoteHashHref(href);
   },
   replacement(content) {
     return `[[${content}]]`;
