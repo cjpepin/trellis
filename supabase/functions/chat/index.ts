@@ -6,6 +6,7 @@ import {
   type ChatModel
 } from "../_shared/chat-models.ts";
 import { corsHeaders } from "../_shared/http.ts";
+import { assertMaxJsonBodyBytes } from "../_shared/requestLimits.ts";
 import { getChatModelMediaCapabilities } from "../../../shared/chat/capabilities.ts";
 import {
   generateChatReply,
@@ -174,6 +175,7 @@ Deno.serve(async (request) => {
   }
 
   try {
+    assertMaxJsonBodyBytes(request);
     const { user, profile, admin } = await requireUser(request);
     assertEntitlement(profile, "message");
     const parsed = parseBody(await request.json());

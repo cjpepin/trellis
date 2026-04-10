@@ -1,5 +1,6 @@
 import { assertEntitlement, incrementUsage, requireUser } from "../_shared/auth.ts";
 import { corsHeaders } from "../_shared/http.ts";
+import { assertMaxJsonBodyBytes } from "../_shared/requestLimits.ts";
 import { extractKnowledge, type ChatMessage } from "../_shared/models.ts";
 import type { ExtractionContextNote } from "../../../shared/extraction/contracts.ts";
 
@@ -92,8 +93,9 @@ Deno.serve(async (request) => {
   }
 
   try {
-    const parsed = parseRequest(await request.json());
+    assertMaxJsonBodyBytes(request);
     const { user, profile, admin } = await requireUser(request);
+    const parsed = parseRequest(await request.json());
 
     if (parsed.sourceType) {
       assertEntitlement(profile, "ingest");

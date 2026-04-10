@@ -61,23 +61,6 @@ function getBearerToken(request: Request): string {
   return token;
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  const segments = token.split(".");
-  const payloadSegment = segments[1];
-
-  if (segments.length !== 3 || !payloadSegment) {
-    return null;
-  }
-
-  try {
-    const normalized = payloadSegment.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-    return JSON.parse(atob(padded)) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
 export function getAdminClient(): SupabaseClient {
   return createClient(
     getEnvironment("SUPABASE_URL"),
@@ -88,8 +71,7 @@ export function getAdminClient(): SupabaseClient {
 async function resolveUserFromToken(
   supabase: SupabaseClient,
   admin: SupabaseClient,
-  token: string,
-  supabaseUrl: string
+  token: string
 ): Promise<User> {
   const claimsResult = await supabase.auth.getClaims(token);
 
@@ -111,15 +93,9 @@ async function resolveUserFromToken(
   } = await supabase.auth.getUser(token);
 
   if (authError || !user) {
-    const payload = decodeJwtPayload(token);
     console.error("Supabase auth verification failed inside Edge Function.", {
       claimsError: claimsResult.error?.message ?? null,
-      authError: authError?.message ?? null,
-      expectedIssuer: `${supabaseUrl}/auth/v1`,
-      tokenIssuer: typeof payload?.iss === "string" ? payload.iss : null,
-      tokenRole: typeof payload?.role === "string" ? payload.role : null,
-      tokenSubject: typeof payload?.sub === "string" ? payload.sub : null,
-      tokenSessionId: typeof payload?.session_id === "string" ? payload.session_id : null
+      authError: authError?.message ?? null
     });
 
     throw new Response("Unauthorized", {
@@ -136,14 +112,13 @@ export async function requireUser(
 ): Promise<{ user: User; profile: ProfileRow; admin: SupabaseClient }> {
   const admin = getAdminClient();
   const token = getBearerToken(request);
-  const supabaseUrl = getEnvironment("SUPABASE_URL");
 
   const supabase = createClient(
-    supabaseUrl,
+    getEnvironment("SUPABASE_URL"),
     getSupabasePublishableKey()
   );
 
-  const user = await resolveUserFromToken(supabase, admin, token, supabaseUrl);
+  const user = await resolveUserFromToken(supabase, admin, token);
 
   const { data: existingProfile, error: profileError } = await admin
     .from("profiles")
@@ -226,27 +201,14 @@ export async function incrementUsage(
 ): Promise<void> {
   const field = kind === "message" ? "messages_used" : "ingests_used";
   if (!options?.skipCounterUpdate) {
-    const profile = await admin
-      .from("profiles")
-      .select(field)
-      .eq("id", userId)
-      .single();
+    const { error: rpcError } = await admin.rpc("increment_profile_usage_counters", {
+      p_user_id: userId,
+      p_field: field,
+      p_amount: amount
+    });
 
-    if (profile.error || !profile.data) {
-      throw profile.error ?? new Error("Could not fetch usage counters.");
-    }
-
-    const currentValue = profile.data[field] ?? 0;
-    const { error: updateError } = await admin
-      .from("profiles")
-      .update({
-        [field]: currentValue + amount,
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", userId);
-
-    if (updateError) {
-      throw updateError;
+    if (rpcError) {
+      throw rpcError;
     }
   }
 

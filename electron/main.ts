@@ -372,6 +372,21 @@ function parseExternalUrl(url: unknown): string {
   return parsedUrl.toString();
 }
 
+function pathsEqualNormalized(left: string, right: string): boolean {
+  const a = path.normalize(left);
+  const b = path.normalize(right);
+
+  if (process.platform === "win32") {
+    return a.toLowerCase() === b.toLowerCase();
+  }
+
+  return a === b;
+}
+
+function isAllowedVaultFolderPath(resolvedPath: string, vaults: VaultDefinition[]): boolean {
+  return vaults.some((vault) => pathsEqualNormalized(path.resolve(vault.path), resolvedPath));
+}
+
 function getFunctionsBaseUrl(): string {
   const supabaseUrl = process.env.VITE_SUPABASE_URL?.trim();
 
@@ -755,7 +770,13 @@ function registerAppIpc(): void {
   });
   ipcMain.handle(ipcChannels.shellOpenPath, async (_event, targetPath: unknown) => {
     const parsedPath = z.string().min(1).parse(targetPath);
-    await shell.openPath(parsedPath);
+    const resolved = path.resolve(parsedPath);
+
+    if (!isAllowedVaultFolderPath(resolved, getSettings().vaults)) {
+      throw new Error("Only vault folders configured in Trellis can be opened from here.");
+    }
+
+    await shell.openPath(resolved);
   });
   ipcMain.handle(ipcChannels.shellOpenExternal, async (_event, url: unknown) => {
     const parsedUrl = parseExternalUrl(url);

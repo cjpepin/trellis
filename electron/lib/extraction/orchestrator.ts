@@ -46,6 +46,7 @@ import {
   updateExtractionDebugRun
 } from "./debug";
 import type { ExtractionResponse, ExtractionUpdate } from "@shared/extraction/contracts";
+import { isTrustedFunctionsBaseUrl } from "../trustedFunctionsUrl";
 
 interface CreateExtractionOrchestratorOptions {
   getSettings: () => AppSettings;
@@ -91,6 +92,10 @@ function resolveJobCloudConfig(
   const accessToken = queuedConfig?.accessToken ?? getAuthSession()?.accessToken ?? undefined;
 
   if (!baseUrl || !publishableKey) {
+    return undefined;
+  }
+
+  if (!isTrustedFunctionsBaseUrl(baseUrl)) {
     return undefined;
   }
 

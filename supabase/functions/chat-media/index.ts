@@ -1,5 +1,6 @@
 import { assertEntitlement, requireUser } from "../_shared/auth.ts";
 import { corsHeaders } from "../_shared/http.ts";
+import { assertMaxJsonBodyBytes } from "../_shared/requestLimits.ts";
 
 function readEnvironmentValue(name: string): string | undefined {
   const deno = (globalThis as { Deno?: { env?: { get: (key: string) => string | undefined } } })
@@ -67,6 +68,7 @@ Deno.serve(async (request) => {
   }
 
   try {
+    assertMaxJsonBodyBytes(request);
     const { profile } = await requireUser(request);
     assertEntitlement(profile, "message");
 

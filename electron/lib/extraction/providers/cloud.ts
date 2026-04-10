@@ -4,6 +4,7 @@ import type {
   ExtractionProviderStatus,
   ExtractionRunResult
 } from "../../../ipc/types";
+import { isTrustedFunctionsBaseUrl } from "../../trustedFunctionsUrl";
 import { ExtractionValidationError } from "../debug";
 import type { ExtractionProvider, ProviderExtractInput } from "./types";
 
@@ -20,6 +21,10 @@ function ensureCloudConfig(cloud: ExtractionCloudConfig | undefined): Extraction
 
   if (!cloud.accessToken) {
     throw new Error("Sign in to process notes in the cloud.");
+  }
+
+  if (!isTrustedFunctionsBaseUrl(cloud.functionsBaseUrl)) {
+    throw new Error("Cloud note processing endpoint does not match this app build.");
   }
 
   return cloud;
@@ -125,6 +130,15 @@ export const cloudExtractionProvider: ExtractionProvider = {
         label: "Cloud",
         available: false,
         reason: "Sign in to process notes in the cloud."
+      };
+    }
+
+    if (!isTrustedFunctionsBaseUrl(input.cloud.functionsBaseUrl)) {
+      return {
+        id: "cloud",
+        label: "Cloud",
+        available: false,
+        reason: "Cloud note processing endpoint does not match this app build."
       };
     }
 

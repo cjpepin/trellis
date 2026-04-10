@@ -1,7 +1,33 @@
 import path from "node:path";
 import { defineConfig, loadEnv } from "vite";
+import type { Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import electron from "vite-plugin-electron/simple";
+
+function contentSecurityPolicyMeta(mode: string): Plugin {
+  return {
+    name: "trellis-csp-meta",
+    transformIndexHtml(html) {
+      if (mode !== "production") {
+        return html;
+      }
+
+      const csp = [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob: https:",
+        "font-src 'self' data:",
+        "connect-src 'self' https: wss: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*"
+      ].join("; ");
+
+      return html.replace(
+        "<head>",
+        `<head>\n    <meta http-equiv="Content-Security-Policy" content="${csp}" />`
+      );
+    }
+  };
+}
 
 const projectAliases = {
   "@": path.resolve(__dirname, "src"),
@@ -30,6 +56,7 @@ function electronMainEnvDefine(mode: string): Record<string, string> {
 
 export default defineConfig(({ mode }) => ({
   plugins: [
+    contentSecurityPolicyMeta(mode),
     react(),
     electron({
       main: {
