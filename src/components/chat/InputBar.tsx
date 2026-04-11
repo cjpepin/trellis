@@ -3,6 +3,7 @@ import {
   ArrowUpRight,
   Check,
   ChevronsUpDown,
+  FileText,
   ImagePlus,
   Link2,
   LoaderCircle,
@@ -10,8 +11,7 @@ import {
   Mic,
   Paperclip,
   RotateCcw,
-  Wand2,
-  X
+  Wand2
 } from "lucide-react";
 import type {
   ChatModel,
@@ -29,6 +29,11 @@ import {
   getSlashCommandMatch,
   insertNoteReference
 } from "@/lib/noteReferences";
+import {
+  buildTemplateCreationPrompt,
+  buildTemplateUsePrompt,
+  isTemplateNote
+} from "@/lib/chatTemplates";
 import { cn } from "@/lib/utils";
 import { ComposerPendingPreviews } from "@/components/chat/ComposerPendingPreviews";
 
@@ -40,6 +45,7 @@ function ComposerIconButton({
   onClick,
   active = false,
   buttonClassName,
+  dataTestId,
   children
 }: {
   title: string;
@@ -48,6 +54,7 @@ function ComposerIconButton({
   onClick: () => void;
   active?: boolean;
   buttonClassName?: string;
+  dataTestId?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -60,6 +67,7 @@ function ComposerIconButton({
         title={disabled ? undefined : title}
         disabled={disabled}
         aria-label={ariaLabel}
+        data-testid={dataTestId}
         className={cn(
           "rounded-full border border-transparent p-1.5 transition hover:border-trellis-border hover:bg-trellis-surface disabled:opacity-40",
           buttonClassName,
@@ -96,6 +104,7 @@ interface Props {
   onAttachImage: () => void;
   onPasteImage: (input: { base64: string; mimeType: string }) => void;
   onAppendDraft: (text: string) => void;
+  onCreateTemplate: (input: { title: string; content: string }) => Promise<boolean>;
   onGenerateImageWithPrompt: (prompt: string) => Promise<boolean>;
   privacyLocal: boolean;
   cloudMediaAllowed: boolean;
@@ -129,6 +138,7 @@ export function InputBar({
   onAttachImage,
   onPasteImage,
   onAppendDraft,
+  onCreateTemplate,
   onGenerateImageWithPrompt,
   privacyLocal,
   cloudMediaAllowed,
@@ -150,6 +160,11 @@ export function InputBar({
   const [linkEntryOpen, setLinkEntryOpen] = useState(false);
   const [linkUrlDraft, setLinkUrlDraft] = useState("");
   const [clipUrlBusy, setClipUrlBusy] = useState(false);
+  const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [templateTitleDraft, setTemplateTitleDraft] = useState("");
+  const [templateBodyDraft, setTemplateBodyDraft] = useState("");
+  const [templateCreateBusy, setTemplateCreateBusy] = useState(false);
+  const [templateAiDraft, setTemplateAiDraft] = useState("");
   const [imageGenOpen, setImageGenOpen] = useState(false);
   const [imageGenDraft, setImageGenDraft] = useState("");
   const [imageGenBusy, setImageGenBusy] = useState(false);
@@ -190,6 +205,8 @@ export function InputBar({
 
     return filteredNotes.slice(0, 6);
   }, [notes, slashCommand]);
+  const templateNotes = useMemo(() => notes.filter(isTemplateNote), [notes]);
+  const activeInputTool = linkEntryOpen || templateMenuOpen || imageGenOpen;
 
   useEffect(() => {
     setActiveCommandIndex(0);
@@ -217,6 +234,7 @@ export function InputBar({
   useEffect(() => {
     if (disabled) {
       setModelMenuOpen(false);
+      setTemplateMenuOpen(false);
     }
   }, [disabled]);
 
@@ -427,6 +445,40 @@ export function InputBar({
     }
   }
 
+  async function submitTemplateCreate(): Promise<void> {
+    const title = templateTitleDraft.trim();
+    const content = templateBodyDraft.trim();
+
+    if (!title || templateCreateBusy) {
+      return;
+    }
+
+    setTemplateCreateBusy(true);
+
+    try {
+      const ok = await onCreateTemplate({ title, content });
+
+      if (ok) {
+        setTemplateTitleDraft("");
+        setTemplateBodyDraft("");
+      }
+    } finally {
+      setTemplateCreateBusy(false);
+    }
+  }
+
+  function submitTemplateAiDraft(): void {
+    const description = templateAiDraft.trim();
+
+    if (!description) {
+      return;
+    }
+
+    onAppendDraft(buildTemplateCreationPrompt(description));
+    setTemplateAiDraft("");
+    setTemplateMenuOpen(false);
+  }
+
   return (
     <div className="trellis-chat-composer w-full px-3 pb-2.5 pt-2">
       <div className="flex items-start gap-2.5">
@@ -437,52 +489,276 @@ export function InputBar({
             onRemoveAttachment={onRemoveAttachment}
             onRemoveImage={onRemoveImage}
           />
-          <textarea
-            ref={textareaRef}
-            value={value}
-            disabled={disabled}
-            placeholder="What are you thinking about?"
-            className="min-h-[42px] w-full resize-none bg-transparent py-1 text-left text-[15px] leading-6 text-trellis-text outline-none placeholder:text-trellis-faint"
-            onPaste={(event) => {
-              void handlePasteClipboardImages(event);
-            }}
-            onChange={(event) => {
-              onChange(event.target.value);
-              setCursor(event.target.selectionStart ?? event.target.value.length);
-            }}
-            onClick={syncCursor}
-            onKeyUp={syncCursor}
-            onSelect={syncCursor}
-            onKeyDown={(event) => {
-              if (slashCommand) {
-                if (event.key === "ArrowDown" && slashSuggestions.length > 0) {
-                  event.preventDefault();
-                  setActiveCommandIndex((current) => (current + 1) % slashSuggestions.length);
-                  return;
+          {linkEntryOpen ? (
+            <div className="flex min-h-[42px] flex-col gap-2 py-1">
+              <label
+                className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint"
+                htmlFor="chat-clip-url"
+              >
+                Clip a public web page
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  id="chat-clip-url"
+                  type="url"
+                  autoComplete="url"
+                  className="trellis-input min-h-0 min-w-[min(100%,220px)] flex-1 py-2 text-sm"
+                  placeholder="https://..."
+                  value={linkUrlDraft}
+                  disabled={disabled || clipUrlBusy}
+                  onChange={(event) => {
+                    setLinkUrlDraft(event.target.value);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void submitClipUrl();
+                    }
+                    if (event.key === "Escape") {
+                      setLinkEntryOpen(false);
+                      setLinkUrlDraft("");
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={disabled || clipUrlBusy || linkUrlDraft.trim().length === 0}
+                  className="rounded-full border border-trellis-border px-3 py-2 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:opacity-40"
+                  onClick={() => {
+                    void submitClipUrl();
+                  }}
+                >
+                  {clipUrlBusy ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin text-trellis-accent" aria-hidden />
+                  ) : (
+                    "Clip page"
+                  )}
+                </button>
+                <button
+                  type="button"
+                  disabled={clipUrlBusy}
+                  className="rounded-full border border-transparent px-2 py-2 text-xs text-trellis-muted transition hover:text-trellis-text"
+                  onClick={() => {
+                    setLinkEntryOpen(false);
+                    setLinkUrlDraft("");
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          ) : templateMenuOpen ? (
+            <div className="flex min-h-[42px] flex-col gap-3 py-1">
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint">
+                    Templates
+                  </p>
+                  <button
+                    type="button"
+                    className="rounded-full border border-transparent px-2 py-1 text-xs text-trellis-muted transition hover:border-trellis-border hover:text-trellis-text"
+                    onClick={() => {
+                      setTemplateMenuOpen(false);
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+                {templateNotes.length > 0 ? (
+                  <div className="mt-2 grid gap-1">
+                    {templateNotes.slice(0, 6).map((template) => (
+                      <button
+                        key={template.slug}
+                        type="button"
+                        className="w-full rounded-field px-3 py-2 text-left transition hover:bg-trellis-surface"
+                        onClick={() => {
+                          onAppendDraft(buildTemplateUsePrompt(template.title));
+                          setTemplateMenuOpen(false);
+                        }}
+                      >
+                        <p className="text-sm text-trellis-text">{template.title}</p>
+                        <p className="mt-1 max-h-10 overflow-hidden text-xs leading-5 text-trellis-muted">
+                          {template.excerpt || "Use this structure in chat."}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-trellis-muted">
+                    No saved templates yet. Create one here, or ask Trellis to make one.
+                  </p>
+                )}
+              </div>
+              <div className="grid gap-2 border-t border-trellis-border pt-3 md:grid-cols-2">
+                <div className="flex flex-col gap-2">
+                  <label
+                    className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint"
+                    htmlFor="chat-template-title"
+                  >
+                    Save a template
+                  </label>
+                  <input
+                    id="chat-template-title"
+                    className="trellis-input min-h-0 py-2 text-sm"
+                    placeholder="Daily reflection template"
+                    value={templateTitleDraft}
+                    disabled={disabled || templateCreateBusy}
+                    onChange={(event) => {
+                      setTemplateTitleDraft(event.target.value);
+                    }}
+                  />
+                  <textarea
+                    className="trellis-input min-h-[92px] resize-y py-2 text-sm"
+                    placeholder={"## Wins\n\n## Friction\n\n## Tomorrow"}
+                    value={templateBodyDraft}
+                    disabled={disabled || templateCreateBusy}
+                    onChange={(event) => {
+                      setTemplateBodyDraft(event.target.value);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={disabled || templateCreateBusy || templateTitleDraft.trim().length === 0}
+                    className="w-fit rounded-full border border-trellis-border px-3 py-2 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:opacity-40"
+                    onClick={() => {
+                      void submitTemplateCreate();
+                    }}
+                  >
+                    {templateCreateBusy ? (
+                      <span className="inline-flex items-center gap-2">
+                        <LoaderCircle className="h-4 w-4 animate-spin text-trellis-accent" aria-hidden />
+                        Saving...
+                      </span>
+                    ) : (
+                      "Save template"
+                    )}
+                  </button>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label
+                    className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint"
+                    htmlFor="chat-template-ai"
+                  >
+                    Ask Trellis
+                  </label>
+                  <textarea
+                    id="chat-template-ai"
+                    className="trellis-input min-h-[92px] resize-y py-2 text-sm"
+                    placeholder="a daily reflection with mood, energy, gratitude, and tomorrow"
+                    value={templateAiDraft}
+                    disabled={disabled}
+                    onChange={(event) => {
+                      setTemplateAiDraft(event.target.value);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={disabled || templateAiDraft.trim().length === 0}
+                    className="w-fit rounded-full border border-trellis-border px-3 py-2 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:opacity-40"
+                    onClick={submitTemplateAiDraft}
+                  >
+                    Draft with chat
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : imageGenOpen ? (
+            <div className="flex min-h-[42px] flex-col gap-2 py-1">
+              <label
+                className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint"
+                htmlFor="chat-image-prompt"
+              >
+                Describe the image to generate
+              </label>
+              <textarea
+                id="chat-image-prompt"
+                className="trellis-input min-h-[80px] resize-y py-2 text-sm"
+                placeholder="A calm workspace with warm light..."
+                value={imageGenDraft}
+                disabled={disabled || imageGenBusy}
+                onChange={(event) => {
+                  setImageGenDraft(event.target.value);
+                }}
+              />
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={disabled || imageGenBusy || imageGenDraft.trim().length === 0}
+                  className="rounded-full border border-trellis-border px-3 py-2 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:opacity-40"
+                  onClick={() => {
+                    void submitImageGen();
+                  }}
+                >
+                  {imageGenBusy ? (
+                    <span className="inline-flex items-center gap-2">
+                      <LoaderCircle className="h-4 w-4 animate-spin text-trellis-accent" aria-hidden />
+                      Generating...
+                    </span>
+                  ) : (
+                    "Generate"
+                  )}
+                </button>
+                <button
+                  type="button"
+                  disabled={imageGenBusy}
+                  className="rounded-full border border-transparent px-2 py-2 text-xs text-trellis-muted transition hover:text-trellis-text"
+                  onClick={() => {
+                    setImageGenOpen(false);
+                    setImageGenDraft("");
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          ) : (
+            <textarea
+              ref={textareaRef}
+              value={value}
+              disabled={disabled}
+              placeholder="What are you thinking about?"
+              className="min-h-[42px] w-full resize-none bg-transparent py-1 text-left text-[15px] leading-6 text-trellis-text outline-none placeholder:text-trellis-faint"
+              onPaste={(event) => {
+                void handlePasteClipboardImages(event);
+              }}
+              onChange={(event) => {
+                onChange(event.target.value);
+                setCursor(event.target.selectionStart ?? event.target.value.length);
+              }}
+              onClick={syncCursor}
+              onKeyUp={syncCursor}
+              onSelect={syncCursor}
+              onKeyDown={(event) => {
+                if (slashCommand) {
+                  if (event.key === "ArrowDown" && slashSuggestions.length > 0) {
+                    event.preventDefault();
+                    setActiveCommandIndex((current) => (current + 1) % slashSuggestions.length);
+                    return;
+                  }
+
+                  if (event.key === "ArrowUp" && slashSuggestions.length > 0) {
+                    event.preventDefault();
+                    setActiveCommandIndex(
+                      (current) => (current - 1 + slashSuggestions.length) % slashSuggestions.length
+                    );
+                    return;
+                  }
+
+                  if ((event.key === "Enter" || event.key === "Tab") && slashSuggestions.length > 0) {
+                    event.preventDefault();
+                    selectSlashSuggestion(activeCommandIndex);
+                    return;
+                  }
                 }
 
-                if (event.key === "ArrowUp" && slashSuggestions.length > 0) {
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault();
-                  setActiveCommandIndex(
-                    (current) => (current - 1 + slashSuggestions.length) % slashSuggestions.length
-                  );
-                  return;
+                  void handleSubmit();
                 }
-
-                if ((event.key === "Enter" || event.key === "Tab") && slashSuggestions.length > 0) {
-                  event.preventDefault();
-                  selectSlashSuggestion(activeCommandIndex);
-                  return;
-                }
-              }
-
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                void handleSubmit();
-              }
-            }}
-          />
-          {slashCommand && (
+              }}
+            />
+          )}
+          {!activeInputTool && slashCommand && (
             <div className="trellis-elevated absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden">
               <div className="border-b border-trellis-border px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-trellis-faint">
                 Link a note
@@ -519,7 +795,7 @@ export function InputBar({
             </div>
           )}
         </div>
-        {(() => {
+        {!activeInputTool && (() => {
           const sendHardDisabled =
             disabled || !canSend || isStreaming || !selectedModelAccess.allowed;
           const sendTitle = sendHardDisabled
@@ -556,111 +832,6 @@ export function InputBar({
           );
         })()}
       </div>
-      {linkEntryOpen && (
-        <div className="mt-3 flex flex-col gap-2 border-t border-trellis-border pt-3">
-          <label
-            className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint"
-            htmlFor="chat-clip-url"
-          >
-            Clip a public web page
-          </label>
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              id="chat-clip-url"
-              type="url"
-              autoComplete="url"
-              className="trellis-input min-h-0 min-w-[min(100%,220px)] flex-1 py-2 text-sm"
-              placeholder="https://…"
-              value={linkUrlDraft}
-              disabled={disabled || clipUrlBusy}
-              onChange={(event) => {
-                setLinkUrlDraft(event.target.value);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void submitClipUrl();
-                }
-              }}
-            />
-            <button
-              type="button"
-              disabled={disabled || clipUrlBusy}
-              className="rounded-full border border-trellis-border px-3 py-2 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:opacity-40"
-              onClick={() => {
-                void submitClipUrl();
-              }}
-            >
-              {clipUrlBusy ? (
-                <LoaderCircle className="h-4 w-4 animate-spin text-trellis-accent" aria-hidden />
-              ) : (
-                "Clip page"
-              )}
-            </button>
-            <button
-              type="button"
-              disabled={clipUrlBusy}
-              className="rounded-full border border-transparent px-2 py-2 text-xs text-trellis-muted transition hover:text-trellis-text"
-              onClick={() => {
-                setLinkEntryOpen(false);
-                setLinkUrlDraft("");
-              }}
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-      {imageGenOpen && (
-        <div className="mt-3 flex flex-col gap-2 border-t border-trellis-border pt-3">
-          <label
-            className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint"
-            htmlFor="chat-image-prompt"
-          >
-            Describe the image to generate
-          </label>
-          <textarea
-            id="chat-image-prompt"
-            className="trellis-input min-h-[80px] resize-y py-2 text-sm"
-            placeholder="A calm workspace with warm light…"
-            value={imageGenDraft}
-            disabled={disabled || imageGenBusy}
-            onChange={(event) => {
-              setImageGenDraft(event.target.value);
-            }}
-          />
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={disabled || imageGenBusy}
-              className="rounded-full border border-trellis-border px-3 py-2 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:opacity-40"
-              onClick={() => {
-                void submitImageGen();
-              }}
-            >
-              {imageGenBusy ? (
-                <span className="inline-flex items-center gap-2">
-                  <LoaderCircle className="h-4 w-4 animate-spin text-trellis-accent" aria-hidden />
-                  Generating…
-                </span>
-              ) : (
-                "Generate"
-              )}
-            </button>
-            <button
-              type="button"
-              disabled={imageGenBusy}
-              className="rounded-full border border-transparent px-2 py-2 text-xs text-trellis-muted transition hover:text-trellis-text"
-              onClick={() => {
-                setImageGenOpen(false);
-                setImageGenDraft("");
-              }}
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="flex shrink-0 items-center gap-1">
@@ -682,11 +853,27 @@ export function InputBar({
               active={linkEntryOpen}
               onClick={() => {
                 setImageGenOpen(false);
+                setTemplateMenuOpen(false);
                 setLinkEntryOpen((current) => !current);
               }}
               buttonClassName="text-trellis-muted hover:text-trellis-text"
             >
               <Link2 className="h-4 w-4" aria-hidden />
+            </ComposerIconButton>
+            <ComposerIconButton
+              title="Use or create a template"
+              ariaLabel="Use or create template"
+              disabled={disabled || isStreaming}
+              active={templateMenuOpen}
+              onClick={() => {
+                setLinkEntryOpen(false);
+                setImageGenOpen(false);
+                setTemplateMenuOpen((current) => !current);
+              }}
+              buttonClassName="text-trellis-muted hover:text-trellis-text"
+              dataTestId="chat-template-menu"
+            >
+              <FileText className="h-4 w-4" aria-hidden />
             </ComposerIconButton>
             <ComposerIconButton
               title={
@@ -767,6 +954,7 @@ export function InputBar({
               active={imageGenOpen}
               onClick={() => {
                 setLinkEntryOpen(false);
+                setTemplateMenuOpen(false);
                 setImageGenOpen((current) => !current);
               }}
               buttonClassName="text-trellis-muted hover:text-trellis-text"
@@ -775,7 +963,7 @@ export function InputBar({
             </ComposerIconButton>
           </div>
           <p className="min-w-0 text-xs text-trellis-muted">
-            Type <code>/</code> for notes. Attach files, links, or images for context. Enter sends ·
+            Type <code>/</code> for notes. Templates, files, links, and images can guide the chat. Enter sends ·
             Shift+Enter newline.
           </p>
           {onCancel && (

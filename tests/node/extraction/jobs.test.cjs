@@ -3,6 +3,7 @@ const test = require("node:test");
 const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
 const {
+  getDirectNoteActionExcludedMessageIds,
   planSessionExtraction,
   resolveExtractionExecutionStrategy
 } = require(fromRepoRoot("electron", "lib", "extraction", "jobs.ts"));
@@ -25,7 +26,7 @@ function createCompletedJob(overrides = {}) {
     vaultId: "vault-1",
     status: "completed",
     trigger: "idle",
-    mode: "auto",
+    mode: "local",
     provider: "embedded",
     model: "qwen3:4b",
     transcriptStartIndex: 0,
@@ -107,23 +108,80 @@ test("planSessionExtraction reprocesses the full transcript when messages were r
   assert.equal(plan.transcriptEndIndex, 4);
 });
 
-test("resolveExtractionExecutionStrategy prefers local first in auto mode", () => {
-  const strategy = resolveExtractionExecutionStrategy("auto", [
-    { id: "cloud", label: "Cloud", available: true },
+test("planSessionExtraction excludes messages covered by direct note actions", () => {
+  const draft = createMessage("11111111-1111-4111-8111-111111111111", "assistant", "Template draft");
+  const saveRequest = createMessage(
+    "22222222-2222-4222-8222-222222222222",
+    "user",
+    "Save it as a reusable template"
+  );
+  const proposal = {
+    ...createMessage("33333333-3333-4333-8333-333333333333", "assistant", "Review this diff."),
+    noteActions: [
+      {
+        id: "44444444-4444-4444-8444-444444444444",
+        kind: "create_template",
+        status: "pending",
+        targetTitle: "Daily Reflection Template",
+        targetSlug: "daily-reflection-template",
+        targetFolderPath: "templates",
+        beforeMarkdown: "",
+        afterMarkdown: "## Mood\n\n- How did you feel?",
+        frontmatter: {
+          tags: ["template"],
+          type: "concept",
+          sources: 0
+        },
+        rationale: "Save the template we drafted.",
+        sourceMessageIds: [draft.id, saveRequest.id],
+        createdAt: Date.now()
+      }
+    ]
+  };
+  const followUp = createMessage(
+    "55555555-5555-4555-8555-555555555555",
+    "user",
+    "Now let's talk about onboarding."
+  );
+  const reply = createMessage(
+    "66666666-6666-4666-8666-666666666666",
+    "assistant",
+    "Onboarding should stay calm."
+  );
+
+  const excluded = getDirectNoteActionExcludedMessageIds([
+    draft,
+    saveRequest,
+    proposal,
+    followUp,
+    reply
+  ]);
+  assert.equal(excluded.has(draft.id), true);
+  assert.equal(excluded.has(saveRequest.id), true);
+  assert.equal(excluded.has(proposal.id), true);
+  assert.equal(excluded.has(followUp.id), false);
+
+  const plan = planSessionExtraction([draft, saveRequest, proposal, followUp, reply], null);
+  assert.ok(plan);
+  assert.equal(plan.transcript.length, 2);
+  assert.match(plan.retrievalQuery, /onboarding/);
+  assert.doesNotMatch(plan.retrievalQuery, /Template draft/);
+});
+
+test("resolveExtractionExecutionStrategy runs when embedded is available", () => {
+  const strategy = resolveExtractionExecutionStrategy("local", [
     { id: "embedded", label: "On-device", available: true }
   ]);
 
   assert.deepEqual(strategy, {
     action: "run",
     initialMode: "local",
-    fallbackMode: "cloud",
     localRetryCount: 1
   });
 });
 
 test("resolveExtractionExecutionStrategy skips unavailable local-only runs", () => {
   const strategy = resolveExtractionExecutionStrategy("local", [
-    { id: "cloud", label: "Cloud", available: true },
     {
       id: "embedded",
       label: "On-device",

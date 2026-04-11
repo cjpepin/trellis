@@ -22,8 +22,5 @@ verify_jwt = false
 [functions.checkout]
 verify_jwt = false
 
-[functions.extract]
-verify_jwt = false
-
 [functions.stripe-webhook]
 verify_jwt = false

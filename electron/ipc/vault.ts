@@ -24,6 +24,8 @@ import type {
   RenameFolderInput,
   SaveNoteInput,
   SaveNoteResult,
+  VaultImportNoteImageResult,
+  VaultReadNoteAssetDataUrlInput,
   VaultSnapshot,
   WikiNote
 } from "./types";
@@ -128,6 +130,27 @@ const appendChatImageSchema = z.object({
   alt: z.string().max(200).optional()
 });
 
+const importNoteImageSchema = z.object({
+  vaultId: z.string().min(1).optional(),
+  fileId: z.string().uuid(),
+  noteRelativePath: z.string().min(1),
+  alt: z.string().max(200).optional()
+});
+
+const readNoteAssetDataUrlSchema = z.object({
+  vaultId: z.string().min(1).optional(),
+  noteRelativePath: z.string().min(1),
+  assetPath: z.string().min(1).max(1000)
+});
+
+const imageMimeByExtension: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif"
+};
+
 function extensionForMime(mimeType: string): string {
   const lower = mimeType.toLowerCase();
 
@@ -148,6 +171,20 @@ function extensionForMime(mimeType: string): string {
   }
 
   return ".png";
+}
+
+function assertImageMime(mimeType: string): void {
+  const lower = mimeType.toLowerCase();
+
+  if (
+    !lower.includes("png") &&
+    !lower.includes("jpeg") &&
+    !lower.includes("jpg") &&
+    !lower.includes("webp") &&
+    !lower.includes("gif")
+  ) {
+    throw new Error("Only PNG, JPEG, WebP, and GIF images can be attached to notes.");
+  }
 }
 
 function encodeMarkdownPathSegments(rel: string): string {
@@ -180,6 +217,140 @@ function relativeMarkdownPathToFile(fromDir: string, toFile: string): string {
   return encoded;
 }
 
+function decodeMarkdownPathSegments(rel: string): string {
+  return rel
+    .split("/")
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment);
+      } catch {
+        return segment;
+      }
+    })
+    .join("/");
+}
+
+function stripMarkdownPathSuffixes(src: string): string {
+  return src.split("#")[0]?.split("?")[0] ?? "";
+}
+
+function isRemoteOrInlineAsset(src: string): boolean {
+  const lower = src.trim().toLowerCase();
+  return (
+    lower.startsWith("http://") ||
+    lower.startsWith("https://") ||
+    lower.startsWith("data:") ||
+    lower.startsWith("blob:") ||
+    lower.startsWith("file:")
+  );
+}
+
+function resolveNoteAssetPath(
+  vaultPath: string,
+  input: VaultReadNoteAssetDataUrlInput
+): string | null {
+  const src = stripMarkdownPathSuffixes(input.assetPath.trim());
+
+  if (!src || isRemoteOrInlineAsset(src) || path.isAbsolute(src)) {
+    return null;
+  }
+
+  const wikiRoot = path.join(vaultPath, "wiki");
+  const notePath = ensureInsideVault(vaultPath, path.join(wikiRoot, input.noteRelativePath));
+  const assetPath = ensureInsideVault(
+    vaultPath,
+    path.resolve(path.dirname(notePath), decodeMarkdownPathSegments(src))
+  );
+  const relativeToWiki = path.relative(wikiRoot, assetPath);
+
+  if (relativeToWiki.startsWith("..") || path.isAbsolute(relativeToWiki)) {
+    return null;
+  }
+
+  return assetPath;
+}
+
+async function importNoteImageForVault(
+  vaultPath: string,
+  input: { fileId: string; noteRelativePath: string; alt?: string }
+): Promise<VaultImportNoteImageResult> {
+  const got = await readMediaCacheBytes(input.fileId);
+
+  if (!got) {
+    throw new Error("That image is no longer in local cache. Attach it again.");
+  }
+
+  return importNoteImageBytesForVault(vaultPath, {
+    bytes: got.bytes,
+    mimeType: got.mimeType,
+    noteRelativePath: input.noteRelativePath,
+    alt: input.alt
+  });
+}
+
+async function importNoteImageBytesForVault(
+  vaultPath: string,
+  input: { bytes: Uint8Array; mimeType: string; noteRelativePath: string; alt?: string }
+): Promise<VaultImportNoteImageResult> {
+  assertImageMime(input.mimeType);
+  await ensureVaultLayout(vaultPath);
+
+  const ext = extensionForMime(input.mimeType);
+  const fileName = `note-${Date.now()}-${randomUUID().slice(0, 8)}${ext}`;
+  const assetsDir = ensureInsideVault(
+    vaultPath,
+    path.join(vaultPath, "wiki", ".trellis-note-assets")
+  );
+  await ensureDirectory(assetsDir);
+
+  const imageAbsolutePath = ensureInsideVault(vaultPath, path.join(assetsDir, fileName));
+  await fs.writeFile(imageAbsolutePath, input.bytes);
+
+  const wikiRoot = path.join(vaultPath, "wiki");
+  const noteAbsolutePath = ensureInsideVault(vaultPath, path.join(wikiRoot, input.noteRelativePath));
+  const markdownPath = relativeMarkdownPathToFile(path.dirname(noteAbsolutePath), imageAbsolutePath);
+
+  if (!markdownPath) {
+    throw new Error("Could not compute a link path for that image.");
+  }
+
+  return {
+    markdownPath,
+    alt: input.alt?.trim() || path.basename(fileName, ext)
+  };
+}
+
+async function readNoteAssetDataUrlForVault(
+  vaultPath: string,
+  input: VaultReadNoteAssetDataUrlInput
+): Promise<string | null> {
+  let assetPath: string | null;
+
+  try {
+    assetPath = resolveNoteAssetPath(vaultPath, input);
+  } catch {
+    return null;
+  }
+
+  if (!assetPath) {
+    return null;
+  }
+
+  const ext = path.extname(assetPath).toLowerCase();
+  const mimeType = imageMimeByExtension[ext];
+
+  if (!mimeType) {
+    return null;
+  }
+
+  try {
+    const bytes = await fs.readFile(assetPath);
+    return `data:${mimeType};base64,${bytes.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
 async function appendChatImageToNoteForVault(
   vaultPath: string,
   vaultId: string,
@@ -191,6 +362,7 @@ async function appendChatImageToNoteForVault(
     throw new Error("That image is no longer in local cache. Generate it again.");
   }
 
+  assertImageMime(got.mimeType);
   const ext = extensionForMime(got.mimeType);
   const fileName = `chat-${Date.now()}-${randomUUID().slice(0, 8)}${ext}`;
   await ensureVaultLayout(vaultPath);
@@ -226,7 +398,8 @@ async function appendChatImageToNoteForVault(
     frontmatter: {
       tags: note.tags,
       type: note.type,
-      sources: note.sources
+      sources: note.sources,
+      url: note.url
     }
   });
 }
@@ -465,7 +638,8 @@ async function parseNote(vaultPath: string, filePath: string): Promise<WikiNote>
     relativePath,
     content: parsed.content.trim(),
     links,
-    sources: typeof frontmatter.sources === "number" ? frontmatter.sources : 0
+    sources: typeof frontmatter.sources === "number" ? frontmatter.sources : 0,
+    url: typeof frontmatter.url === "string" ? frontmatter.url : undefined
   };
 }
 
@@ -1056,7 +1230,7 @@ async function deleteNoteFile(
   return snapshot;
 }
 
-async function createFolder(
+export async function createFolder(
   vaultPath: string,
   input: CreateFolderInput
 ): Promise<VaultSnapshot> {
@@ -1134,6 +1308,16 @@ export function registerVaultIpc(getSettings: () => AppSettings): void {
     const vault = resolveVault(getSettings(), parsed.vaultId);
     return appendChatImageToNoteForVault(vault.path, vault.id, parsed);
   });
+  ipcMain.handle(ipcChannels.vaultImportNoteImage, async (_event, input: unknown) => {
+    const parsed = importNoteImageSchema.parse(input);
+    const vault = resolveVault(getSettings(), parsed.vaultId);
+    return importNoteImageForVault(vault.path, parsed);
+  });
+  ipcMain.handle(ipcChannels.vaultReadNoteAssetDataUrl, async (_event, input: unknown) => {
+    const parsed = readNoteAssetDataUrlSchema.parse(input);
+    const vault = resolveVault(getSettings(), parsed.vaultId);
+    return readNoteAssetDataUrlForVault(vault.path, parsed);
+  });
   ipcMain.handle(ipcChannels.vaultCreateStub, async (_event, input: unknown) => {
     const parsed = createStubSchema.parse(input);
     const vault = resolveVault(getSettings(), parsed.vaultId);
@@ -1200,4 +1384,10 @@ export async function saveRawSource(
   return targetPath;
 }
 
-export { ensureVaultLayout, readAllNotes, slugifyNoteTitle };
+export {
+  ensureVaultLayout,
+  importNoteImageBytesForVault,
+  readAllNotes,
+  readNoteAssetDataUrlForVault,
+  slugifyNoteTitle
+};

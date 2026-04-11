@@ -8,16 +8,14 @@ const {
   updateExtractionDebugRun
 } = require(fromRepoRoot("electron", "lib", "extraction", "debug.ts"));
 
-test("buildRequestedProviderOrder keeps auto local-first", () => {
-  assert.deepEqual(buildRequestedProviderOrder("auto"), ["embedded", "cloud"]);
+test("buildRequestedProviderOrder is on-device only", () => {
   assert.deepEqual(buildRequestedProviderOrder("local"), ["embedded"]);
-  assert.deepEqual(buildRequestedProviderOrder("cloud"), ["cloud"]);
 });
 
 test("updateExtractionDebugRun calculates duration after a run finishes", () => {
   const run = createExtractionDebugRun({
     scope: "direct",
-    mode: "auto",
+    mode: "local",
     transcriptMessageCount: 4
   });
 

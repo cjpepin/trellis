@@ -1,6 +1,5 @@
 import type {
   AppSettings,
-  ExtractionCloudConfig,
   ExtractionJobNotification,
   ExtractionJobSnapshot,
   ExtractionMode,
@@ -34,6 +33,7 @@ import { getExtractionRuntimeStatus, resolveExtractionMode, runExtraction } from
 import {
   buildTranscriptDigest,
   buildFormattedTranscript,
+  filterDirectNoteActionMessages,
   findExplicitReferenceSlugs,
   planSessionExtraction,
   resolveExtractionExecutionStrategy
@@ -45,19 +45,38 @@ import {
   getExtractionDebugRun,
   updateExtractionDebugRun
 } from "./debug";
-import type { ExtractionResponse, ExtractionUpdate } from "@shared/extraction/contracts";
-import { isTrustedFunctionsBaseUrl } from "../trustedFunctionsUrl";
+import type {
+  ExtractionContextNote,
+  ExtractionResponse,
+  ExtractionUpdate
+} from "@shared/extraction/contracts";
+import { buildTemplateInstanceSlug, buildTemplateInstanceTitle } from "@shared/chat/templateInstance";
+import {
+  buildDeterministicTemplateFillBody,
+  trySynthesizeTemplateInstanceMarkdown
+} from "../chat/templateInstanceFill";
+import { normalizeWikiFolderPath } from "@shared/vault/folderPath";
+import { buildManualSaveFallbackResponse } from "./manualSaveFallback";
 
 interface CreateExtractionOrchestratorOptions {
   getSettings: () => AppSettings;
-  getAuthSession: () => { accessToken: string } | null;
   notifyJobUpdate: (notification: ExtractionJobNotification) => void;
 }
 
 interface ApplyExtractionResult {
   appliedUpdateCount: number;
   sessionTitle: string | null;
+  appliedNotes: Array<{ slug: string; title: string }>;
 }
+
+type ExtractionIndexItem = {
+  slug: string;
+  title: string;
+  tags: string[];
+  folderPath?: string;
+  isPlaceholder?: boolean;
+  isTemplate?: boolean;
+};
 
 const activeSessionIds = new Set<string>();
 
@@ -70,39 +89,141 @@ function isWritableUpdate(
 }
 
 function buildExtractionIndex(snapshot: Awaited<ReturnType<typeof buildSnapshot>>) {
-  return snapshot.graph.nodes.map((node) => ({
-    slug: node.slug,
-    title: node.title,
-    tags: node.tags,
-    ...(node.isPlaceholder ? { isPlaceholder: true } : {})
-  }));
+  const noteBySlug = new Map(snapshot.notes.map((note) => [note.slug, note]));
+
+  return snapshot.graph.nodes.map((node) => {
+    const note = noteBySlug.get(node.slug);
+
+    return {
+      slug: node.slug,
+      title: node.title,
+      tags: node.tags,
+      ...(node.isPlaceholder ? { isPlaceholder: true } : {}),
+      ...(node.tags.some((tag) => tag.trim().toLowerCase() === "template")
+        ? { isTemplate: true }
+        : {}),
+      ...(note?.folderPath ? { folderPath: note.folderPath } : {})
+    };
+  });
 }
 
-function resolveJobCloudConfig(
-  storedConfig: {
-    cloudFunctionsBaseUrl: string | null;
-    cloudPublishableKey: string | null;
-  } | null,
-  queuedConfig: ExtractionCloudConfig | undefined,
-  getAuthSession: () => { accessToken: string } | null
-): ExtractionCloudConfig | undefined {
-  const baseUrl = queuedConfig?.functionsBaseUrl ?? storedConfig?.cloudFunctionsBaseUrl ?? undefined;
-  const publishableKey =
-    queuedConfig?.publishableKey ?? storedConfig?.cloudPublishableKey ?? undefined;
-  const accessToken = queuedConfig?.accessToken ?? getAuthSession()?.accessToken ?? undefined;
+function redirectTemplateTargetUpdate(
+  update: ExtractionUpdate,
+  sessionId: string,
+  index: ExtractionIndexItem[]
+): ExtractionUpdate {
+  const target = index.find((note) => note.slug === update.targetSlug);
 
-  if (!baseUrl || !publishableKey) {
-    return undefined;
+  if (!target?.isTemplate) {
+    return update;
   }
 
-  if (!isTrustedFunctionsBaseUrl(baseUrl)) {
-    return undefined;
+  const now = new Date();
+
+  const templateFolder =
+    target.folderPath && target.folderPath.length > 0
+      ? normalizeWikiFolderPath(target.folderPath)
+      : undefined;
+  const folderPath =
+    update.folderPath !== undefined ? normalizeWikiFolderPath(update.folderPath) : templateFolder;
+
+  const next: ExtractionUpdate = {
+    ...update,
+    operation: "create",
+    targetSlug: buildTemplateInstanceSlug(update.targetSlug, sessionId, now),
+    targetTitle: buildTemplateInstanceTitle(update.targetTitle, now),
+    tags: update.tags.filter((tag) => tag.trim().toLowerCase() !== "template")
+  };
+
+  if (folderPath !== undefined) {
+    next.folderPath = folderPath;
   }
+
+  return next;
+}
+
+function extractionHasWritableOperation(response: ExtractionResponse): boolean {
+  return response.updates.some(
+    (update) =>
+      update.operation === "create" ||
+      update.operation === "append" ||
+      update.operation === "rewrite"
+  );
+}
+
+async function applyTemplateFillFallback(input: {
+  response: ExtractionResponse;
+  explicitSlugs: string[];
+  index: ExtractionIndexItem[];
+  relatedNotes: ExtractionContextNote[];
+  transcript: Array<{ role: "user" | "assistant"; content: string }>;
+  sessionId: string;
+}): Promise<ExtractionResponse> {
+  if (extractionHasWritableOperation(input.response)) {
+    return input.response;
+  }
+
+  const templateSlug = input.explicitSlugs.find((slug) =>
+    input.index.some((entry) => entry.slug === slug && entry.isTemplate)
+  );
+
+  if (!templateSlug) {
+    return input.response;
+  }
+
+  const templateCtx = input.relatedNotes.find((note) => note.slug === templateSlug);
+
+  if (!templateCtx) {
+    return input.response;
+  }
+
+  const templateIndex = input.index.find((entry) => entry.slug === templateSlug);
+  const templateFolder =
+    templateIndex?.folderPath && templateIndex.folderPath.length > 0
+      ? normalizeWikiFolderPath(templateIndex.folderPath)
+      : undefined;
+
+  const filledBody =
+    (await trySynthesizeTemplateInstanceMarkdown({
+      templateTitle: templateCtx.title,
+      templateContent: templateCtx.content,
+      transcript: input.transcript
+    })) ?? buildDeterministicTemplateFillBody(templateCtx, input.transcript);
+
+  const now = new Date();
+  const synthetic: ExtractionUpdate = {
+    operation: "create",
+    targetSlug: buildTemplateInstanceSlug(templateSlug, input.sessionId, now),
+    targetTitle: buildTemplateInstanceTitle(templateCtx.title, now),
+    targetType: "concept",
+    summary: "Instance drafted from chat using linked template",
+    body: filledBody,
+    tags: templateCtx.tags.filter((tag) => tag.trim().toLowerCase() !== "template"),
+    links: [templateCtx.title],
+    ...(templateFolder !== undefined ? { folderPath: templateFolder } : {}),
+    evidence: [
+      {
+        kind: "transcript",
+        ref: "template_chat_fallback",
+        summary:
+          "Extractor returned no writes; filled template instance from chat using on-device formatting when available."
+      }
+    ],
+    confidence: 0.5
+  };
+
+  const sessionTitleWords = buildTemplateInstanceTitle(templateCtx.title, now)
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 6)
+    .join(" ");
 
   return {
-    functionsBaseUrl: baseUrl,
-    publishableKey,
-    accessToken
+    updates: [...input.response.updates, synthetic],
+    sessionTitle:
+      input.response.sessionTitle.trim().length > 0
+        ? input.response.sessionTitle
+        : sessionTitleWords || "Template chat"
   };
 }
 
@@ -110,13 +231,15 @@ async function applyExtractionResponseLocally(
   vault: VaultDefinition,
   response: ExtractionResponse,
   sessionId: string,
-  index: Array<{ slug: string; title: string; tags: string[]; isPlaceholder?: boolean }>
+  index: ExtractionIndexItem[]
 ): Promise<ApplyExtractionResult> {
   const appliedUpdates = response.updates.filter(isWritableUpdate);
   const appliedOps: Array<{ file: string; action: "create" | "append" | "rewrite" }> = [];
+  const appliedNotes: Array<{ slug: string; title: string }> = [];
   let appliedUpdateCount = 0;
 
-  for (const update of appliedUpdates) {
+  for (const rawUpdate of appliedUpdates) {
+    const update = redirectTemplateTargetUpdate(rawUpdate, sessionId, index);
     let existingNote: WikiNote | null = null;
 
     try {
@@ -140,6 +263,7 @@ async function applyExtractionResponseLocally(
       slug: preparedWrite.slug,
       title: preparedWrite.title,
       content: preparedWrite.content,
+      folderPath: preparedWrite.folderPath,
       frontmatter: {
         tags: preparedWrite.tags,
         type: preparedWrite.type,
@@ -149,6 +273,10 @@ async function applyExtractionResponseLocally(
     });
 
     appliedUpdateCount += 1;
+    appliedNotes.push({
+      slug: preparedWrite.slug,
+      title: preparedWrite.title
+    });
     appliedOps.push({
       file: `${preparedWrite.slug}.md`,
       action: preparedWrite.operation
@@ -177,30 +305,28 @@ async function applyExtractionResponseLocally(
 
   return {
     appliedUpdateCount,
-    sessionTitle
+    sessionTitle,
+    appliedNotes
   };
 }
 
 export function createExtractionOrchestrator(options: CreateExtractionOrchestratorOptions) {
-  const queuedCloudConfigByJobId = new Map<string, ExtractionCloudConfig>();
-
   async function runWithStrategy(
     job: ExtractionJobSnapshot,
     input: {
       transcript: Array<{ role: "user" | "assistant"; content: string }>;
       index: Array<{ slug: string; title: string; tags: string[]; isPlaceholder?: boolean }>;
       relatedNotes: Awaited<ReturnType<typeof searchRelevantNotes>>;
-      cloud?: ExtractionCloudConfig;
       preferredLocalModelId?: string;
       debugRunId?: string;
     }
   ) {
+    const mode = resolveExtractionMode(job.mode);
     const runtimeStatus = await getExtractionRuntimeStatus({
-      mode: job.mode,
-      cloud: input.cloud
+      mode
     });
-    const strategy = resolveExtractionExecutionStrategy(job.mode, runtimeStatus.providers);
-    const requestedProviderOrder = buildRequestedProviderOrder(job.mode);
+    const strategy = resolveExtractionExecutionStrategy(mode, runtimeStatus.providers);
+    const requestedProviderOrder = buildRequestedProviderOrder(mode);
     const patchDebugRun = (
       patch: Parameters<typeof updateExtractionDebugRun>[1]
     ) => {
@@ -291,7 +417,6 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       return runExtraction(
         {
           mode,
-          cloud: input.cloud,
           sessionId: job.sessionId,
           transcript: input.transcript,
           index: input.index,
@@ -322,15 +447,10 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         }
       }
 
-      if (strategy.fallbackMode === "cloud") {
-        return attemptMode("cloud");
-      }
-
       throw lastError ?? new Error("On-device note processing failed.");
     }
 
-    recordUnavailableProviders();
-    return attemptMode(strategy.initialMode);
+    throw new Error("No note processing strategy.");
   }
 
   async function processJob(jobId: string): Promise<void> {
@@ -340,9 +460,10 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       return;
     }
 
+    const jobMode = resolveExtractionMode(job.mode);
     const debugRun = createExtractionDebugRun({
       scope: "job",
-      mode: job.mode,
+      mode: jobMode,
       jobId: job.id,
       sessionId: job.sessionId,
       vaultId: job.vaultId,
@@ -350,7 +471,7 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       transcriptMessageCount: Math.max(0, job.transcriptEndIndex - job.transcriptStartIndex),
       transcriptStartIndex: job.transcriptStartIndex,
       transcriptEndIndex: job.transcriptEndIndex,
-      requestedProviderOrder: buildRequestedProviderOrder(job.mode)
+      requestedProviderOrder: buildRequestedProviderOrder(jobMode)
     });
 
     const session = await getSessionById(job.sessionId);
@@ -442,11 +563,12 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       }
 
       const storedConfig = await getExtractionJobConfig(job.id);
-      const queuedCloudConfig = queuedCloudConfigByJobId.get(job.id);
-      const cloud = resolveJobCloudConfig(storedConfig, queuedCloudConfig, options.getAuthSession);
       const vault = resolveVault(options.getSettings(), session.vaultId);
       const snapshot = await buildSnapshot(vault.path, vault.id, vault.name);
-      const sourceMessages = messages.slice(job.transcriptStartIndex, job.transcriptEndIndex);
+      const sourceMessages = filterDirectNoteActionMessages(messages).slice(
+        job.transcriptStartIndex,
+        job.transcriptEndIndex
+      );
       const explicitSlugs = findExplicitReferenceSlugs(sourceMessages, snapshot.notes);
       const relatedNotes = await searchRelevantNotes({
         vaultId: vault.id,
@@ -454,11 +576,11 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         explicitSlugs,
         limit: 6
       });
+      const index = buildExtractionIndex(snapshot);
       const extraction = await runWithStrategy(job, {
         transcript,
-        index: buildExtractionIndex(snapshot),
+        index,
         relatedNotes,
-        cloud,
         preferredLocalModelId: storedConfig?.preferredLocalModelId ?? undefined,
         debugRunId: debugRun.id
       });
@@ -467,13 +589,37 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         return;
       }
 
-      const index = buildExtractionIndex(snapshot);
-      const applied = await applyExtractionResponseLocally(
+      const responseToApply = await applyTemplateFillFallback({
+        response: extraction.response,
+        explicitSlugs,
+        index,
+        relatedNotes,
+        transcript,
+        sessionId: job.sessionId
+      });
+
+      let applied = await applyExtractionResponseLocally(
         vault,
-        extraction.response,
+        responseToApply,
         job.sessionId,
         index
       );
+
+      if (job.trigger === "manual" && applied.appliedUpdateCount === 0) {
+        const existingSlugs = new Set(index.map((entry) => entry.slug));
+        const fallbackResponse = buildManualSaveFallbackResponse({
+          transcript,
+          session,
+          suggestedSessionTitle: extraction.response.sessionTitle ?? "",
+          existingSlugs
+        });
+        applied = await applyExtractionResponseLocally(
+          vault,
+          fallbackResponse,
+          job.sessionId,
+          index
+        );
+      }
       const completedJob = await updateExtractionJob({
         id: job.id,
         status: "completed",
@@ -484,7 +630,7 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         finishedAt: Date.now(),
         errorMessage: null
       });
-      const requestedUpdateCount = extraction.response.updates.filter(
+      const requestedUpdateCount = responseToApply.updates.filter(
         (update) => update.operation !== "noop"
       ).length;
       updateExtractionDebugRun(debugRun.id, {
@@ -497,7 +643,10 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         guardrailDropCount: Math.max(0, requestedUpdateCount - applied.appliedUpdateCount),
         errorMessage: null
       });
-      options.notifyJobUpdate(completedJob);
+      options.notifyJobUpdate({
+        ...completedJob,
+        appliedNotes: applied.appliedNotes
+      });
     } catch (error) {
       updateExtractionDebugRun(debugRun.id, {
         status: "failed",
@@ -517,8 +666,6 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         finishedAt: Date.now()
       });
       options.notifyJobUpdate(failedJob);
-    } finally {
-      queuedCloudConfigByJobId.delete(job.id);
     }
   }
 
@@ -580,14 +727,10 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         transcriptStartIndex: plan.transcriptStartIndex,
         transcriptEndIndex: plan.transcriptEndIndex,
         transcriptDigest: plan.transcriptDigest,
-        cloudFunctionsBaseUrl: input.cloud?.functionsBaseUrl ?? null,
-        cloudPublishableKey: input.cloud?.publishableKey ?? null,
+        cloudFunctionsBaseUrl: null,
+        cloudPublishableKey: null,
         preferredLocalModelId: input.preferredLocalModelId ?? null
       });
-
-      if (input.cloud) {
-        queuedCloudConfigByJobId.set(job.id, input.cloud);
-      }
 
       options.notifyJobUpdate(job);
       await scheduleSessionQueue(session.id);

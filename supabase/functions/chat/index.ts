@@ -132,7 +132,12 @@ function parseBody(body: unknown): {
         typeof (reference as Record<string, unknown>).slug === "undefined") &&
       typeof (reference as Record<string, unknown>).title === "string" &&
       typeof (reference as Record<string, unknown>).excerpt === "string" &&
-      typeof (reference as Record<string, unknown>).content === "string"
+      typeof (reference as Record<string, unknown>).content === "string" &&
+      (typeof (reference as Record<string, unknown>).tags === "undefined" ||
+        (Array.isArray((reference as Record<string, unknown>).tags) &&
+          ((reference as Record<string, unknown>).tags as unknown[]).every(
+            (tag) => typeof tag === "string"
+          )))
   );
 
   return {
@@ -191,7 +196,7 @@ Deno.serve(async (request) => {
       throw new Response(
         JSON.stringify({
           error:
-            "This model does not accept images. Switch to GPT-4o Mini, GPT-4o, or a Claude model with vision."
+            "This model does not accept images. Switch to a vision-capable model (for example GPT-4o Mini, GPT-5.4 Mini, GPT-5.4, or a recent Claude model)."
         }),
         {
           status: 400,

@@ -5,7 +5,6 @@ import type {
   ExtractionSourceType
 } from "@shared/extraction/contracts";
 import type {
-  ExtractionCloudConfig,
   ExtractionProviderId,
   ExtractionProviderStatus,
   ExtractionRunResult
@@ -20,13 +19,12 @@ export interface ProviderExtractInput {
   sourceTitle?: string;
   sourcePath?: string;
   sourceContent?: string;
-  cloud?: ExtractionCloudConfig;
   preferredLocalModelId?: string;
 }
 
 export interface ExtractionProvider {
   id: ExtractionProviderId;
-  getStatus(input: { cloud?: ExtractionCloudConfig }): Promise<ExtractionProviderStatus>;
+  getStatus(): Promise<ExtractionProviderStatus>;
   extract(input: ProviderExtractInput): Promise<ExtractionRunResult>;
 }
 

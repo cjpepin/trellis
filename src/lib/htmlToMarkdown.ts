@@ -10,6 +10,19 @@ const turndown = new TurndownService({
 
 gfm(turndown);
 
+turndown.addRule("linkPreview", {
+  filter(node) {
+    return (
+      node.nodeName === "DIV" &&
+      node instanceof HTMLElement &&
+      node.dataset.trellisLinkPreview === "true"
+    );
+  },
+  replacement() {
+    return "";
+  }
+});
+
 turndown.addRule("wikiLink", {
   filter(node) {
     const href = node.getAttribute("href") ?? "";
@@ -17,6 +30,45 @@ turndown.addRule("wikiLink", {
   },
   replacement(content) {
     return `[[${content}]]`;
+  }
+});
+
+turndown.addRule("noteImage", {
+  filter(node) {
+    return (
+      node.nodeName === "IMG" &&
+      node instanceof HTMLElement &&
+      Boolean(node.dataset.trellisImageSrc)
+    );
+  },
+  replacement(_content, node) {
+    if (!(node instanceof HTMLImageElement)) {
+      return "";
+    }
+
+    const src = node.dataset.trellisImageSrc ?? node.getAttribute("src") ?? "";
+    const alt = (node.getAttribute("alt") ?? "Attached image")
+      .replaceAll("[", "\\[")
+      .replaceAll("]", "\\]");
+
+    return src ? `![${alt}](${src})` : "";
+  }
+});
+
+turndown.addRule("richTable", {
+  filter(node) {
+    if (node.nodeName !== "TABLE" || !(node instanceof HTMLElement)) {
+      return false;
+    }
+
+    return Boolean(node.querySelector("colgroup, col[style], th[style], td[style]"));
+  },
+  replacement(_content, node) {
+    if (!(node instanceof HTMLElement)) {
+      return "";
+    }
+
+    return `\n\n${node.outerHTML}\n\n`;
   }
 });
 

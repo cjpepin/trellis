@@ -3,11 +3,17 @@ export type ChatModelId =
   | "gpt-4.1-nano"
   | "gpt-4.1-mini"
   | "gpt-4o-mini"
+  | "gpt-5.4-nano"
+  | "gpt-5.4-mini"
   | "gpt-4.1"
   | "gpt-4o"
+  | "gpt-5.4"
   | "claude-3-5-haiku-latest"
+  | "claude-haiku-4-5"
   | "claude-3-7-sonnet-latest"
-  | "claude-sonnet-4-20250514";
+  | "claude-sonnet-4-20250514"
+  | "claude-sonnet-4-6"
+  | "claude-opus-4-6";
 
 /** Feature flags for chat media — not every model supports every action. */
 export interface ChatModelMediaCapabilities {
@@ -40,6 +46,18 @@ const capsByModel: Record<ChatModelId, ChatModelMediaCapabilities> = {
     speechToText: true,
     textToSpeech: true
   },
+  "gpt-5.4-nano": {
+    visionInput: true,
+    imageGeneration: false,
+    speechToText: true,
+    textToSpeech: true
+  },
+  "gpt-5.4-mini": {
+    visionInput: true,
+    imageGeneration: false,
+    speechToText: true,
+    textToSpeech: true
+  },
   "gpt-4.1": {
     visionInput: false,
     imageGeneration: false,
@@ -52,7 +70,19 @@ const capsByModel: Record<ChatModelId, ChatModelMediaCapabilities> = {
     speechToText: true,
     textToSpeech: true
   },
+  "gpt-5.4": {
+    visionInput: true,
+    imageGeneration: true,
+    speechToText: true,
+    textToSpeech: true
+  },
   "claude-3-5-haiku-latest": {
+    visionInput: true,
+    imageGeneration: false,
+    speechToText: true,
+    textToSpeech: true
+  },
+  "claude-haiku-4-5": {
     visionInput: true,
     imageGeneration: false,
     speechToText: true,
@@ -65,6 +95,18 @@ const capsByModel: Record<ChatModelId, ChatModelMediaCapabilities> = {
     textToSpeech: true
   },
   "claude-sonnet-4-20250514": {
+    visionInput: true,
+    imageGeneration: false,
+    speechToText: true,
+    textToSpeech: true
+  },
+  "claude-sonnet-4-6": {
+    visionInput: true,
+    imageGeneration: false,
+    speechToText: true,
+    textToSpeech: true
+  },
+  "claude-opus-4-6": {
     visionInput: true,
     imageGeneration: false,
     speechToText: true,

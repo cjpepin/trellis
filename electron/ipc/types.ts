@@ -49,6 +49,8 @@ export const ipcChannels = {
   vaultImportFromObsidian: "vault:import:obsidian",
   vaultExportToObsidian: "vault:export:obsidian",
   vaultAppendChatImage: "vault:append:chat-image",
+  vaultImportNoteImage: "vault:import-note-image",
+  vaultReadNoteAssetDataUrl: "vault:read-note-asset-data-url",
   retrievalSearchNotes: "retrieval:search:notes",
   retrievalRebuildIndex: "retrieval:rebuild:index",
   ingestParsePdf: "ingest:parse:pdf",
@@ -56,6 +58,8 @@ export const ipcChannels = {
   chatPickAttachment: "chat:pick:attachment",
   chatBuildContext: "chat:build:context",
   chatStoreMemory: "chat:store:memory",
+  chatProposeNoteActions: "chat:propose-note-actions",
+  chatApplyVaultOrganize: "chat:apply-vault-organize",
   chatRunLocalReply: "chat:run:local-reply",
   chatStream: "chat:stream",
   chatStreamEvent: "chat:stream:event",
@@ -77,11 +81,17 @@ export const chatModelIds = [
   "gpt-4.1-nano",
   "gpt-4.1-mini",
   "gpt-4o-mini",
+  "gpt-5.4-nano",
+  "gpt-5.4-mini",
   "gpt-4.1",
   "gpt-4o",
+  "gpt-5.4",
   "claude-3-5-haiku-latest",
+  "claude-haiku-4-5",
   "claude-3-7-sonnet-latest",
-  "claude-sonnet-4-20250514"
+  "claude-sonnet-4-20250514",
+  "claude-sonnet-4-6",
+  "claude-opus-4-6"
 ] as const;
 
 export type ChatModel = (typeof chatModelIds)[number];
@@ -94,8 +104,8 @@ export type ChatBillingMode = "hosted" | "byok";
 export type ChatPrivacyMode = "auto" | "off" | "local";
 export type ChatContextReferenceType = "note" | "memory";
 export type MemoryKind = "preference" | "project" | "open_loop" | "fact" | "task";
-export type ExtractionMode = "auto" | "cloud" | "local";
-export type ExtractionProviderId = "cloud" | "embedded";
+export type ExtractionMode = "local";
+export type ExtractionProviderId = "embedded";
 export type ExtractionJobStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 export type ExtractionJobTrigger = "idle" | "session-switch" | "manual" | "startup";
 export type ExtractionDebugStatus = "queued" | "running" | "completed" | "failed" | "skipped";
@@ -181,6 +191,31 @@ export interface ChatMediaArtifact {
   pendingGeneration?: boolean;
 }
 
+export type ChatNoteActionKind =
+  | "create_note"
+  | "update_note"
+  | "create_template"
+  | "update_template";
+
+export type ChatNoteActionStatus = "pending" | "approved" | "rejected" | "failed";
+
+export interface ChatNoteActionProposal {
+  id: string;
+  kind: ChatNoteActionKind;
+  status: ChatNoteActionStatus;
+  targetTitle: string;
+  targetSlug: string;
+  targetFolderPath: string;
+  beforeMarkdown: string;
+  afterMarkdown: string;
+  frontmatter: Partial<NoteFrontmatter>;
+  rationale: string;
+  sourceMessageIds: string[];
+  createdAt: number;
+  appliedAt?: number;
+  errorMessage?: string;
+}
+
 export interface MessageRecord {
   id: string;
   sessionId: string;
@@ -190,6 +225,7 @@ export interface MessageRecord {
   tokens: number | null;
   attachments?: ChatAttachment[];
   mediaArtifacts?: ChatMediaArtifact[];
+  noteActions?: ChatNoteActionProposal[];
 }
 
 export interface ChatAttachmentPickResult {
@@ -204,6 +240,7 @@ export interface ChatContextReference {
   title: string;
   excerpt: string;
   content: string;
+  tags?: string[];
   slug?: string;
   linkedNoteSlug?: string | null;
   isExplicitMatch?: boolean;
@@ -241,6 +278,7 @@ export interface WikiNote extends NoteSummary {
   content: string;
   links: string[];
   sources: number;
+  url?: string;
 }
 
 export interface FolderSummary {
@@ -311,6 +349,24 @@ export interface VaultAppendChatImageInput {
   fileId: string;
   slug?: string;
   alt?: string;
+}
+
+export interface VaultImportNoteImageInput {
+  vaultId?: string;
+  fileId: string;
+  noteRelativePath: string;
+  alt?: string;
+}
+
+export interface VaultImportNoteImageResult {
+  markdownPath: string;
+  alt: string;
+}
+
+export interface VaultReadNoteAssetDataUrlInput {
+  vaultId?: string;
+  noteRelativePath: string;
+  assetPath: string;
 }
 
 export interface DeleteNoteInput {
@@ -404,6 +460,8 @@ export interface BuildChatContextInput {
   vaultId?: string;
   activeNoteSlug?: string | null;
   sessionTitle?: string | null;
+  /** When set, excluded from “recent sessions” summaries so the current chat isn’t counted as “past”. */
+  currentSessionId?: string | null;
   messages: Array<Pick<MessageRecord, "role" | "content">>;
 }
 
@@ -412,6 +470,36 @@ export interface StoreChatMemoryInput {
   sessionId?: string;
   messages: Array<Pick<MessageRecord, "id" | "role" | "content">>;
   references?: ChatContextReference[];
+}
+
+export interface ProposeChatNoteActionsInput {
+  mode: ChatPrivacyMode;
+  vaultId?: string;
+  activeNoteSlug?: string | null;
+  messages: Array<Pick<MessageRecord, "id" | "role" | "content" | "attachments" | "mediaArtifacts" | "noteActions">>;
+}
+
+export interface ProposeChatNoteActionsResult {
+  actions: ChatNoteActionProposal[];
+  clarification: string | null;
+}
+
+export interface ApplyVaultOrganizeInput {
+  vaultId: string;
+  userMessage: string;
+}
+
+/** Shown in toasts as links to the Notes shell */
+export interface ToastNoteLink {
+  label: string;
+  noteSlug: string;
+}
+
+export interface ApplyVaultOrganizeResult {
+  applied: boolean;
+  message: string | null;
+  /** Set when at least one note was moved into a new folder */
+  movedNote?: { slug: string; title: string };
 }
 
 export interface LocalChatRunInput {
@@ -426,12 +514,6 @@ export interface LocalChatRunResult {
   tokenCount: number;
   provider: "embedded";
   model: string | null;
-}
-
-export interface ExtractionCloudConfig {
-  functionsBaseUrl: string;
-  publishableKey: string;
-  accessToken?: string | null;
 }
 
 export interface ProviderKeyStatus {
@@ -486,7 +568,6 @@ export interface ExtractionRuntimeStatus {
 
 export interface ExtractionRunInput {
   mode?: ExtractionMode;
-  cloud?: ExtractionCloudConfig;
   sessionId?: string;
   transcript: Array<Pick<MessageRecord, "role" | "content">>;
   index: ExtractionIndexEntry[];
@@ -508,7 +589,6 @@ export interface QueueSessionExtractionInput {
   sessionId: string;
   trigger?: ExtractionJobTrigger;
   mode?: ExtractionMode;
-  cloud?: ExtractionCloudConfig;
   preferredLocalModelId?: string;
   force?: boolean;
 }
@@ -532,6 +612,11 @@ export interface ExtractionJobSnapshot {
   createdAt: number;
   startedAt: number | null;
   finishedAt: number | null;
+  /**
+   * Present on completion notifications from the main process (not persisted in SQLite).
+   * Slugs/titles of notes that were written during this job.
+   */
+  appliedNotes?: Array<{ slug: string; title: string }>;
 }
 
 export interface QueueSessionExtractionResult {
@@ -715,6 +800,8 @@ export interface VaultBridge {
   readNote: (slug: string, vaultId?: string) => Promise<WikiNote>;
   writeNote: (input: SaveNoteInput) => Promise<SaveNoteResult>;
   appendChatImageToNote: (input: VaultAppendChatImageInput) => Promise<SaveNoteResult>;
+  importNoteImage: (input: VaultImportNoteImageInput) => Promise<VaultImportNoteImageResult>;
+  readNoteAssetDataUrl: (input: VaultReadNoteAssetDataUrlInput) => Promise<string | null>;
   createStub: (input: CreateStubInput) => Promise<SaveNoteResult>;
   deleteNote: (input: DeleteNoteInput) => Promise<VaultSnapshot>;
   createFolder: (input: CreateFolderInput) => Promise<VaultSnapshot>;
@@ -736,10 +823,7 @@ export interface RetrievalBridge {
 }
 
 export interface ExtractionBridge {
-  getRuntimeStatus: (input?: {
-    mode?: ExtractionMode;
-    cloud?: ExtractionCloudConfig;
-  }) => Promise<ExtractionRuntimeStatus>;
+  getRuntimeStatus: (input?: { mode?: ExtractionMode }) => Promise<ExtractionRuntimeStatus>;
   run: (input: ExtractionRunInput) => Promise<ExtractionRunResult>;
   queueSession: (input: QueueSessionExtractionInput) => Promise<QueueSessionExtractionResult>;
   installLocalModel: (modelId: string) => Promise<ExtractionRuntimeStatus>;
@@ -757,6 +841,8 @@ export interface ChatBridge {
   pickAttachment: () => Promise<ChatAttachmentPickResult | null>;
   buildContext: (input: BuildChatContextInput) => Promise<ChatContextPacket>;
   storeMemory: (input: StoreChatMemoryInput) => Promise<MemoryItem[]>;
+  proposeNoteActions: (input: ProposeChatNoteActionsInput) => Promise<ProposeChatNoteActionsResult>;
+  applyVaultOrganize: (input: ApplyVaultOrganizeInput) => Promise<ApplyVaultOrganizeResult>;
   runLocalReply: (input: LocalChatRunInput) => Promise<LocalChatRunResult>;
   stream: (input: ChatStreamInput) => Promise<void>;
   getProviderKeyStatus: () => Promise<ProviderKeyStatusSnapshot>;

@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { Editor } from "@tiptap/core";
 import { Color } from "@tiptap/extension-color";
+import Image from "@tiptap/extension-image";
 import { TableKit } from "@tiptap/extension-table/kit";
 import { TextStyle } from "@tiptap/extension-text-style";
 import StarterKit from "@tiptap/starter-kit";
@@ -23,6 +24,7 @@ import {
   Heading2,
   Heading3,
   Italic,
+  Image as ImageIcon,
   Link2,
   List,
   ListOrdered,
@@ -38,8 +40,10 @@ import {
 } from "lucide-react";
 import { renderWikiMarkdown } from "@/lib/markdown";
 import { htmlToMarkdown } from "@/lib/htmlToMarkdown";
+import { fileToBase64, resolveRenderedNoteImages } from "@/lib/noteAssets";
 import { isInternalNoteHashHref, slugFromInternalNoteHashHref } from "@/lib/noteRoutes";
 import { cn } from "@/lib/utils";
+import { normalizeExternalHttpsUrl } from "@shared/shell/externalHttpsUrl";
 import { ListboxSelect } from "@/components/ListboxSelect";
 import { WikiLinkEditBubble } from "@/components/wiki/WikiLinkEditBubble";
 
@@ -63,6 +67,7 @@ function isInternalNoteLinkHref(href: unknown): href is string {
 
 interface Props {
   noteSlug: string;
+  noteRelativePath: string;
   markdown: string;
   existingSlugs: string[];
   /** Titles for [[…]] autocomplete and missing-link hints */
@@ -83,10 +88,12 @@ function toolbarButtonClass(active: boolean): string {
 
 function WikiEditorToolbar({
   editor,
-  onOpenLinkBubble
+  onOpenLinkBubble,
+  onPickImage
 }: {
   editor: Editor | null;
   onOpenLinkBubble: () => void;
+  onPickImage: () => void;
 }): JSX.Element | null {
   const [, tick] = useReducer((n: number) => n + 1, 0);
   const textColorFieldId = useId();
@@ -348,6 +355,14 @@ function WikiEditorToolbar({
         <button
           type="button"
           className={toolbarButtonClass(false)}
+          aria-label="Attach image"
+          onClick={onPickImage}
+        >
+          <ImageIcon className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className={toolbarButtonClass(false)}
           aria-label="Insert table"
           onClick={() =>
             editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
@@ -366,12 +381,114 @@ function WikiEditorToolbar({
           </button>
         ) : null}
       </div>
+      {editor.isActive("table") ? (
+        <>
+          <span className="mx-0.5 h-5 w-px bg-trellis-border/80" aria-hidden />
+          <div className="flex flex-wrap items-center gap-0.5">
+            <button
+              type="button"
+              className={toolbarButtonClass(false)}
+              aria-label="Add column before"
+              onClick={() => editor.chain().focus().addColumnBefore().run()}
+            >
+              <span className="text-[11px] uppercase tracking-[0.12em]">+ Col</span>
+            </button>
+            <button
+              type="button"
+              className={toolbarButtonClass(false)}
+              aria-label="Delete column"
+              onClick={() => editor.chain().focus().deleteColumn().run()}
+            >
+              <span className="text-[11px] uppercase tracking-[0.12em]">- Col</span>
+            </button>
+            <button
+              type="button"
+              className={toolbarButtonClass(false)}
+              aria-label="Add row after"
+              onClick={() => editor.chain().focus().addRowAfter().run()}
+            >
+              <span className="text-[11px] uppercase tracking-[0.12em]">+ Row</span>
+            </button>
+            <button
+              type="button"
+              className={toolbarButtonClass(false)}
+              aria-label="Delete row"
+              onClick={() => editor.chain().focus().deleteRow().run()}
+            >
+              <span className="text-[11px] uppercase tracking-[0.12em]">- Row</span>
+            </button>
+            <button
+              type="button"
+              className={toolbarButtonClass(false)}
+              aria-label="Toggle header row"
+              onClick={() => editor.chain().focus().toggleHeaderRow().run()}
+            >
+              <span className="text-[11px] uppercase tracking-[0.12em]">Header</span>
+            </button>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function WikiImageSelectionControls({ editor }: { editor: Editor | null }): JSX.Element | null {
+  const [, tick] = useReducer((n: number) => n + 1, 0);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    const refresh = (): void => {
+      tick();
+    };
+
+    editor.on("selectionUpdate", refresh);
+    editor.on("transaction", refresh);
+
+    return () => {
+      editor.off("selectionUpdate", refresh);
+      editor.off("transaction", refresh);
+    };
+  }, [editor]);
+
+  if (!editor || !editor.isActive("image")) {
+    return null;
+  }
+
+  const attrs = editor.getAttributes("image") as { alt?: string };
+
+  return (
+    <div className="border-t border-trellis-border bg-trellis-surface px-2 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex min-w-[12rem] flex-1 items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-trellis-muted">
+          Alt
+          <input
+            className="trellis-input min-w-0 flex-1 py-1.5 text-xs normal-case tracking-normal"
+            value={attrs.alt ?? ""}
+            onChange={(event) => {
+              editor.chain().focus().updateAttributes("image", { alt: event.target.value }).run();
+            }}
+            placeholder="Describe this image"
+          />
+        </label>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-field border border-transparent bg-trellis-surface-2 px-2.5 py-1.5 text-[11px] uppercase tracking-[0.12em] text-trellis-muted transition hover:border-trellis-border hover:text-trellis-text"
+          onClick={() => editor.chain().focus().deleteSelection().run()}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Remove image
+        </button>
+      </div>
     </div>
   );
 }
 
 export function WikiRichTextEditor({
   noteSlug,
+  noteRelativePath,
   markdown,
   existingSlugs,
   wikiNotes = [],
@@ -380,6 +497,7 @@ export function WikiRichTextEditor({
   onSave
 }: Props): ReactElement {
   const [manualLinkOpen, setManualLinkOpen] = useState(false);
+  const [imageImportError, setImageImportError] = useState<string | null>(null);
   const rendered = useMemo(
     () => renderWikiMarkdown(markdown, new Set(existingSlugs)),
     [existingSlugs, markdown]
@@ -388,6 +506,7 @@ export function WikiRichTextEditor({
   const saveTimerRef = useRef<number | null>(null);
   const pendingMarkdownRef = useRef<string | null>(null);
   const pendingSlugRef = useRef<string | null>(null);
+  const editorRef = useRef<Editor | null>(null);
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
 
@@ -417,6 +536,79 @@ export function WikiRichTextEditor({
     }, 500);
   }, [noteSlug]);
 
+  const importImageFromCache = useCallback(
+    async (fileId: string, label: string): Promise<void> => {
+      const editorInstance = editorRef.current;
+
+      if (!editorInstance) {
+        return;
+      }
+
+      const alt = label.replace(/\.[a-z0-9]+$/i, "").trim() || "Attached image";
+      const imported = await window.trellis.vault.importNoteImage({
+        fileId,
+        noteRelativePath,
+        alt
+      });
+
+      editorInstance.chain().focus().setImage({
+        src: imported.markdownPath,
+        alt: imported.alt
+      }).run();
+      resolveRenderedNoteImages(editorInstance.view.dom, noteRelativePath);
+    },
+    [noteRelativePath]
+  );
+
+  const importImageFiles = useCallback(
+    async (files: File[]): Promise<boolean> => {
+      const images = files.filter((file) => file.type.startsWith("image/"));
+
+      if (images.length === 0) {
+        return false;
+      }
+
+      setImageImportError(null);
+
+      try {
+        for (const file of images) {
+          const base64 = await fileToBase64(file);
+          const cached = await window.trellis.media.writeCache({
+            base64,
+            mimeType: file.type
+          });
+          await importImageFromCache(cached.fileId, file.name);
+        }
+      } catch (error) {
+        setImageImportError(
+          error instanceof Error ? error.message : "Could not attach that image."
+        );
+      }
+
+      return true;
+    },
+    [importImageFromCache]
+  );
+
+  const pickImage = useCallback(() => {
+    void (async () => {
+      setImageImportError(null);
+      try {
+        const picked = await window.trellis.media.pickImage();
+
+        if (!picked) {
+          return;
+        }
+
+        await importImageFromCache(picked.fileId, picked.name);
+      } catch (error) {
+        setImageImportError(
+          error instanceof Error ? error.message : "Could not attach that image."
+        );
+      }
+    })();
+  }, [importImageFromCache]);
+
   const extensions = useMemo(
     () => [
       StarterKit.configure({
@@ -431,7 +623,11 @@ export function WikiRichTextEditor({
         HTMLAttributes: {}
       }),
       TableKit.configure({
-        table: { resizable: false }
+        table: { resizable: true }
+      }),
+      Image.configure({
+        allowBase64: true,
+        HTMLAttributes: {}
       }),
       TextStyle,
       Color.configure({
@@ -453,10 +649,38 @@ export function WikiRichTextEditor({
           "trellis-rich-text min-h-[12rem] max-w-none px-2 py-2 text-sm leading-7 text-trellis-text outline-none",
           className
         )
+      },
+      handlePaste(_view, event) {
+        const files = Array.from(event.clipboardData?.files ?? []);
+
+        if (files.length === 0) {
+          return false;
+        }
+
+        void importImageFiles(files);
+        return files.some((file) => file.type.startsWith("image/"));
+      },
+      handleDrop(_view, event) {
+        const files = Array.from(event.dataTransfer?.files ?? []);
+
+        if (files.length === 0) {
+          return false;
+        }
+
+        void importImageFiles(files);
+        return files.some((file) => file.type.startsWith("image/"));
       }
+    },
+    onCreate({ editor: instance }) {
+      editorRef.current = instance;
+      resolveRenderedNoteImages(instance.view.dom, noteRelativePath);
+    },
+    onDestroy() {
+      editorRef.current = null;
     },
     onUpdate({ editor: instance }) {
       scheduleSave(instance.getHTML());
+      resolveRenderedNoteImages(instance.view.dom, noteRelativePath);
     }
   });
 
@@ -472,7 +696,8 @@ export function WikiRichTextEditor({
     editor.commands.setContent(rendered.html, {
       emitUpdate: false
     });
-  }, [editor, rendered.html]);
+    resolveRenderedNoteImages(editor.view.dom, noteRelativePath);
+  }, [editor, noteRelativePath, rendered.html]);
 
   useEffect(() => {
     return () => {
@@ -587,10 +812,12 @@ export function WikiRichTextEditor({
           return;
         }
 
-        if (href?.startsWith("http")) {
+        const externalHttps = href ? normalizeExternalHttpsUrl(href) : null;
+
+        if (externalHttps) {
           if (event.metaKey || event.ctrlKey) {
             event.preventDefault();
-            void window.trellis.shell.openExternal(href);
+            void window.trellis.shell.openExternal(externalHttps);
             return;
           }
 
@@ -602,10 +829,17 @@ export function WikiRichTextEditor({
       <div className="sticky top-0 z-20 shrink-0 border-b border-trellis-border bg-trellis-surface shadow-[0_1px_0_var(--trellis-border)]">
         <WikiEditorToolbar
           editor={editor}
+          onPickImage={pickImage}
           onOpenLinkBubble={() => {
             setManualLinkOpen(true);
           }}
         />
+        <WikiImageSelectionControls editor={editor} />
+        {imageImportError ? (
+          <p className="border-t border-trellis-border px-3 py-2 text-xs text-trellis-accent">
+            {imageImportError}
+          </p>
+        ) : null}
       </div>
       <WikiLinkEditBubble
         editor={editor}

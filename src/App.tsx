@@ -26,6 +26,7 @@ import { Chat } from "@/routes/Chat";
 import { Graph } from "@/routes/Graph";
 import { Ingest } from "@/routes/Ingest";
 import { Settings } from "@/routes/Settings";
+import { Templates } from "@/routes/Templates";
 import { Wiki } from "@/routes/Wiki";
 import { useAuthStore } from "@/store/authStore";
 import { useChatStore } from "@/store/chatStore";
@@ -172,6 +173,7 @@ function AppFrame({
               <RouteErrorBoundary>
                 <Chat
                   settings={settings}
+                  features={features}
                   workspace={workspace}
                   onUpdateSettings={onUpdateSettings}
                   onSwitchWorkspace={onSwitchWorkspace}
@@ -184,6 +186,14 @@ function AppFrame({
             element={
               <RouteErrorBoundary>
                 <Wiki workspaceId={workspace.id} />
+              </RouteErrorBoundary>
+            }
+          />
+          <Route
+            path="/templates"
+            element={
+              <RouteErrorBoundary>
+                <Templates />
               </RouteErrorBoundary>
             }
           />
@@ -258,11 +268,14 @@ export default function App() {
 
   const loadVaultSnapshot = useCallback(async (vaultId?: string): Promise<void> => {
     const snapshot = await window.trellis.vault.listIndex(vaultId);
-    hydrateWiki({
-      notes: snapshot.notes,
-      folders: snapshot.folders,
-      graph: snapshot.graph
-    });
+    hydrateWiki(
+      {
+        notes: snapshot.notes,
+        folders: snapshot.folders,
+        graph: snapshot.graph
+      },
+      { preserveActiveNote: true }
+    );
   }, [hydrateWiki]);
 
   const applyBootstrapPayload = useCallback(
@@ -523,9 +536,23 @@ export default function App() {
     return window.trellis.extraction.onJobUpdate((notification) => {
       if (notification.status === "completed") {
         if (notification.appliedUpdateCount > 0) {
+          const maxLinks = 3;
+          const applied = notification.appliedNotes ?? [];
+          const completedTitle =
+            notification.trigger === "manual"
+              ? "Chat saved to your notes"
+              : `✦ ${notification.appliedUpdateCount} notes updated`;
           pushToast({
-            title: `✦ ${notification.appliedUpdateCount} notes updated`,
-            tone: "success"
+            title: completedTitle,
+            tone: "success",
+            ...(applied.length > 0
+              ? {
+                  noteLinks: applied.slice(0, maxLinks).map((note) => ({
+                    label: note.title,
+                    noteSlug: note.slug
+                  }))
+                }
+              : {})
           });
 
           if (notification.vaultId === settings.activeVaultId) {
@@ -539,6 +566,11 @@ export default function App() {
               });
             });
           }
+        } else {
+          pushToast({
+            title: "Note capture finished; no new wiki pages were added this time.",
+            tone: "default"
+          });
         }
 
         void window.trellis.db.listSessions().then(hydrateSessions).catch(() => {
@@ -620,7 +652,6 @@ export default function App() {
         <LocalNoteProcessorFirstRun
           settings={settings}
           features={features}
-          onUpdateSettings={handleSettingsUpdate}
         />
       </>
     );

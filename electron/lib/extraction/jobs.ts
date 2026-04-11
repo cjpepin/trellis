@@ -31,10 +31,48 @@ export interface ExtractionExecutionStrategy {
 export function buildFormattedTranscript(
   messages: MessageRecord[]
 ): Array<{ role: "user" | "assistant"; content: string }> {
-  return messages.map((message) => ({
+  return filterDirectNoteActionMessages(messages).map((message) => ({
     role: message.role,
     content: formatMessageForExtraction(message)
   }));
+}
+
+export function getDirectNoteActionExcludedMessageIds(messages: MessageRecord[]): Set<string> {
+  const excluded = new Set<string>();
+
+  for (const message of messages) {
+    if (!message.noteActions || message.noteActions.length === 0) {
+      continue;
+    }
+
+    excluded.add(message.id);
+
+    for (const action of message.noteActions) {
+      if (
+        action.status !== "pending" &&
+        action.status !== "approved" &&
+        action.status !== "rejected"
+      ) {
+        continue;
+      }
+
+      for (const sourceMessageId of action.sourceMessageIds) {
+        excluded.add(sourceMessageId);
+      }
+    }
+  }
+
+  return excluded;
+}
+
+export function filterDirectNoteActionMessages(messages: MessageRecord[]): MessageRecord[] {
+  const excluded = getDirectNoteActionExcludedMessageIds(messages);
+
+  if (excluded.size === 0) {
+    return messages;
+  }
+
+  return messages.filter((message) => !excluded.has(message.id));
 }
 
 export function buildTranscriptDigest(
@@ -121,64 +159,21 @@ export function findExplicitReferenceSlugs(
 }
 
 export function resolveExtractionExecutionStrategy(
-  mode: ExtractionMode,
+  _mode: ExtractionMode,
   providers: ExtractionProviderStatus[]
 ): ExtractionExecutionStrategy {
   const local = providers.find((provider) => provider.id === "embedded");
-  const cloud = providers.find((provider) => provider.id === "cloud");
-
-  if (mode === "local") {
-    if (!local?.available) {
-      return {
-        action: "skip",
-        reason: local?.reason ?? "On-device note processing is unavailable."
-      };
-    }
-
-    return {
-      action: "run",
-      initialMode: "local",
-      localRetryCount: 1
-    };
-  }
-
-  if (mode === "cloud") {
-    if (!cloud?.available) {
-      return {
-        action: "fail",
-        reason: cloud?.reason ?? "Cloud note processing is unavailable."
-      };
-    }
-
-    return {
-      action: "run",
-      initialMode: "cloud",
-      localRetryCount: 0
-    };
-  }
 
   if (local?.available) {
     return {
       action: "run",
       initialMode: "local",
-      fallbackMode: cloud?.available ? "cloud" : undefined,
       localRetryCount: 1
     };
   }
 
-  if (cloud?.available) {
-    return {
-      action: "run",
-      initialMode: "cloud",
-      localRetryCount: 0
-    };
-  }
-
   return {
-    action: "fail",
-    reason:
-      local?.reason ??
-      cloud?.reason ??
-      "No note processing provider is available."
+    action: "skip",
+    reason: local?.reason ?? "On-device note processing is unavailable."
   };
 }

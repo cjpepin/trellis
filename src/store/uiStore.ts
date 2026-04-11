@@ -1,9 +1,12 @@
 import { create } from "zustand";
+import type { ToastNoteLink } from "@electron/ipc/types";
 
 export interface ToastItem {
   id: string;
   title: string;
   tone: "default" | "success" | "warning" | "error";
+  /** Optional links to open notes in the Notes route */
+  noteLinks?: ToastNoteLink[];
 }
 
 interface UiState {

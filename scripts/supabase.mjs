@@ -182,7 +182,13 @@ function listFunctionNames() {
 
   return fs
     .readdirSync(functionsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("_"))
+    .filter((entry) => {
+      if (!entry.isDirectory() || entry.name.startsWith("_")) {
+        return false;
+      }
+      const entrypoint = path.join(functionsDir, entry.name, "index.ts");
+      return fs.existsSync(entrypoint);
+    })
     .map((entry) => entry.name)
     .sort();
 }

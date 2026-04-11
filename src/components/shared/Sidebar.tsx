@@ -3,6 +3,7 @@ import {
   Database,
   History,
   LayoutGrid,
+  LayoutTemplate,
   MessageSquare,
   Network,
   PanelLeftClose,
@@ -28,6 +29,7 @@ interface Props {
 const navItems = [
   { to: "/chat", label: "Chat", icon: MessageSquare },
   { to: "/notes", label: "Notes", icon: ScrollText },
+  { to: "/templates", label: "Templates", icon: LayoutTemplate },
   { to: "/graph", label: "Graph", icon: Network },
   { to: "/ingest", label: "Ingest", icon: Upload },
   { to: "/settings", label: "Settings", icon: Settings2 }

@@ -1,5 +1,4 @@
 import type {
-  ExtractionCloudConfig,
   ExtractionDebugProviderAttempt,
   ExtractionJobTrigger,
   ExtractionMode,
@@ -13,7 +12,6 @@ import {
   updateExtractionDebugRun
 } from "./debug";
 import { pickSelectedProviderId } from "./providerSelection";
-import { cloudExtractionProvider } from "./providers/cloud";
 import { embeddedExtractionProvider } from "./providers/embeddedLlama";
 import type { ExtractionProvider } from "./providers/types";
 import {
@@ -21,35 +19,20 @@ import {
   isLocalExtractionFeatureEnabled
 } from "./rollout";
 
-export function resolveExtractionMode(mode?: ExtractionMode): ExtractionMode {
-  if (mode !== undefined) {
-    return mode;
-  }
-
-  return isLocalExtractionFeatureEnabled() ? "local" : "cloud";
+export function resolveExtractionMode(_mode?: ExtractionMode): ExtractionMode {
+  return "local";
 }
 
-const providers: Record<"cloud" | "embedded", ExtractionProvider> = {
-  cloud: cloudExtractionProvider,
+const providers: Record<"embedded", ExtractionProvider> = {
   embedded: embeddedExtractionProvider
 };
 
-function buildProviderOrder(mode: ExtractionMode): ExtractionProvider[] {
-  const localExtractionEnabled = isLocalExtractionFeatureEnabled();
-
-  if (mode === "cloud") {
-    return [providers.cloud];
+function buildProviderOrder(_mode: ExtractionMode): ExtractionProvider[] {
+  if (!isLocalExtractionFeatureEnabled()) {
+    return [];
   }
 
-  if (!localExtractionEnabled) {
-    return mode === "auto" ? [providers.cloud] : [];
-  }
-
-  if (mode === "local") {
-    return [providers.embedded];
-  }
-
-  return [providers.embedded, providers.cloud];
+  return [providers.embedded];
 }
 
 interface ExtractionDebugContext {
@@ -65,27 +48,26 @@ interface ExtractionDebugContext {
 
 export async function getExtractionRuntimeStatus(input: {
   mode?: ExtractionMode;
-  cloud?: ExtractionCloudConfig;
 }): Promise<ExtractionRuntimeStatus> {
   const mode = resolveExtractionMode(input.mode);
   const localExtractionEnabled = isLocalExtractionFeatureEnabled();
-  const statuses = await Promise.all([
+  const statuses = [
     localExtractionEnabled
-      ? providers.embedded.getStatus({ cloud: input.cloud })
+      ? providers.embedded.getStatus()
       : Promise.resolve({
           id: "embedded" as const,
           label: "On-device",
           available: false,
           reason: getLocalExtractionFeatureDisabledReason(),
           models: []
-        }),
-    providers.cloud.getStatus({ cloud: input.cloud })
-  ]);
+        })
+  ];
+  const resolvedStatuses = await Promise.all(statuses);
 
   return {
     mode,
-    selectedProvider: pickSelectedProviderId(statuses, mode),
-    providers: statuses
+    selectedProvider: pickSelectedProviderId(resolvedStatuses),
+    providers: resolvedStatuses
   };
 }
 
@@ -95,7 +77,7 @@ export async function runExtraction(
 ): Promise<ExtractionRunResult> {
   const mode = resolveExtractionMode(input.mode);
   const order = buildProviderOrder(mode);
-  const localExtractionDisabled = mode === "local" && !isLocalExtractionFeatureEnabled();
+  const localExtractionDisabled = !isLocalExtractionFeatureEnabled();
   const errors: string[] = [];
   const attemptedProviders = [...(debugContext?.seedAttemptedProviders ?? [])];
   const run =
@@ -148,7 +130,7 @@ export async function runExtraction(
 
   for (const provider of order) {
     const attemptStartedAt = Date.now();
-    const status = await provider.getStatus({ cloud: input.cloud });
+    const status = await provider.getStatus();
 
     if (!status.available) {
       if (status.reason) {
@@ -198,15 +180,13 @@ export async function runExtraction(
         errorMessage: message
       });
 
-      if (mode !== "auto") {
-        updateExtractionDebugRun(run.id, {
-          status: "failed",
-          finishedAt: Date.now(),
-          attemptedProviders,
-          errorMessage: message
-        });
-        throw new Error(message);
-      }
+      updateExtractionDebugRun(run.id, {
+        status: "failed",
+        finishedAt: Date.now(),
+        attemptedProviders,
+        errorMessage: message
+      });
+      throw new Error(message);
     }
   }
 

@@ -34,6 +34,34 @@ const chatMediaArtifactSchema = z.object({
   pendingGeneration: z.boolean().optional()
 });
 
+const noteTypeSchema = z.enum(["concept", "entity", "source-summary", "synthesis"]);
+
+const chatNoteActionSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.enum(["create_note", "update_note", "create_template", "update_template"]),
+  status: z.enum(["pending", "approved", "rejected", "failed"]),
+  targetTitle: z.string().min(1).max(120),
+  targetSlug: z.string().min(1).max(180),
+  targetFolderPath: z.string().max(500),
+  beforeMarkdown: z.string().max(500_000),
+  afterMarkdown: z.string().min(1).max(500_000),
+  frontmatter: z
+    .object({
+      title: z.string().optional(),
+      created: z.string().optional(),
+      updated: z.string().optional(),
+      sources: z.number().int().optional(),
+      tags: z.array(z.string()).optional(),
+      type: noteTypeSchema.optional(),
+      url: z.string().url().optional()
+    }),
+  rationale: z.string().min(1).max(2000),
+  sourceMessageIds: z.array(z.string().uuid()).min(1).max(12),
+  createdAt: z.number().int(),
+  appliedAt: z.number().int().optional(),
+  errorMessage: z.string().max(2000).optional()
+});
+
 const messageSchema = z
   .object({
     id: z.string().uuid(),
@@ -43,17 +71,19 @@ const messageSchema = z
     createdAt: z.number().int(),
     tokens: z.number().int().nullable(),
     attachments: z.array(chatAttachmentSchema).max(12).optional(),
-    mediaArtifacts: z.array(chatMediaArtifactSchema).max(8).optional()
+    mediaArtifacts: z.array(chatMediaArtifactSchema).max(8).optional(),
+    noteActions: z.array(chatNoteActionSchema).max(6).optional()
   })
   .superRefine((value, ctx) => {
     const hasText = value.content.trim().length > 0;
     const hasAttachments = (value.attachments?.length ?? 0) > 0;
     const hasMedia = (value.mediaArtifacts?.length ?? 0) > 0;
+    const hasNoteActions = (value.noteActions?.length ?? 0) > 0;
 
-    if (!hasText && !hasAttachments && !hasMedia) {
+    if (!hasText && !hasAttachments && !hasMedia && !hasNoteActions) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Message needs non-empty content, an attachment, or a media item."
+        message: "Message needs non-empty content, an attachment, a media item, or a note action."
       });
     }
   });

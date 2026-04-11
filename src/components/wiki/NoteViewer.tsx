@@ -1,10 +1,48 @@
 import { useEffect, useId, useState } from "react";
-import { CircleHelp, Plus, Trash2, X } from "lucide-react";
+import { CircleHelp, Link2, Plus, Trash2, X } from "lucide-react";
 import type { WikiNote } from "@electron/ipc/types";
 import { RichTextRenderer } from "@/components/shared/RichTextRenderer";
 import { EditableNoteTitle } from "@/components/wiki/EditableNoteTitle";
 import { WikiRichTextEditor } from "@/components/wiki/WikiRichTextEditor";
 import { cn, formatDateLabel } from "@/lib/utils";
+
+function sourceDomain(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+function SourcePreview({ title, url }: { title: string; url: string }) {
+  const isHttps = url.trim().toLowerCase().startsWith("https://");
+
+  return (
+    <div className="mt-3 rounded-field border border-trellis-border bg-trellis-surface-2 px-3 py-2">
+      <div className="flex min-w-0 items-start gap-2">
+        <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-trellis-accent" aria-hidden />
+        <div className="min-w-0">
+          {isHttps ? (
+            <button
+              type="button"
+              className="block max-w-full truncate text-left text-sm font-medium text-trellis-text underline decoration-trellis-accent/30 underline-offset-4 transition hover:decoration-trellis-accent"
+              onClick={() => {
+                void window.trellis.shell.openExternal(url);
+              }}
+            >
+              {title}
+            </button>
+          ) : (
+            <p className="truncate text-sm font-medium text-trellis-text">{title}</p>
+          )}
+          <p className="truncate text-[11px] uppercase tracking-[0.14em] text-trellis-faint">
+            {sourceDomain(url)}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface Props {
   note: WikiNote;
@@ -51,6 +89,7 @@ export function NoteViewer({
 
   return (
     <article
+      data-wiki-note-editor
       className={cn(
         isPage ? "trellis-document-page pt-4 md:pt-5" : "space-y-4"
       )}
@@ -99,6 +138,7 @@ export function NoteViewer({
             </div>
           </div>
           <div className="mt-4 space-y-2.5">
+            {note.url ? <SourcePreview title={note.title} url={note.url} /> : null}
             <div className="flex flex-wrap gap-2.5">
               {note.tags.map((tag) => (
                 <div
@@ -211,6 +251,7 @@ export function NoteViewer({
           existingSlugs={existingSlugs}
           wikiNotes={wikiNotes}
           className={cn("max-w-none", isPage ? "trellis-document-content" : "trellis-note-preview")}
+          noteRelativePath={note.relativePath}
           onOpenNote={onOpenLink}
           onSave={onSave}
         />
@@ -219,6 +260,7 @@ export function NoteViewer({
           key={note.slug}
           markdown={note.content}
           existingSlugs={existingSlugs}
+          noteRelativePath={note.relativePath}
           className={cn("max-w-none", isPage ? "trellis-document-content" : "trellis-note-preview")}
           editable={editable}
           onOpenNote={onOpenLink}

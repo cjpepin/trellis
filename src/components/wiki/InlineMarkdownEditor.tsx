@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { renderWikiMarkdown } from "@/lib/markdown";
 import { isInternalNoteHashHref, slugFromInternalNoteHashHref } from "@/lib/noteRoutes";
 import { cn } from "@/lib/utils";
+import { normalizeExternalHttpsUrl } from "@shared/shell/externalHttpsUrl";
 
 interface Props {
   /** Identifies which note is being edited; included with each debounced save so writes cannot target the wrong file after navigation. */
@@ -291,9 +292,11 @@ export function InlineMarkdownEditor({
         return;
       }
 
-      if (href?.startsWith("http")) {
+      const externalHttps = href ? normalizeExternalHttpsUrl(href) : null;
+
+      if (externalHttps) {
         event.preventDefault();
-        void window.trellis.shell.openExternal(href);
+        void window.trellis.shell.openExternal(externalHttps);
         return;
       }
     }

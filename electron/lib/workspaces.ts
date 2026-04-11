@@ -51,7 +51,7 @@ export function getWorkspacePaths(workspaceId: AppWorkspaceId): WorkspacePaths {
     settingsPath: path.join(root, "settings.json"),
     authPath: path.join(root, "supabase-session.bin"),
     providerKeysPath: path.join(root, "provider-keys.bin"),
-    databasePath: path.join(root, "pglite-data"),
+    databasePath: path.join(root, "local.sqlite"),
     previewSeedStatePath: path.join(root, "preview-seed-state.json")
   };
 }
@@ -109,7 +109,6 @@ export function migrateLegacyPersonalWorkspace(): void {
   fs.mkdirSync(personalPaths.root, { recursive: true });
   copyIfPresent(legacy.settingsPath, personalPaths.settingsPath);
   copyIfPresent(legacy.authPath, personalPaths.authPath);
-  copyIfPresent(legacy.databasePath, personalPaths.databasePath);
 }
 
 export function readWorkspaceState(): WorkspaceState {

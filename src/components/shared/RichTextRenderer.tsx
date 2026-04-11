@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import StarterKit from "@tiptap/starter-kit";
+import Image from "@tiptap/extension-image";
+import { TableKit } from "@tiptap/extension-table/kit";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { WikiAwareLink } from "@/components/wiki/wikiAwareLink";
 import { renderWikiMarkdown } from "@/lib/markdown";
 import { isInternalNoteHashHref, slugFromInternalNoteHashHref } from "@/lib/noteRoutes";
 import { htmlToMarkdown } from "@/lib/htmlToMarkdown";
+import { resolveRenderedNoteImages } from "@/lib/noteAssets";
 import { cn } from "@/lib/utils";
+import { normalizeExternalHttpsUrl } from "@shared/shell/externalHttpsUrl";
 
 interface Props {
   markdown: string;
   existingSlugs: string[];
+  noteRelativePath?: string;
   className?: string;
   editable?: boolean;
   onOpenNote?: (slug: string, options?: { linkText?: string }) => void;
@@ -19,6 +24,7 @@ interface Props {
 export function RichTextRenderer({
   markdown,
   existingSlugs,
+  noteRelativePath,
   className,
   editable = false,
   onOpenNote,
@@ -64,6 +70,13 @@ export function RichTextRenderer({
         openOnClick: false,
         autolink: true,
         HTMLAttributes: {}
+      }),
+      TableKit.configure({
+        table: { resizable: false }
+      }),
+      Image.configure({
+        allowBase64: true,
+        HTMLAttributes: {}
       })
     ],
     content: rendered.html,
@@ -106,6 +119,14 @@ export function RichTextRenderer({
   }, [editor, rendered.html]);
 
   useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    resolveRenderedNoteImages(editor.view.dom, noteRelativePath);
+  }, [editor, noteRelativePath, rendered.html]);
+
+  useEffect(() => {
     return () => {
       if (saveTimerRef.current) {
         window.clearTimeout(saveTimerRef.current);
@@ -146,14 +167,16 @@ export function RichTextRenderer({
           return;
         }
 
-        if (href?.startsWith("http")) {
+        const externalHttps = href ? normalizeExternalHttpsUrl(href) : null;
+
+        if (externalHttps) {
           if (!(event.metaKey || event.ctrlKey)) {
             event.preventDefault();
             return;
           }
 
           event.preventDefault();
-          void window.trellis.shell.openExternal(href);
+          void window.trellis.shell.openExternal(externalHttps);
         }
       }}
     >

@@ -41,16 +41,8 @@ function insertDebugRun(id: string): void {
   }
 }
 
-export function buildRequestedProviderOrder(mode: ExtractionMode): ExtractionProviderId[] {
-  if (mode === "cloud") {
-    return ["cloud"];
-  }
-
-  if (mode === "local") {
-    return ["embedded"];
-  }
-
-  return ["embedded", "cloud"];
+export function buildRequestedProviderOrder(_mode: ExtractionMode): ExtractionProviderId[] {
+  return ["embedded"];
 }
 
 export function createExtractionDebugRun(input: {

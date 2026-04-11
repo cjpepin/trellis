@@ -55,7 +55,7 @@ Trellis includes a small wrapper around the Supabase CLI so the common workflows
 - Never expose `SUPABASE_SERVICE_ROLE_KEY` or an `sb_secret_...` key through a `VITE_` variable. The renderer must use a publishable key only.
 - Chat requests send conversation text to your Supabase `chat` Edge Function, which may forward it to OpenAI or Anthropic depending on the selected model.
 - The chat model comes from the UI selector for each request rather than a server-side chat model env var.
-- Extraction requests send transcripts or clipped source text to your Supabase `extract` Edge Function, but the current extraction path does not forward that content to third-party model providers.
+- Note processing and extraction run on-device. Supabase does not provide a note-processing Edge Function in this app.
 - The only cloud metadata written by default is profile and usage state such as counts, session IDs, token counts, and source titles. Message bodies are not written to Postgres tables in this repo.
 - These helpers still rely on the Supabase CLI being installed locally or available on your `PATH`.
 - For local Edge Function work, put secrets in the root `.env` (or `.env.local` for machine-specific values); do not maintain a separate `supabase/.env` file.

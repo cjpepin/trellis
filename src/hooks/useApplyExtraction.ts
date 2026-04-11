@@ -31,6 +31,7 @@ export function useApplyExtraction() {
     async (response: ExtractionResponse, options: ApplyOptions = {}) => {
       const appliedUpdates = response.updates.filter(isWritableUpdate);
       const appliedOps: Array<{ file: string; action: "create" | "append" | "rewrite" }> = [];
+      const appliedNotes: Array<{ slug: string; title: string }> = [];
       const extractionIndex = buildExtractionIndex(graph);
       let appliedUpdateCount = 0;
 
@@ -58,6 +59,7 @@ export function useApplyExtraction() {
           slug: preparedWrite.slug,
           title: preparedWrite.title,
           content: preparedWrite.content,
+          folderPath: preparedWrite.folderPath,
           frontmatter: {
             tags: preparedWrite.tags,
             type: preparedWrite.type,
@@ -67,6 +69,7 @@ export function useApplyExtraction() {
         });
 
         appliedUpdateCount += 1;
+        appliedNotes.push({ slug: preparedWrite.slug, title: preparedWrite.title });
         appliedOps.push({
           file: `${preparedWrite.slug}.md`,
           action: preparedWrite.operation
@@ -109,9 +112,14 @@ export function useApplyExtraction() {
       }
 
       if (appliedUpdateCount > 0) {
+        const maxLinks = 3;
         pushToast({
           title: `✦ ${appliedUpdateCount} notes updated`,
-          tone: "success"
+          tone: "success",
+          noteLinks: appliedNotes.slice(0, maxLinks).map((note) => ({
+            label: note.title,
+            noteSlug: note.slug
+          }))
         });
       }
     },

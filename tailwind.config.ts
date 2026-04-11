@@ -46,7 +46,8 @@ const config: Config = {
       },
       animation: {
         "fade-rise": "fade-rise 160ms ease-out",
-        pulseDots: "pulse-dots 1000ms infinite"
+        pulseDots: "pulse-dots 1000ms infinite",
+        thinkingEllipsis: "thinking-ellipsis 1.2s ease-in-out infinite"
       },
       keyframes: {
         "fade-rise": {
@@ -56,6 +57,10 @@ const config: Config = {
         "pulse-dots": {
           "0%, 80%, 100%": { opacity: "0.25" },
           "40%": { opacity: "1" }
+        },
+        "thinking-ellipsis": {
+          "0%, 100%": { opacity: "0.2" },
+          "50%": { opacity: "1" }
         }
       }
     }

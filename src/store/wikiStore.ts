@@ -8,7 +8,10 @@ interface WikiState {
   noteCache: Record<string, WikiNote>;
   activeNoteSlug: string | null;
   isHydrated: boolean;
-  hydrate: (payload: { notes: NoteSummary[]; folders: FolderSummary[]; graph: GraphData }) => void;
+  hydrate: (
+    payload: { notes: NoteSummary[]; folders: FolderSummary[]; graph: GraphData },
+    options?: { preserveActiveNote?: boolean }
+  ) => void;
   setActiveNote: (slug: string | null) => void;
   setNote: (note: WikiNote) => void;
   replaceIndex: (payload: {
@@ -34,6 +37,40 @@ function upsertNoteSummary(notes: NoteSummary[], note: WikiNote): NoteSummary[] 
   return [summary, ...rest].sort((left, right) => right.updated.localeCompare(left.updated));
 }
 
+function reconcileNoteCache(
+  noteCache: Record<string, WikiNote>,
+  notes: NoteSummary[]
+): Record<string, WikiNote> {
+  const summariesBySlug = new Map(notes.map((note) => [note.slug, note]));
+
+  return Object.fromEntries(
+    Object.entries(noteCache)
+      .filter(([slug]) => summariesBySlug.has(slug))
+      .map(([slug, cachedNote]) => {
+        const summary = summariesBySlug.get(slug);
+
+        if (!summary) {
+          return [slug, cachedNote];
+        }
+
+        return [
+          slug,
+          {
+            ...cachedNote,
+            title: summary.title,
+            updated: summary.updated,
+            tags: summary.tags,
+            type: summary.type,
+            excerpt: summary.excerpt,
+            inboundCount: summary.inboundCount,
+            folderPath: summary.folderPath,
+            relativePath: summary.relativePath
+          }
+        ];
+      })
+  );
+}
+
 export const useWikiStore = create<WikiState>((set) => ({
   notes: [],
   folders: [],
@@ -44,14 +81,23 @@ export const useWikiStore = create<WikiState>((set) => ({
   noteCache: {},
   activeNoteSlug: null,
   isHydrated: false,
-  hydrate: ({ notes, folders, graph }) =>
-    set({
-      notes,
-      folders,
-      graph,
-      noteCache: {},
-      activeNoteSlug: notes[0]?.slug ?? null,
-      isHydrated: true
+  hydrate: ({ notes, folders, graph }, options) =>
+    set((state) => {
+      const activeNoteSlug =
+        options?.preserveActiveNote &&
+        state.activeNoteSlug &&
+        notes.some((note) => note.slug === state.activeNoteSlug)
+          ? state.activeNoteSlug
+          : notes[0]?.slug ?? null;
+
+      return {
+        notes,
+        folders,
+        graph,
+        noteCache: options?.preserveActiveNote ? reconcileNoteCache(state.noteCache, notes) : {},
+        activeNoteSlug,
+        isHydrated: true
+      };
     }),
   setActiveNote: (slug) => set({ activeNoteSlug: slug }),
   setNote: (note) =>
@@ -67,31 +113,6 @@ export const useWikiStore = create<WikiState>((set) => ({
       notes,
       folders,
       graph,
-      noteCache: Object.fromEntries(
-        Object.entries(state.noteCache)
-          .filter(([slug]) => notes.some((note) => note.slug === slug))
-          .map(([slug, cachedNote]) => {
-            const summary = notes.find((note) => note.slug === slug);
-
-            if (!summary) {
-              return [slug, cachedNote];
-            }
-
-            return [
-              slug,
-              {
-                ...cachedNote,
-                title: summary.title,
-                updated: summary.updated,
-                tags: summary.tags,
-                type: summary.type,
-                excerpt: summary.excerpt,
-                inboundCount: summary.inboundCount,
-                folderPath: summary.folderPath,
-                relativePath: summary.relativePath
-              }
-            ];
-          })
-      )
+      noteCache: reconcileNoteCache(state.noteCache, notes)
     }))
 }));

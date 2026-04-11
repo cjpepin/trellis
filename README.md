@@ -43,7 +43,7 @@ npm run build        # Renderer + packaged app (electron-builder)
 | Path | Role |
 | --- | --- |
 | `src/` | Renderer: routes, components, hooks, client state |
-| `electron/` | Main process, IPC, filesystem, SQLite/PGlite |
+| `electron/` | Main process, IPC, filesystem, SQLite (`better-sqlite3`) |
 | `shared/` | Cross-runtime types and helpers |
 | `supabase/` | Migrations, Edge Functions, shared function code |
 | `scripts/` | Automation (reset, Supabase helpers, eval, preview seed) |
@@ -75,21 +75,21 @@ Source: [`fixtures/preview-seed/`](fixtures/preview-seed/).
 
 ## Local extraction (env)
 
-Defaults and full detail are in **AGENTS.md** and `.env.example`. In short: local extraction is **on** by default; set `TRELLIS_FEATURE_LOCAL_EXTRACTION=0` to force cloud-only. Heuristic fallback in Supabase extraction is controlled with `TRELLIS_ENABLE_HEURISTIC_EXTRACTION_FALLBACK`.
+Defaults and full detail are in **AGENTS.md** and `.env.example`. In short: local extraction is **on** by default; set `TRELLIS_FEATURE_LOCAL_EXTRACTION=0` to disable on-device note processing (no cloud fallback). Heuristic fallback in Supabase extraction is controlled with `TRELLIS_ENABLE_HEURISTIC_EXTRACTION_FALLBACK`.
 
-## Reset local vault + PGlite
+## Reset local vault + SQLite
 
 Quit Trellis and stop `npm run dev` first.
 
 ```bash
-npm run reset                              # all configured vault wiki/raw + PGlite
+npm run reset                              # all configured vault wiki/raw + workspace SQLite
 node scripts/reset.mjs --workspace=preview
 node scripts/reset.mjs --workspace=personal
 ```
 
 Optional extra vault trees: `TRELLIS_EXTRA_VAULT_PATHS` (colon-separated; `;` on Windows). Paths come from Trellis `settings.json` under app user data (e.g. macOS `~/Library/Application Support/trellis/`).
 
-PGlite-only wipe (same DB effect as `npm run reset`): remove `pglite-data` under that app data folder (`~/.config/trellis/` on Linux, `%APPDATA%\trellis\` on Windows).
+Manual DB wipe (same effect as reset): delete `workspaces/<id>/local.sqlite` (and `-wal`/`-shm` if present) under app data, and remove any legacy `pglite-data` folders from older builds.
 
 **Supabase local Postgres** (CLI stack) is separate: `npm run supabase:db:reset` while local Supabase is running — [Supabase DX](docs/supabase-dx.md).
 

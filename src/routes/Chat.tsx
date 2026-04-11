@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Loader2, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
+  type AppFeatureFlags,
   type AppSettings,
   type ChatContextPacket,
   type WorkspaceInfo,
   type ChatAttachment,
   type ChatMediaArtifact,
+  type ChatNoteActionProposal,
   type MessageRecord,
   type QueueSessionExtractionResult
 } from "@electron/ipc/types";
@@ -13,10 +16,7 @@ import { getChatModelMediaCapabilities } from "@shared/chat/capabilities";
 import { ChatVaultSelect } from "@/components/chat/ChatVaultSelect";
 import { InputBar } from "@/components/chat/InputBar";
 import { MessageList } from "@/components/chat/MessageList";
-import {
-  getOptionalExtractionCloudConfig,
-  type ChatNoteReference
-} from "@/lib/api";
+import type { ChatNoteReference } from "@/lib/api";
 import { canUseChatModel, getFirstAccessibleChatModel } from "@/lib/chatModels";
 import {
   formatMessageForApi,
@@ -34,16 +34,25 @@ import { useAuthStore } from "@/store/authStore";
 import { useChatStore } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
 import { notesRoutePath } from "@/lib/noteRoutes";
+import { cn } from "@/lib/utils";
+import { defaultNewTemplateMarkdown, templateTag } from "@/lib/chatTemplates";
 import { useWikiStore } from "@/store/wikiStore";
 
 interface Props {
   settings: AppSettings;
+  features: AppFeatureFlags;
   workspace: WorkspaceInfo;
   onUpdateSettings: (settings: AppSettings) => Promise<void>;
   onSwitchWorkspace: (workspaceId: WorkspaceInfo["id"]) => Promise<void>;
 }
 
-export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace }: Props) {
+export function Chat({
+  settings,
+  features,
+  workspace,
+  onUpdateSettings,
+  onSwitchWorkspace
+}: Props) {
   const chatColumnClassName = "max-w-[1020px]";
   const navigate = useNavigate();
   const [draft, setDraft] = useState("");
@@ -51,6 +60,10 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
   const [pendingImageAttachments, setPendingImageAttachments] = useState<PendingImageAttachment[]>([]);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [readAloudLoadingMessageId, setReadAloudLoadingMessageId] = useState<string | null>(null);
+  const [busyNoteActionId, setBusyNoteActionId] = useState<string | null>(null);
+  /** True while queuing manual save or until that extraction job finishes. */
+  const [manualNoteCaptureActive, setManualNoteCaptureActive] = useState(false);
+  const pendingManualExtractionJobIdRef = useRef<string | null>(null);
   const accessToken = useAuthStore((state) => state.accessToken);
   const authStatus = useAuthStore((state) => state.status);
   const subscriptionTier = useAuthStore((state) => state.subscriptionTier);
@@ -60,6 +73,7 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
   const activeNoteSlug = useWikiStore((state) => state.activeNoteSlug);
   const setNote = useWikiStore((state) => state.setNote);
   const setActiveNote = useWikiStore((state) => state.setActiveNote);
+  const replaceWikiIndex = useWikiStore((state) => state.replaceIndex);
   const sessions = useChatStore((state) => state.sessions);
   const activeSessionId = useChatStore((state) => state.activeSessionId);
   const setActiveSession = useChatStore((state) => state.setActiveSession);
@@ -82,6 +96,7 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
     subscriptionTier
   });
   const previousSessionId = useRef<string | null>(activeSessionId);
+  const noteActionDraftDbTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const activeVault = getActiveVault(settings);
   const isPreviewWorkspace = workspace.isPreview;
   const chatDisabled = settings.chat.privacyMode !== "local" && authStatus !== "authenticated";
@@ -164,7 +179,6 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
           sessionId,
           trigger,
           mode: resolveExtractionModeForSubscription(settings.extraction.mode, subscriptionTier),
-          cloud: getOptionalExtractionCloudConfig(accessToken),
           preferredLocalModelId: settings.extraction.preferredLocalModelId ?? undefined,
           force: options?.force ?? false
         });
@@ -187,6 +201,85 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
       subscriptionTier
     ]
   );
+
+  const canSaveChatToNote = useMemo(
+    () => Boolean(activeSessionId) && currentMessages.length >= 2 && !chatDisabled,
+    [activeSessionId, chatDisabled, currentMessages.length]
+  );
+
+  const handleSaveChatToNote = useCallback(async () => {
+    if (!activeSessionId || manualNoteCaptureActive || !canSaveChatToNote) {
+      return;
+    }
+
+    setManualNoteCaptureActive(true);
+    pendingManualExtractionJobIdRef.current = null;
+
+    try {
+      const result = await window.trellis.extraction.queueSession({
+        sessionId: activeSessionId,
+        trigger: "manual",
+        mode: resolveExtractionModeForSubscription(settings.extraction.mode, subscriptionTier),
+        preferredLocalModelId: settings.extraction.preferredLocalModelId ?? undefined,
+        force: true
+      });
+
+      if (result.state === "queued" && result.job) {
+        pendingManualExtractionJobIdRef.current = result.job.id;
+        return;
+      }
+
+      if (result.state === "duplicate" && result.job) {
+        pendingManualExtractionJobIdRef.current = result.job.id;
+        return;
+      }
+
+      pushToast({
+        title: "Add at least one exchange before saving to a note.",
+        tone: "warning"
+      });
+    } catch (error) {
+      pushToast({
+        title:
+          error instanceof Error ? error.message : "Could not save this chat to your notes.",
+        tone: "warning"
+      });
+    } finally {
+      if (!pendingManualExtractionJobIdRef.current) {
+        setManualNoteCaptureActive(false);
+      }
+    }
+  }, [
+    activeSessionId,
+    canSaveChatToNote,
+    manualNoteCaptureActive,
+    pushToast,
+    settings.extraction.mode,
+    settings.extraction.preferredLocalModelId,
+    subscriptionTier
+  ]);
+
+  useEffect(() => {
+    return window.trellis.extraction.onJobUpdate((notification) => {
+      const pendingId = pendingManualExtractionJobIdRef.current;
+      if (!pendingId || notification.id !== pendingId) {
+        return;
+      }
+      if (
+        notification.status === "completed" ||
+        notification.status === "failed" ||
+        notification.status === "skipped"
+      ) {
+        pendingManualExtractionJobIdRef.current = null;
+        setManualNoteCaptureActive(false);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    pendingManualExtractionJobIdRef.current = null;
+    setManualNoteCaptureActive(false);
+  }, [activeSessionId]);
 
   useEffect(() => {
     if (previousSessionId.current && previousSessionId.current !== activeSessionId) {
@@ -240,13 +333,15 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
   const buildChatContext = useCallback(
     async (
       messages: Array<Pick<MessageRecord, "role" | "content">>,
-      vaultId: string
+      vaultId: string,
+      options?: { currentSessionId?: string | null }
     ): Promise<ChatContextPacket> => {
       return window.trellis.chat.buildContext({
         mode: settings.chat.privacyMode,
         vaultId,
         activeNoteSlug,
         sessionTitle: activeSession?.title ?? null,
+        currentSessionId: options?.currentSessionId ?? null,
         messages
       });
     },
@@ -363,6 +458,63 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
       if (targetMessageId) {
         setEditingMessageId(null);
       }
+
+      if (!targetMessageId) {
+        try {
+          const proposal = await window.trellis.chat.proposeNoteActions({
+            mode: settings.chat.privacyMode,
+            vaultId: sessionVaultId,
+            activeNoteSlug,
+            messages: baseMessages.map((message) => ({
+              id: message.id,
+              role: message.role,
+              content: formatMessageForApi(message)
+            }))
+          });
+
+          const isTemplateCreateReview =
+            proposal.actions.length > 0 &&
+            proposal.actions.every((action) => action.kind === "create_template");
+
+          if (isTemplateCreateReview || proposal.clarification) {
+            const assistantMessage: MessageRecord = {
+              id: crypto.randomUUID(),
+              sessionId,
+              role: "assistant",
+              content:
+                proposal.clarification ??
+                "Here’s a reusable template draft for your vault. Approve when it should be saved under wiki/templates.",
+              createdAt: Date.now(),
+              tokens: null,
+              ...(proposal.actions.length > 0 ? { noteActions: proposal.actions } : {})
+            };
+            const nextMessages = [...baseMessages, assistantMessage];
+            replaceSessionMessages(sessionId, nextMessages);
+            clearMessageMeta(userMessage.id);
+            await window.trellis.db.replaceMessages({
+              sessionId,
+              messages: nextMessages
+            });
+            const updatedSession = await window.trellis.db.updateSession({
+              id: sessionId,
+              model: activeModel
+            });
+            upsertSession(updatedSession);
+            setPendingAttachments([]);
+            setPendingImageAttachments([]);
+            return;
+          }
+        } catch (error) {
+          pushToast({
+            title:
+              error instanceof Error
+                ? error.message
+                : "Trellis couldn’t prepare a note change for review.",
+            tone: "warning"
+          });
+        }
+      }
+
       let contextPacket: ChatContextPacket = {
         mode: settings.chat.privacyMode,
         references: [],
@@ -375,7 +527,8 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
             role: message.role,
             content: formatMessageForApi(message)
           })),
-          sessionVaultId
+          sessionVaultId,
+          { currentSessionId: sessionId }
         );
       } catch (error) {
         pushToast({
@@ -455,7 +608,51 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
         model: activeModel
       });
       upsertSession(updatedSession);
-      void queueExtraction(sessionId, "idle");
+      void queueExtraction(sessionId, "idle").then((result) => {
+        if (result?.state === "queued") {
+          pushToast({
+            title: "Updating your vault from this chat in the background…",
+            tone: "default"
+          });
+        }
+      });
+      void window.trellis.chat
+        .applyVaultOrganize({
+          vaultId: sessionVaultId,
+          userMessage: value.trim()
+        })
+        .then(async (organizeResult) => {
+          if (!organizeResult.applied || !organizeResult.message) {
+            return;
+          }
+
+          pushToast({
+            title: organizeResult.message,
+            tone: "success",
+            noteLinks: organizeResult.movedNote
+              ? [
+                  {
+                    label: organizeResult.movedNote.title,
+                    noteSlug: organizeResult.movedNote.slug
+                  }
+                ]
+              : undefined
+          });
+
+          try {
+            const snapshot = await window.trellis.vault.listIndex(sessionVaultId);
+            replaceWikiIndex({
+              notes: snapshot.notes,
+              folders: snapshot.folders,
+              graph: snapshot.graph
+            });
+          } catch {
+            // Non-fatal if the wiki index could not refresh immediately.
+          }
+        })
+        .catch(() => {
+          // Heuristic organizer failures should not block chat.
+        });
     } catch (error) {
       if (optimisticUserMessage && sessionId) {
         setMessageMeta(optimisticUserMessage.id, {
@@ -831,7 +1028,14 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
         model: activeModel
       });
       upsertSession(updatedSession);
-      void queueExtraction(sessionId, "idle");
+      void queueExtraction(sessionId, "idle").then((result) => {
+        if (result?.state === "queued") {
+          pushToast({
+            title: "Updating your vault from this chat in the background…",
+            tone: "default"
+          });
+        }
+      });
       return true;
     } catch (error) {
       replaceSessionMessages(sessionId, priorMessages);
@@ -845,6 +1049,271 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
         tone: "warning"
       });
       return false;
+    }
+  }
+
+  async function handleCreateTemplate(input: { title: string; content: string }): Promise<boolean> {
+    const title = input.title.trim();
+
+    if (!title) {
+      pushToast({
+        title: "Name the template before saving it.",
+        tone: "warning"
+      });
+      return false;
+    }
+
+    const vaultId = activeSession?.vaultId || activeVault.id;
+    const content = input.content.trim() || defaultNewTemplateMarkdown(title);
+
+    try {
+      const result = await window.trellis.vault.writeNote({
+        vaultId,
+        title,
+        folderPath: "templates",
+        content,
+        frontmatter: {
+          tags: [templateTag],
+          type: "concept",
+          sources: 0
+        }
+      });
+      const snapshot = await window.trellis.vault.listIndex(vaultId);
+      setNote(result.note);
+      replaceWikiIndex({
+        notes: snapshot.notes,
+        folders: snapshot.folders,
+        graph: snapshot.graph
+      });
+      pushToast({
+        title: `${title} saved as a template.`,
+        tone: "success",
+        noteLinks: [{ label: result.note.title, noteSlug: result.note.slug }]
+      });
+      return true;
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not save that template.",
+        tone: "warning"
+      });
+      return false;
+    }
+  }
+
+  function updateNoteActionInMessages(input: {
+    sessionId: string;
+    messageId: string;
+    actionId: string;
+    patch: Partial<ChatNoteActionProposal>;
+  }): MessageRecord[] {
+    const messages = useChatStore.getState().messagesBySession[input.sessionId] ?? [];
+
+    return messages.map((message) => {
+      if (message.id !== input.messageId || !message.noteActions) {
+        return message;
+      }
+
+      return {
+        ...message,
+        noteActions: message.noteActions.map((action) =>
+          action.id === input.actionId
+            ? {
+                ...action,
+                ...input.patch
+              }
+            : action
+        )
+      };
+    });
+  }
+
+  function findNoteAction(messageId: string, actionId: string): ChatNoteActionProposal | null {
+    const message = currentMessages.find((item) => item.id === messageId);
+    return message?.noteActions?.find((action) => action.id === actionId) ?? null;
+  }
+
+  async function persistPatchedNoteAction(input: {
+    sessionId: string;
+    messageId: string;
+    actionId: string;
+    patch: Partial<ChatNoteActionProposal>;
+  }): Promise<void> {
+    const nextMessages = updateNoteActionInMessages(input);
+    replaceSessionMessages(input.sessionId, nextMessages);
+    await window.trellis.db.replaceMessages({
+      sessionId: input.sessionId,
+      messages: nextMessages
+    });
+  }
+
+  function flushNoteActionDraftToDb(sessionId: string): void {
+    const messages = useChatStore.getState().messagesBySession[sessionId];
+    if (!messages) {
+      return;
+    }
+    void window.trellis.db.replaceMessages({ sessionId, messages });
+  }
+
+  function handleNoteActionDraftChange(
+    messageId: string,
+    actionId: string,
+    afterMarkdown: string
+  ): void {
+    const sessionId = activeSessionId;
+    if (!sessionId) {
+      return;
+    }
+
+    const nextMessages = updateNoteActionInMessages({
+      sessionId,
+      messageId,
+      actionId,
+      patch: { afterMarkdown }
+    });
+    replaceSessionMessages(sessionId, nextMessages);
+
+    const existing = noteActionDraftDbTimersRef.current.get(sessionId);
+    if (existing) {
+      clearTimeout(existing);
+    }
+    noteActionDraftDbTimersRef.current.set(
+      sessionId,
+      setTimeout(() => {
+        noteActionDraftDbTimersRef.current.delete(sessionId);
+        flushNoteActionDraftToDb(sessionId);
+      }, 450)
+    );
+  }
+
+  useEffect(() => {
+    return () => {
+      const timers = noteActionDraftDbTimersRef.current;
+      for (const [sessionId, timerId] of timers) {
+        clearTimeout(timerId);
+        flushNoteActionDraftToDb(sessionId);
+      }
+      timers.clear();
+    };
+  }, []);
+
+  function flushPendingNoteActionDraftForActiveSession(): void {
+    if (!activeSessionId) {
+      return;
+    }
+    const pending = noteActionDraftDbTimersRef.current.get(activeSessionId);
+    if (pending) {
+      clearTimeout(pending);
+      noteActionDraftDbTimersRef.current.delete(activeSessionId);
+      flushNoteActionDraftToDb(activeSessionId);
+    }
+  }
+
+  async function handleApproveNoteAction(messageId: string, actionId: string): Promise<void> {
+    if (!activeSessionId || busyNoteActionId) {
+      return;
+    }
+
+    flushPendingNoteActionDraftForActiveSession();
+
+    const action = findNoteAction(messageId, actionId);
+
+    if (!action || action.status !== "pending") {
+      return;
+    }
+
+    const vaultId = activeSession?.vaultId || activeVault.id;
+    setBusyNoteActionId(actionId);
+
+    try {
+      const result = await window.trellis.vault.writeNote({
+        vaultId,
+        slug: action.targetSlug,
+        folderPath: action.targetFolderPath,
+        title: action.targetTitle,
+        content: action.afterMarkdown,
+        frontmatter: action.frontmatter
+      });
+      const snapshot = await window.trellis.vault.listIndex(vaultId);
+      setNote(result.note);
+      replaceWikiIndex({
+        notes: snapshot.notes,
+        folders: snapshot.folders,
+        graph: snapshot.graph
+      });
+      await window.trellis.db.recordWikiOps([
+        {
+          sessionId: activeSessionId,
+          file: `${result.note.slug}.md`,
+          action: action.kind === "create_note" || action.kind === "create_template"
+            ? "create"
+            : "rewrite"
+        }
+      ]);
+      await persistPatchedNoteAction({
+        sessionId: activeSessionId,
+        messageId,
+        actionId,
+        patch: {
+          status: "approved",
+          appliedAt: Date.now(),
+          errorMessage: undefined
+        }
+      });
+      pushToast({
+        title: `${action.targetTitle} saved.`,
+        tone: "success",
+        noteLinks: [{ label: result.note.title, noteSlug: result.note.slug }]
+      });
+    } catch (error) {
+      await persistPatchedNoteAction({
+        sessionId: activeSessionId,
+        messageId,
+        actionId,
+        patch: {
+          status: "failed",
+          errorMessage: error instanceof Error ? error.message : "Could not save that note."
+        }
+      });
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not save that note.",
+        tone: "warning"
+      });
+    } finally {
+      setBusyNoteActionId(null);
+    }
+  }
+
+  async function handleRejectNoteAction(messageId: string, actionId: string): Promise<void> {
+    if (!activeSessionId || busyNoteActionId) {
+      return;
+    }
+
+    flushPendingNoteActionDraftForActiveSession();
+
+    const action = findNoteAction(messageId, actionId);
+
+    if (!action || action.status !== "pending") {
+      return;
+    }
+
+    setBusyNoteActionId(actionId);
+
+    try {
+      await persistPatchedNoteAction({
+        sessionId: activeSessionId,
+        messageId,
+        actionId,
+        patch: {
+          status: "rejected",
+          appliedAt: Date.now()
+        }
+      });
+      pushToast({
+        title: "Note change rejected.",
+        tone: "success"
+      });
+    } finally {
+      setBusyNoteActionId(null);
     }
   }
 
@@ -963,6 +1432,10 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
           readAloudDisabled={
             chatDisabled || settings.chat.privacyMode === "local" || !accessToken
           }
+          onApproveNoteAction={handleApproveNoteAction}
+          onRejectNoteAction={handleRejectNoteAction}
+          onNoteActionDraftChange={handleNoteActionDraftChange}
+          busyNoteActionId={busyNoteActionId}
         />
       </div>
       <div className="trellis-overlay-surface border-t border-trellis-border px-5 pb-4 pt-2 backdrop-blur">
@@ -1019,8 +1492,18 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
                 void handlePasteImage(input);
               }}
               onAppendDraft={(text) => {
-                setDraft((current) => `${current}${current && !current.endsWith(" ") ? " " : ""}${text}`);
+                setDraft((current) => {
+                  const separator = current.trim().length === 0
+                    ? ""
+                    : text.includes("\n") || current.includes("\n")
+                      ? "\n\n"
+                      : current.endsWith(" ")
+                        ? ""
+                        : " ";
+                  return `${current}${separator}${text}`;
+                });
               }}
+              onCreateTemplate={handleCreateTemplate}
               onGenerateImageWithPrompt={(prompt) => handleGenerateImageWithPrompt(prompt)}
               privacyLocal={settings.chat.privacyMode === "local"}
               cloudMediaAllowed={!chatDisabled && settings.chat.privacyMode !== "local"}
@@ -1046,6 +1529,49 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
                 onAddVault={handleAddVault}
               />
             )}
+            {features.localExtraction && activeSessionId ? (
+              <span
+                title={
+                  !canSaveChatToNote
+                    ? "Add at least one back-and-forth message before saving to your notes"
+                    : undefined
+                }
+                className={cn(
+                  "block w-full",
+                  (!canSaveChatToNote || manualNoteCaptureActive) && "cursor-not-allowed"
+                )}
+              >
+                <button
+                  type="button"
+                  data-testid="chat-save-to-note"
+                  disabled={!canSaveChatToNote || manualNoteCaptureActive}
+                  aria-busy={manualNoteCaptureActive}
+                  title={
+                    manualNoteCaptureActive
+                      ? "Saving conversation to notes…"
+                      : !canSaveChatToNote
+                        ? undefined
+                        : "Turn this conversation into wiki notes now (same as background capture)"
+                  }
+                  className={cn(
+                    "flex w-full shrink-0 items-center justify-center gap-2 rounded-full border px-3 py-2 text-center text-sm transition",
+                    canSaveChatToNote && !manualNoteCaptureActive
+                      ? "border-trellis-border bg-trellis-surface text-trellis-text hover:border-trellis-accent/35 hover:text-trellis-accent"
+                      : "border-trellis-border bg-trellis-surface text-trellis-faint"
+                  )}
+                  onClick={() => {
+                    void handleSaveChatToNote();
+                  }}
+                >
+                  {manualNoteCaptureActive ? (
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-trellis-muted" aria-hidden />
+                  ) : (
+                    <Sparkles className="h-4 w-4 shrink-0 text-trellis-accent" aria-hidden />
+                  )}
+                  Save to note
+                </button>
+              </span>
+            ) : null}
             <button
               type="button"
               className="w-full shrink-0 rounded-full border border-trellis-border bg-trellis-surface px-3 py-2 text-center text-sm text-trellis-text transition hover:border-trellis-accent/35 hover:text-trellis-accent"

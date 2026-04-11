@@ -5,11 +5,17 @@ export const chatModelIds = [
   "gpt-4.1-nano",
   "gpt-4.1-mini",
   "gpt-4o-mini",
+  "gpt-5.4-nano",
+  "gpt-5.4-mini",
   "gpt-4.1",
   "gpt-4o",
+  "gpt-5.4",
   "claude-3-5-haiku-latest",
+  "claude-haiku-4-5",
   "claude-3-7-sonnet-latest",
-  "claude-sonnet-4-20250514"
+  "claude-sonnet-4-20250514",
+  "claude-sonnet-4-6",
+  "claude-opus-4-6"
 ] as const;
 
 export type ChatModel = (typeof chatModelIds)[number];
@@ -36,6 +42,16 @@ const chatModelConfig: Record<ChatModel, ChatModelConfig> = {
     provider: "openai",
     tier: "cheap"
   },
+  "gpt-5.4-nano": {
+    label: "GPT-5.4 Nano",
+    provider: "openai",
+    tier: "cheap"
+  },
+  "gpt-5.4-mini": {
+    label: "GPT-5.4 Mini",
+    provider: "openai",
+    tier: "cheap"
+  },
   "gpt-4.1": {
     label: "GPT-4.1",
     provider: "openai",
@@ -46,8 +62,18 @@ const chatModelConfig: Record<ChatModel, ChatModelConfig> = {
     provider: "openai",
     tier: "premium"
   },
+  "gpt-5.4": {
+    label: "GPT-5.4",
+    provider: "openai",
+    tier: "premium"
+  },
   "claude-3-5-haiku-latest": {
     label: "Claude 3.5 Haiku",
+    provider: "anthropic",
+    tier: "cheap"
+  },
+  "claude-haiku-4-5": {
+    label: "Claude Haiku 4.5",
     provider: "anthropic",
     tier: "cheap"
   },
@@ -58,6 +84,16 @@ const chatModelConfig: Record<ChatModel, ChatModelConfig> = {
   },
   "claude-sonnet-4-20250514": {
     label: "Claude Sonnet 4",
+    provider: "anthropic",
+    tier: "premium"
+  },
+  "claude-sonnet-4-6": {
+    label: "Claude Sonnet 4.6",
+    provider: "anthropic",
+    tier: "premium"
+  },
+  "claude-opus-4-6": {
+    label: "Claude Opus 4.6",
     provider: "anthropic",
     tier: "premium"
   }

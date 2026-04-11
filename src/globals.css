@@ -583,6 +583,19 @@
     text-decoration-color: color-mix(in srgb, var(--trellis-text) 40%, transparent);
   }
 
+  .trellis-link-preview {
+    @apply my-4 rounded-field border border-trellis-border bg-trellis-surface-2 px-3 py-2;
+  }
+
+  .trellis-link-preview-title {
+    @apply block truncate text-sm font-medium text-trellis-text no-underline;
+  }
+
+  .trellis-link-preview-domain {
+    @apply mt-1 block truncate text-[11px] uppercase text-trellis-faint;
+    letter-spacing: 0.14em;
+  }
+
   /* Cmd/Ctrl+click navigates; show pointer while modifier is held */
   .trellis-rich-text-modifier-nav .trellis-rich-text a[href] {
     cursor: pointer;
@@ -661,6 +674,14 @@
     @apply my-6 w-full border-collapse overflow-hidden rounded-panel;
   }
 
+  .trellis-rich-text .tableWrapper {
+    @apply my-6 overflow-x-auto;
+  }
+
+  .trellis-rich-text .tableWrapper table {
+    @apply my-0;
+  }
+
   .trellis-rich-text th,
   .trellis-rich-text td {
     @apply border border-trellis-border px-3 py-2 align-top text-sm;
@@ -673,6 +694,26 @@
 
   .trellis-rich-text img {
     @apply my-6 rounded-panel border border-trellis-border;
+  }
+
+  .trellis-rich-text .ProseMirror-selectednode,
+  .trellis-rich-text img.ProseMirror-selectednode {
+    outline: 2px solid color-mix(in srgb, var(--trellis-accent) 72%, transparent);
+    outline-offset: 3px;
+  }
+
+  .trellis-rich-text .column-resize-handle {
+    bottom: -2px;
+    position: absolute;
+    right: -2px;
+    top: 0;
+    width: 4px;
+    background: color-mix(in srgb, var(--trellis-accent) 62%, transparent);
+    pointer-events: none;
+  }
+
+  .trellis-rich-text.resize-cursor {
+    cursor: col-resize;
   }
 
   .trellis-chat-copy {

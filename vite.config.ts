@@ -73,7 +73,7 @@ export default defineConfig(({ mode }) => ({
                 "jsdom",
                 "canvas",
                 "@mozilla/readability",
-                "@electric-sql/pglite",
+                "better-sqlite3",
                 "node-llama-cpp"
               ],
               output: {

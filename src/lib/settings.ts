@@ -23,15 +23,6 @@ export const themeOptions: Array<{ id: ThemeName; label: string }> = [
   { id: "fog", label: "Fog" }
 ];
 
-export const extractionModeOptions: Array<{
-  id: ExtractionMode;
-  label: string;
-}> = [
-  { id: "local", label: "Local only" },
-  { id: "auto", label: "Auto" },
-  { id: "cloud", label: "Cloud only" }
-];
-
 export const chatPrivacyModeOptions: Array<{
   id: ChatPrivacyMode;
   label: string;
@@ -41,27 +32,11 @@ export const chatPrivacyModeOptions: Array<{
   { id: "local", label: "Local only" }
 ];
 
-export function getExtractionModeOptions(
-  localExtractionEnabled: boolean,
-  subscriptionTier: SubscriptionTier = "trial"
-): Array<{
-  id: ExtractionMode;
-  label: string;
-}> {
-  if (subscriptionTier === "byok") {
-    return extractionModeOptions.filter((option) => option.id === "local");
-  }
-
-  return localExtractionEnabled
-    ? extractionModeOptions
-    : extractionModeOptions.filter((option) => option.id === "cloud");
-}
-
 export function resolveExtractionModeForSubscription(
-  mode: ExtractionMode,
-  subscriptionTier: SubscriptionTier
+  _mode: ExtractionMode,
+  _subscriptionTier: SubscriptionTier
 ): ExtractionMode {
-  return subscriptionTier === "byok" ? "local" : mode;
+  return "local";
 }
 
 export function getVaultById(

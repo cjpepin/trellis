@@ -2,7 +2,7 @@
 
 Status: Proposed implementation spec
 Owner: Product + engineering
-Last updated: 2026-04-07
+Last updated: 2026-04-11
 
 ## 1. Why this exists
 
@@ -42,14 +42,13 @@ The extractor should behave like a quiet research assistant:
 - Make interlinking accuracy improve as the vault grows instead of degrading.
 - Make local extraction a first-class path without bundling heavyweight model weights into the app.
 - Keep the app fast enough that background extraction still feels invisible.
-- Preserve local-first behavior: note generation should still work when cloud services are unavailable, if a local runtime is installed.
+- Preserve local-first behavior: note generation should run on-device with the downloaded local model when available.
 - Keep the write path deterministic and safe even when the model output is imperfect.
 
 ## 4. Non-goals
 
 - Do not turn Trellis into a general autonomous agent platform.
 - Do not ship model weights inside the Electron bundle.
-- Do not require local inference for first-time use.
 - Do not add sprawling note schemas or cloud-dependent memory systems.
 - Do not optimize for one-shot perfect extraction of every transcript. The goal is steady, compounding quality.
 
@@ -66,65 +65,50 @@ After this ships, a user should feel:
 
 ### 6.1 Runtime strategy
 
-Trellis will support three extraction modes:
+Trellis will support one extraction mode:
 
-1. `Auto` (recommended)
-   Uses local extraction when a supported local runtime is available. Falls back to cloud extraction when local is unavailable and the user is authenticated.
-2. `Local only`
-   Uses only a local runtime. If unavailable, extraction is skipped and the user gets a calm setup prompt.
-3. `Cloud only`
-   Uses the existing Supabase Edge Function path.
+1. `On-device`
+   Uses the local runtime only. If unavailable, extraction is skipped and the user gets a calm setup prompt.
 
 Default for new users:
 
-- `Auto`
-- Cloud extraction still works out of the box.
-- The app gently recommends enabling local extraction for better privacy and offline reliability.
+- `On-device`
+- The app automatically downloads the default note processor on start when needed.
+- The app explains setup and retry states without offering a remote processing option.
 
 ### 6.2 Local runtime choice
 
-Primary local runtime: `Ollama`
+Primary local runtime: embedded `node-llama-cpp`
 
 Why:
 
-- Headless local API at `http://localhost:11434/api`
-- Simple install story
-- Good model ecosystem
-- Supports JSON or JSON-schema-shaped chat output
-- Works well with on-demand model downloads
-
-Developer-friendly secondary runtime: `LM Studio`
-
-- Useful for local experimentation and debugging
-- Not the primary product runtime for V2
+- Runs inside the Electron main process.
+- Keeps transcript and note content on the user’s device.
+- Supports a one-time GGUF download under app user data.
+- Keeps renderer and filesystem boundaries inside typed IPC.
 
 V2 implementation requirement:
 
-- Build a provider abstraction so we can add `LM Studio` later without changing the orchestration layer.
-- Ship only the `Ollama` provider in the first implementation pass.
+- Keep the provider abstraction focused on the embedded local provider.
+- Do not expose a remote note-processing provider in product UI or orchestration.
 
 ### 6.3 Recommended local models
 
 We will support a small set of curated local extraction models rather than an open-ended free-text model field.
 
-Baseline options:
+Baseline option:
 
-- `qwen3:4b`
-  Best low-resource default. Small enough for many laptops and good enough for structured extraction.
-- `gemma3:12b`
-  Recommended quality tier for users with stronger hardware.
-- `mistral-small`
-  High-quality option for power users on larger-memory machines.
+- `trellis-ondevice-extractor`
+  Default embedded extractor using `Qwen2.5-3B-Instruct-Q4_K_M.gguf`.
 
 Default recommendation logic:
 
-- Low-resource device: suggest `qwen3:4b`
-- Mid/high-resource device: suggest `gemma3:12b`
-- Power-user manual upgrade: `mistral-small`
+- Download `trellis-ondevice-extractor` automatically on first run when needed.
+- Store the GGUF under app user data, not inside the app bundle.
 
 Embeddings model:
 
-- `nomic-embed-text-v2-moe` for note retrieval
+- Local embeddings only, when retrieval embeddings are enabled.
 
 Rules:
 
@@ -357,9 +341,8 @@ V2 default:
 
 Add an `Extraction` section to Settings with:
 
-- extraction mode: `Auto`, `Local only`, `Cloud only`
+- extraction mode: `On-device`
 - local runtime status
-- curated local model picker
 - model download / remove actions
 - quality preset: `Balanced`, `High quality`
 - background extraction toggle
@@ -375,17 +358,16 @@ The chat view should keep the existing calm behavior:
 
 Allowed status copy:
 
-- `Extracting notes locally…`
+- `Extracting notes on-device…`
 - `Waiting for local model…`
-- `Local extraction unavailable. Cloud fallback used.`
 
 ### 12.3 First-run local setup
 
-If the user selects `Local only` without Ollama installed:
+If the on-device note processor is not installed:
 
 - show a calm setup card
-- explain what local extraction gives them
-- include install instructions and a runtime check button
+- explain that chats become notes on-device
+- start the model download automatically and include a runtime check button
 - do not block the rest of the app
 
 ## 13. Performance budgets
@@ -407,10 +389,9 @@ If a run exceeds the budget:
 ## 14. Privacy and data rules
 
 - Message bodies and note contents must not be written to cloud tables.
-- `Local only` mode must avoid sending transcript or note content to third-party providers.
-- `Auto` mode must clearly indicate when cloud fallback is used.
+- Note processing must avoid sending transcript or note content to third-party providers.
 - Retrieval embeddings stay local.
-- Model download choice is explicit and user-controlled.
+- Model download state is explicit and recoverable.
 
 ## 15. Data model changes
 
@@ -457,7 +438,7 @@ V2 adds local extraction metadata tables in the Electron database.
 
 Implementation note:
 
-- If storing vectors in PGlite becomes awkward, V2 may store embeddings as JSON arrays first. Optimize only after the workflow is correct.
+- If storing vectors in local SQLite becomes awkward, V2 may store embeddings as JSON arrays first. Optimize only after the workflow is correct.
 
 ## 16. Step-by-step implementation plan
 
@@ -482,7 +463,6 @@ Tasks:
 Files to touch:
 
 - `supabase/functions/_shared/prompts.ts`
-- `supabase/functions/_shared/models.ts`
 - `src/lib/api.ts`
 - `src/hooks/useApplyExtraction.ts`
 - `electron/ipc/types.ts`
@@ -490,7 +470,7 @@ Files to touch:
 
 Exit criteria:
 
-- cloud extraction still works
+- extraction output remains local-only
 - malformed model output is safely rejected
 - writes are more deterministic than today
 
@@ -504,7 +484,7 @@ Tasks:
 
 1. Add note chunking logic in Electron.
 2. Add embeddings storage tables.
-3. Add a local embeddings provider using Ollama.
+3. Add a local embeddings provider.
 4. Rebuild embeddings when notes change.
 5. Add a retrieval query that returns the top relevant note chunks.
 6. Always include explicitly linked notes from the transcript when available.
@@ -531,11 +511,10 @@ Goal:
 Tasks:
 
 1. Introduce `ExtractionProvider` and `ExtractionRuntimeStatus` interfaces.
-2. Implement `CloudExtractionProvider` around the current Supabase path.
-3. Implement `OllamaExtractionProvider`.
-4. Add runtime detection and health checks.
-5. Add model availability checks and local model metadata.
-6. Add structured-output requests using the V2 schema.
+2. Implement the embedded local extraction provider.
+3. Add runtime detection and health checks.
+4. Add model availability checks and local model metadata.
+5. Add structured-output requests using the V2 schema.
 
 Files to touch:
 
@@ -548,7 +527,7 @@ Files to touch:
 
 Exit criteria:
 
-- the app can choose cloud or local extraction at runtime without changing the write path
+- the app runs note processing through the embedded provider without changing the write path
 
 ### Phase 4: Move orchestration local
 
@@ -563,8 +542,7 @@ Tasks:
 3. Create persistent extraction jobs so retries survive route changes.
 4. Add retry policy:
    - local temporary failure: retry once
-   - local unavailable in `Auto`: fall back to cloud
-   - local unavailable in `Local only`: skip and notify
+   - local unavailable: skip and notify
 5. Preserve the current inactivity trigger and session-switch trigger.
 
 Files to touch:
@@ -589,8 +567,8 @@ Tasks:
 1. Add `Extraction` settings UI.
 2. Show local runtime status and model state.
 3. Add model install / remove actions.
-4. Add copy for `Auto`, `Local only`, and `Cloud only`.
-5. Add a non-invasive setup card when local extraction is selected but unavailable.
+4. Add copy for on-device processing.
+5. Add a non-invasive setup card when local extraction is unavailable.
 
 Files to touch:
 
@@ -600,7 +578,7 @@ Files to touch:
 
 Exit criteria:
 
-- a user can intentionally choose their extraction behavior
+- a user can understand and recover local note-processing setup
 - setup does not feel technical or brittle
 
 ### Phase 6: Improve write quality and note coherence
@@ -664,7 +642,7 @@ Tasks:
 1. Hide local extraction behind a feature flag during initial implementation.
 2. Run side-by-side comparisons between current extraction and V2 on a transcript corpus.
 3. Tune prompts and deterministic thresholds.
-4. Remove the old heuristic fallback only after V2 local and cloud outputs are stable.
+4. Remove the old heuristic fallback only after V2 local outputs are stable.
 
 Exit criteria:
 
@@ -674,14 +652,13 @@ Exit criteria:
 
 V2 is done when all of the following are true:
 
-- Users can choose `Auto`, `Local only`, or `Cloud only`.
-- Ollama-backed local extraction works end-to-end.
+- On-device extraction works end-to-end.
 - Extraction uses retrieved note content, not just note titles and tags.
 - Structured outputs are schema-validated before writes.
 - The write path rejects malformed or weak patches safely.
 - Duplicate-note creation is materially lower in manual evaluation.
 - Existing placeholder notes are reused correctly.
-- The app remains useful when cloud extraction is unavailable.
+- The app remains useful when network services are unavailable.
 - The renderer never blocks on extraction work.
 
 ## 18. QA plan
@@ -708,22 +685,20 @@ For each case, manually score:
 
 ## 19. Risks and mitigations
 
-Risk: local models produce weaker writing than cloud models
+Risk: local models produce uneven writing
 
 Mitigation:
 
 - use retrieval
 - enforce structured outputs
-- keep cloud fallback in `Auto`
-- curate only a few tested local models
+- curate and test the embedded default model
 
 Risk: model installation feels heavy
 
 Mitigation:
 
 - do not bundle weights
-- make local extraction optional
-- provide one-click setup guidance
+- provide automatic setup with retry and clear status
 
 Risk: embeddings add complexity
 
@@ -733,12 +708,12 @@ Mitigation:
 - keep the chunking strategy straightforward
 - optimize storage later
 
-Risk: prompt drift between cloud and local behavior
+Risk: prompt drift across local model revisions
 
 Mitigation:
 
 - keep one canonical extraction policy prompt
-- share the same schema and validation layer for both providers
+- share the same schema and validation layer for all local runs
 
 ## 20. Deferred work
 
@@ -747,7 +722,7 @@ These are explicitly out of scope for V2:
 - automatic note consolidation across the whole vault
 - autonomous multi-step agents that browse the vault repeatedly
 - user-facing confidence scores on notes
-- collaborative or cloud-synced extraction review workflows
+- collaborative extraction review workflows
 - vector search over external documents beyond the vault
 
 ## 21. Immediate next build order
@@ -756,10 +731,10 @@ If implementation starts now, do this next:
 
 1. Land the V2 extraction contract and validation layer.
 2. Land retrieval and local embeddings.
-3. Land the Ollama provider and runtime checks.
+3. Land the embedded provider and runtime checks.
 4. Move orchestration into a local extraction service.
 5. Add settings UI and model setup flow.
-6. Run side-by-side evaluation before making `Auto` prefer local by default.
+6. Run side-by-side evaluation before broad rollout.
 
 ## 22. References
 

@@ -1,8 +1,11 @@
-import { PGlite } from "@electric-sql/pglite";
+import fs from "node:fs";
+import path from "node:path";
+import Sqlite from "better-sqlite3";
 import type {
   ChatAttachment,
   ChatMediaArtifact,
   ChatModel,
+  ChatNoteActionProposal,
   ChatSessionSummary,
   ExtractionJobSnapshot,
   ExtractionJobStatus,
@@ -16,8 +19,8 @@ import type {
 } from "../ipc/types";
 import { normalizeChatModel } from "../ipc/types";
 
-let database: PGlite | null = null;
-let currentDatabaseDir: string | null = null;
+let database: Sqlite.Database | null = null;
+let currentDatabasePath: string | null = null;
 
 interface SessionRow {
   id: string;
@@ -38,6 +41,7 @@ interface MessageRow {
   tokens: string | null;
   attachments: string | null;
   media_artifacts: string | null;
+  note_actions: string | null;
 }
 
 interface NoteEmbeddingRow {
@@ -60,8 +64,10 @@ interface ExtractionJobRow {
   vault_id: string;
   status: ExtractionJobStatus;
   trigger: ExtractionJobTrigger;
-  mode: ExtractionMode;
-  provider: ExtractionProviderId | null;
+  /** Legacy rows may store auto/cloud; snapshots always report `"local"`. */
+  mode: string;
+  /** Legacy rows may reference cloud; snapshots only surface `"embedded"` or null. */
+  provider: string | null;
   model: string | null;
   transcript_start_index: string;
   transcript_end_index: string;
@@ -120,6 +126,13 @@ export interface SaveMemoryItemInput {
   confidence: number;
 }
 
+export interface RecentSessionNoteLinkSummary {
+  sessionId: string;
+  title: string;
+  updatedAt: number;
+  noteFiles: string[];
+}
+
 interface ReplaceNoteEmbeddingInput {
   chunkId: string;
   noteTitle: string;
@@ -174,6 +187,22 @@ export interface UpdateExtractionJobInput {
   finishedAt?: number | null;
 }
 
+function placeholders(count: number): string {
+  return Array.from({ length: count }, () => "?").join(", ");
+}
+
+function allRows<T extends object>(db: Sqlite.Database, sql: string, params: unknown[] = []): T[] {
+  return db.prepare(sql).all(...params) as T[];
+}
+
+function firstRow<T extends object>(db: Sqlite.Database, sql: string, params: unknown[] = []): T | undefined {
+  return db.prepare(sql).get(...params) as T | undefined;
+}
+
+function runExec(db: Sqlite.Database, sql: string, params: unknown[] = []): void {
+  db.prepare(sql).run(...params);
+}
+
 function mapSession(row: SessionRow): ChatSessionSummary {
   return {
     id: row.id,
@@ -222,9 +251,28 @@ function parseMediaArtifacts(raw: string | null | undefined): ChatMediaArtifact[
   }
 }
 
+function parseNoteActions(raw: string | null | undefined): ChatNoteActionProposal[] | undefined {
+  if (!raw || raw.trim().length === 0) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return undefined;
+    }
+
+    return parsed as ChatNoteActionProposal[];
+  } catch {
+    return undefined;
+  }
+}
+
 function mapMessage(row: MessageRow): MessageRecord {
   const attachments = parseAttachments(row.attachments);
   const mediaArtifacts = parseMediaArtifacts(row.media_artifacts);
+  const noteActions = parseNoteActions(row.note_actions);
 
   return {
     id: row.id,
@@ -234,7 +282,8 @@ function mapMessage(row: MessageRow): MessageRecord {
     createdAt: Number(row.created_at),
     tokens: row.tokens !== null ? Number(row.tokens) : null,
     ...(attachments ? { attachments } : {}),
-    ...(mediaArtifacts ? { mediaArtifacts } : {})
+    ...(mediaArtifacts ? { mediaArtifacts } : {}),
+    ...(noteActions ? { noteActions } : {})
   };
 }
 
@@ -292,8 +341,8 @@ function mapExtractionJob(row: ExtractionJobRow): ExtractionJobSnapshot {
     vaultId: row.vault_id,
     status: row.status,
     trigger: row.trigger,
-    mode: row.mode,
-    provider: row.provider,
+    mode: "local",
+    provider: row.provider === "embedded" ? "embedded" : null,
     model: row.model,
     transcriptStartIndex: Number(row.transcript_start_index),
     transcriptEndIndex: Number(row.transcript_end_index),
@@ -334,8 +383,8 @@ function mapMemoryItem(row: MemoryItemRow): MemoryItem {
   };
 }
 
-async function ensureSchema(db: PGlite): Promise<void> {
-  await db.exec(`
+function ensureSchema(db: Sqlite.Database): void {
+  db.exec(`
     CREATE TABLE IF NOT EXISTS chat_sessions (
       id TEXT PRIMARY KEY,
       title TEXT,
@@ -352,7 +401,8 @@ async function ensureSchema(db: PGlite): Promise<void> {
       role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
       content TEXT NOT NULL,
       created_at BIGINT NOT NULL,
-      tokens INTEGER
+      tokens INTEGER,
+      note_actions TEXT
     );
 
     CREATE INDEX IF NOT EXISTS messages_session_idx
@@ -449,109 +499,104 @@ async function ensureSchema(db: PGlite): Promise<void> {
   `);
 }
 
-async function migrateMessagesAttachmentsColumn(db: PGlite): Promise<void> {
+function migrateMessagesAttachmentsColumn(db: Sqlite.Database): void {
   try {
-    await db.exec(`ALTER TABLE messages ADD COLUMN attachments TEXT`);
+    db.exec(`ALTER TABLE messages ADD COLUMN attachments TEXT`);
   } catch (error: unknown) {
-    const code =
-      error && typeof error === "object" && "code" in error
-        ? String((error as { code?: string }).code)
-        : "";
     const message = error instanceof Error ? error.message : String(error);
 
     if (
-      code !== "42701" &&
+      !message.includes("duplicate column") &&
       !message.includes("already exists") &&
-      !message.includes("duplicate column")
+      !message.includes("Duplicate column")
     ) {
       throw error;
     }
   }
 }
 
-async function migrateMessagesMediaArtifactsColumn(db: PGlite): Promise<void> {
+function migrateMessagesMediaArtifactsColumn(db: Sqlite.Database): void {
   try {
-    await db.exec(`ALTER TABLE messages ADD COLUMN media_artifacts TEXT`);
+    db.exec(`ALTER TABLE messages ADD COLUMN media_artifacts TEXT`);
   } catch (error: unknown) {
-    const code =
-      error && typeof error === "object" && "code" in error
-        ? String((error as { code?: string }).code)
-        : "";
     const message = error instanceof Error ? error.message : String(error);
 
     if (
-      code !== "42701" &&
+      !message.includes("duplicate column") &&
       !message.includes("already exists") &&
-      !message.includes("duplicate column")
+      !message.includes("Duplicate column")
     ) {
       throw error;
     }
   }
 }
 
-async function migrateExtractionJobProviderConstraint(db: PGlite): Promise<void> {
+function migrateMessagesNoteActionsColumn(db: Sqlite.Database): void {
   try {
-    await db.exec(`ALTER TABLE extraction_jobs DROP CONSTRAINT IF EXISTS extraction_jobs_provider_check`);
-  } catch {
-    // ignore
-  }
-
-  try {
-    await db.exec(`
-      ALTER TABLE extraction_jobs
-      ADD CONSTRAINT extraction_jobs_provider_check
-      CHECK (provider IS NULL OR provider IN ('cloud', 'ollama', 'embedded'))
-    `);
+    db.exec(`ALTER TABLE messages ADD COLUMN note_actions TEXT`);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
 
-    if (!message.includes("already exists") && !message.includes("duplicate")) {
+    if (
+      !message.includes("duplicate column") &&
+      !message.includes("already exists") &&
+      !message.includes("Duplicate column")
+    ) {
       throw error;
     }
   }
 }
 
-export async function initializeDatabase(dataDir: string): Promise<PGlite> {
-  if (database && currentDatabaseDir === dataDir && !database.closed) {
-    await ensureSchema(database);
-    await migrateMessagesAttachmentsColumn(database);
-    await migrateMessagesMediaArtifactsColumn(database);
-    await migrateExtractionJobProviderConstraint(database);
+/** PGlite-era migration; SQLite ships the full CHECK in ensureSchema. No-op. */
+function migrateExtractionJobProviderConstraint(_db: Sqlite.Database): void {}
+
+function ensureParentDir(filePath: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+}
+
+export async function initializeDatabase(databaseFilePath: string): Promise<Sqlite.Database> {
+  if (database && currentDatabasePath === databaseFilePath && database.open) {
+    ensureSchema(database);
+    migrateMessagesAttachmentsColumn(database);
+    migrateMessagesMediaArtifactsColumn(database);
+    migrateMessagesNoteActionsColumn(database);
+    migrateExtractionJobProviderConstraint(database);
     return database;
   }
 
-  if (database && !database.closed) {
-    await database.close();
+  if (database && database.open) {
+    database.close();
   }
 
-  if (!database || currentDatabaseDir !== dataDir || database.closed) {
-    database = new PGlite(dataDir);
-    currentDatabaseDir = dataDir;
-    await database.waitReady;
-  }
+  ensureParentDir(databaseFilePath);
+  database = new Sqlite(databaseFilePath);
+  database.pragma("journal_mode = WAL");
+  database.pragma("foreign_keys = ON");
+  currentDatabasePath = databaseFilePath;
 
-  await ensureSchema(database);
-  await migrateMessagesAttachmentsColumn(database);
-  await migrateMessagesMediaArtifactsColumn(database);
-  await migrateExtractionJobProviderConstraint(database);
+  ensureSchema(database);
+  migrateMessagesAttachmentsColumn(database);
+  migrateMessagesMediaArtifactsColumn(database);
+  migrateMessagesNoteActionsColumn(database);
+  migrateExtractionJobProviderConstraint(database);
 
   return database;
 }
 
 export async function closeDatabase(): Promise<void> {
-  if (!database || database.closed) {
+  if (!database || !database.open) {
     database = null;
-    currentDatabaseDir = null;
+    currentDatabasePath = null;
     return;
   }
 
-  await database.close();
+  database.close();
   database = null;
-  currentDatabaseDir = null;
+  currentDatabasePath = null;
 }
 
-export function getDatabase(): PGlite {
-  if (!database) {
+export function getDatabase(): Sqlite.Database {
+  if (!database || !database.open) {
     throw new Error("Database has not been initialized yet.");
   }
 
@@ -559,34 +604,98 @@ export function getDatabase(): PGlite {
 }
 
 export async function listSessions(): Promise<ChatSessionSummary[]> {
-  const result = await getDatabase().query<SessionRow>(
+  const db = getDatabase();
+  const rows = allRows<SessionRow>(
+    db,
     `SELECT id, title, created_at, updated_at, model, message_count, vault_id
      FROM chat_sessions
      ORDER BY updated_at DESC`
   );
 
-  return result.rows.map(mapSession);
+  return rows.map(mapSession);
+}
+
+export async function listRecentSessionNoteLinks(
+  limit: number,
+  excludeSessionId?: string | null
+): Promise<RecentSessionNoteLinkSummary[]> {
+  const db = getDatabase();
+  const sessionRows = excludeSessionId
+    ? allRows<SessionRow>(
+        db,
+        `SELECT id, title, created_at, updated_at, model, message_count, vault_id
+         FROM chat_sessions
+         WHERE id <> ?
+         ORDER BY updated_at DESC
+         LIMIT ?`,
+        [excludeSessionId, limit]
+      )
+    : allRows<SessionRow>(
+        db,
+        `SELECT id, title, created_at, updated_at, model, message_count, vault_id
+         FROM chat_sessions
+         ORDER BY updated_at DESC
+         LIMIT ?`,
+        [limit]
+      );
+  const summaries = sessionRows.map(mapSession);
+
+  if (summaries.length === 0) {
+    return [];
+  }
+
+  const sessionIds = summaries.map((session) => session.id);
+  const inList = placeholders(sessionIds.length);
+  const ops = allRows<{ session_id: string; file: string }>(
+    db,
+    `SELECT session_id, file
+     FROM wiki_ops
+     WHERE session_id IN (${inList})
+     ORDER BY created_at DESC`,
+    sessionIds
+  );
+  const filesBySession = new Map<string, string[]>();
+
+  for (const row of ops) {
+    const files = filesBySession.get(row.session_id) ?? [];
+
+    if (!files.includes(row.file)) {
+      files.push(row.file);
+    }
+
+    filesBySession.set(row.session_id, files);
+  }
+
+  return summaries.map((session) => ({
+    sessionId: session.id,
+    title: session.title,
+    updatedAt: session.updatedAt,
+    noteFiles: filesBySession.get(session.id) ?? []
+  }));
 }
 
 export async function getSessionById(sessionId: string): Promise<ChatSessionSummary | null> {
-  const result = await getDatabase().query<SessionRow>(
+  const db = getDatabase();
+  const row = firstRow<SessionRow>(
+    db,
     `SELECT id, title, created_at, updated_at, model, message_count, vault_id
      FROM chat_sessions
-     WHERE id = $1`,
+     WHERE id = ?`,
     [sessionId]
   );
 
-  const row = result.rows[0];
   return row ? mapSession(row) : null;
 }
 
 export async function createSession(model: ChatModel, vaultId: string): Promise<ChatSessionSummary> {
+  const db = getDatabase();
   const now = Date.now();
   const id = crypto.randomUUID();
 
-  await getDatabase().query(
+  runExec(
+    db,
     `INSERT INTO chat_sessions (id, title, created_at, updated_at, model, vault_id, message_count)
-     VALUES ($1, $2, $3, $4, $5, $6, 0)`,
+     VALUES (?, ?, ?, ?, ?, ?, 0)`,
     [id, "Untitled Session", now, now, model, vaultId]
   );
 
@@ -602,21 +711,23 @@ export async function createSession(model: ChatModel, vaultId: string): Promise<
 }
 
 export async function getMessagesBySession(sessionId: string): Promise<MessageRecord[]> {
-  const result = await getDatabase().query<MessageRow>(
-    `SELECT id, session_id, role, content, created_at, tokens, attachments, media_artifacts
+  const db = getDatabase();
+  const rows = allRows<MessageRow>(
+    db,
+    `SELECT id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions
      FROM messages
-     WHERE session_id = $1
+     WHERE session_id = ?
      ORDER BY created_at ASC`,
     [sessionId]
   );
 
-  return result.rows.map(mapMessage);
+  return rows.map(mapMessage);
 }
 
 export async function appendMessages(messages: MessageRecord[]): Promise<void> {
   const db = getDatabase();
 
-  await db.transaction(async (tx) => {
+  const run = db.transaction(() => {
     const touchedSessions = new Set<string>();
 
     for (const message of messages) {
@@ -628,15 +739,21 @@ export async function appendMessages(messages: MessageRecord[]): Promise<void> {
         message.mediaArtifacts && message.mediaArtifacts.length > 0
           ? JSON.stringify(message.mediaArtifacts)
           : null;
+      const noteActionsJson =
+        message.noteActions && message.noteActions.length > 0
+          ? JSON.stringify(message.noteActions)
+          : null;
 
-      await tx.query(
-        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      runExec(
+        db,
+        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
-           content = EXCLUDED.content,
-           tokens = EXCLUDED.tokens,
-           attachments = EXCLUDED.attachments,
-           media_artifacts = EXCLUDED.media_artifacts`,
+           content = excluded.content,
+           tokens = excluded.tokens,
+           attachments = excluded.attachments,
+           media_artifacts = excluded.media_artifacts,
+           note_actions = excluded.note_actions`,
         [
           message.id,
           message.sessionId,
@@ -645,7 +762,8 @@ export async function appendMessages(messages: MessageRecord[]): Promise<void> {
           message.createdAt,
           message.tokens,
           attachmentsJson,
-          mediaJson
+          mediaJson,
+          noteActionsJson
         ]
       );
       touchedSessions.add(message.sessionId);
@@ -654,31 +772,32 @@ export async function appendMessages(messages: MessageRecord[]): Promise<void> {
     if (touchedSessions.size > 0) {
       const now = Date.now();
       const sessionIds = Array.from(touchedSessions);
-      await tx.query(
+      const ph = placeholders(sessionIds.length);
+      runExec(
+        db,
         `UPDATE chat_sessions AS cs
-         SET updated_at = $1,
+         SET updated_at = ?,
              message_count = m.cnt
          FROM (
-           SELECT session_id, COUNT(*)::integer AS cnt
+           SELECT session_id, COUNT(*) AS cnt
            FROM messages
-           WHERE session_id = ANY($2::text[])
+           WHERE session_id IN (${ph})
            GROUP BY session_id
          ) AS m
          WHERE cs.id = m.session_id`,
-        [now, sessionIds]
+        [now, ...sessionIds]
       );
     }
   });
+
+  run();
 }
 
 export async function replaceMessages(sessionId: string, messages: MessageRecord[]): Promise<void> {
   const db = getDatabase();
 
-  await db.transaction(async (tx) => {
-    await tx.query(
-      `DELETE FROM messages WHERE session_id = $1`,
-      [sessionId]
-    );
+  const txn = db.transaction(() => {
+    runExec(db, `DELETE FROM messages WHERE session_id = ?`, [sessionId]);
 
     for (const message of messages) {
       const attachmentsJson =
@@ -689,10 +808,15 @@ export async function replaceMessages(sessionId: string, messages: MessageRecord
         message.mediaArtifacts && message.mediaArtifacts.length > 0
           ? JSON.stringify(message.mediaArtifacts)
           : null;
+      const noteActionsJson =
+        message.noteActions && message.noteActions.length > 0
+          ? JSON.stringify(message.noteActions)
+          : null;
 
-      await tx.query(
-        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      runExec(
+        db,
+        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           message.id,
           message.sessionId,
@@ -701,18 +825,20 @@ export async function replaceMessages(sessionId: string, messages: MessageRecord
           message.createdAt,
           message.tokens,
           attachmentsJson,
-          mediaJson
+          mediaJson,
+          noteActionsJson
         ]
       );
     }
 
-    await tx.query(
-      `UPDATE chat_sessions
-       SET updated_at = $1, message_count = $2
-       WHERE id = $3`,
-      [Date.now(), messages.length, sessionId]
-    );
+    runExec(db, `UPDATE chat_sessions SET updated_at = ?, message_count = ? WHERE id = ?`, [
+      Date.now(),
+      messages.length,
+      sessionId
+    ]);
   });
+
+  txn();
 }
 
 export async function updateSession(
@@ -720,14 +846,14 @@ export async function updateSession(
 ): Promise<ChatSessionSummary> {
   const db = getDatabase();
 
-  const existing = await db.query<SessionRow>(
+  const row = firstRow<SessionRow>(
+    db,
     `SELECT id, title, created_at, updated_at, model, message_count, vault_id
      FROM chat_sessions
-     WHERE id = $1`,
+     WHERE id = ?`,
     [payload.id]
   );
 
-  const row = existing.rows[0];
   if (!row) {
     throw new Error(`Unknown session: ${payload.id}`);
   }
@@ -737,12 +863,13 @@ export async function updateSession(
   const updatedModel = payload.model ?? row.model;
   const updatedVaultId = payload.vaultId ?? row.vault_id ?? "";
 
-  await db.query(
-    `UPDATE chat_sessions
-     SET title = $1, updated_at = $2, model = $3, vault_id = $4
-     WHERE id = $5`,
-    [updatedTitle, updatedAt, updatedModel, updatedVaultId, payload.id]
-  );
+  runExec(db, `UPDATE chat_sessions SET title = ?, updated_at = ?, model = ?, vault_id = ? WHERE id = ?`, [
+    updatedTitle,
+    updatedAt,
+    updatedModel,
+    updatedVaultId,
+    payload.id
+  ]);
 
   return {
     id: row.id,
@@ -758,37 +885,44 @@ export async function updateSession(
 export async function recordWikiOps(ops: RecordWikiOpInput[]): Promise<void> {
   const db = getDatabase();
 
-  await db.transaction(async (tx) => {
+  const txn = db.transaction(() => {
     const now = Date.now();
 
     for (const item of ops) {
-      await tx.query(
+      runExec(
+        db,
         `INSERT INTO wiki_ops (id, session_id, file, action, created_at)
-         VALUES ($1, $2, $3, $4, $5)`,
+         VALUES (?, ?, ?, ?, ?)`,
         [crypto.randomUUID(), item.sessionId ?? null, item.file, item.action, now]
       );
     }
   });
+
+  txn();
 }
 
 export async function listMemoryItems(vaultId: string): Promise<MemoryItem[]> {
-  const result = await getDatabase().query<MemoryItemRow>(
+  const db = getDatabase();
+  const rows = allRows<MemoryItemRow>(
+    db,
     `SELECT id, vault_id, kind, content, source_message_ids, linked_note_slug, confidence,
             created_at, updated_at
      FROM memory_items
-     WHERE vault_id = $1
+     WHERE vault_id = ?
      ORDER BY updated_at DESC, created_at DESC`,
     [vaultId]
   );
 
-  return result.rows.map(mapMemoryItem);
+  return rows.map(mapMemoryItem);
 }
 
 export async function saveMemoryItem(input: SaveMemoryItemInput): Promise<MemoryItem> {
+  const db = getDatabase();
   const now = Date.now();
   const id = input.id ?? crypto.randomUUID();
 
-  const result = await getDatabase().query<MemoryItemRow>(
+  const row = firstRow<MemoryItemRow>(
+    db,
     `INSERT INTO memory_items (
        id,
        vault_id,
@@ -800,14 +934,14 @@ export async function saveMemoryItem(input: SaveMemoryItemInput): Promise<Memory
        created_at,
        updated_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (id) DO UPDATE SET
-       kind = EXCLUDED.kind,
-       content = EXCLUDED.content,
-       source_message_ids = EXCLUDED.source_message_ids,
-       linked_note_slug = EXCLUDED.linked_note_slug,
-       confidence = EXCLUDED.confidence,
-       updated_at = EXCLUDED.updated_at
+       kind = excluded.kind,
+       content = excluded.content,
+       source_message_ids = excluded.source_message_ids,
+       linked_note_slug = excluded.linked_note_slug,
+       confidence = excluded.confidence,
+       updated_at = excluded.updated_at
      RETURNING id, vault_id, kind, content, source_message_ids, linked_note_slug, confidence,
                created_at, updated_at`,
     [
@@ -823,8 +957,6 @@ export async function saveMemoryItem(input: SaveMemoryItemInput): Promise<Memory
     ]
   );
 
-  const row = result.rows[0];
-
   if (!row) {
     throw new Error(`Could not load saved memory item ${id}.`);
   }
@@ -835,7 +967,7 @@ export async function saveMemoryItem(input: SaveMemoryItemInput): Promise<Memory
 export async function seedDatabase(fixture: SeedDatabaseFixture): Promise<void> {
   const db = getDatabase();
 
-  await db.transaction(async (tx) => {
+  const txn = db.transaction(() => {
     const messageCountBySession = new Map<string, number>();
     for (const message of fixture.messages) {
       messageCountBySession.set(
@@ -845,9 +977,10 @@ export async function seedDatabase(fixture: SeedDatabaseFixture): Promise<void> 
     }
 
     for (const session of fixture.sessions) {
-      await tx.query(
+      runExec(
+        db,
         `INSERT INTO chat_sessions (id, title, created_at, updated_at, model, vault_id, message_count)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           session.id,
           session.title,
@@ -869,10 +1002,15 @@ export async function seedDatabase(fixture: SeedDatabaseFixture): Promise<void> 
         message.mediaArtifacts && message.mediaArtifacts.length > 0
           ? JSON.stringify(message.mediaArtifacts)
           : null;
+      const noteActionsJson =
+        message.noteActions && message.noteActions.length > 0
+          ? JSON.stringify(message.noteActions)
+          : null;
 
-      await tx.query(
-        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      runExec(
+        db,
+        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           message.id,
           message.sessionId,
@@ -881,11 +1019,14 @@ export async function seedDatabase(fixture: SeedDatabaseFixture): Promise<void> 
           message.createdAt,
           message.tokens,
           attachmentsJson,
-          mediaJson
+          mediaJson,
+          noteActionsJson
         ]
       );
     }
   });
+
+  txn();
 }
 
 export async function replaceNoteEmbeddings(
@@ -895,10 +1036,11 @@ export async function replaceNoteEmbeddings(
 ): Promise<void> {
   const db = getDatabase();
 
-  await db.transaction(async (tx) => {
-    await tx.query(
+  const txn = db.transaction(() => {
+    runExec(
+      db,
       `DELETE FROM note_embeddings
-       WHERE vault_id = $1 AND note_slug = $2`,
+       WHERE vault_id = ? AND note_slug = ?`,
       [vaultId, noteSlug]
     );
 
@@ -908,17 +1050,11 @@ export async function replaceNoteEmbeddings(
       return;
     }
 
-    let paramIndex = 1;
     const valueRows: string[] = [];
     const params: unknown[] = [];
 
     for (const chunk of chunks) {
-      const placeholders: string[] = [];
-      for (let c = 0; c < 11; c++) {
-        placeholders.push(`$${paramIndex++}`);
-      }
-
-      valueRows.push(`(${placeholders.join(", ")})`);
+      valueRows.push("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
       params.push(
         vaultId,
         noteSlug,
@@ -934,7 +1070,8 @@ export async function replaceNoteEmbeddings(
       );
     }
 
-    await tx.query(
+    runExec(
+      db,
       `INSERT INTO note_embeddings (
          vault_id,
          note_slug,
@@ -952,18 +1089,22 @@ export async function replaceNoteEmbeddings(
       params
     );
   });
+
+  txn();
 }
 
 export async function listNoteEmbeddings(vaultId: string): Promise<StoredNoteEmbedding[]> {
-  const result = await getDatabase().query<NoteEmbeddingRow>(
+  const db = getDatabase();
+  const rows = allRows<NoteEmbeddingRow>(
+    db,
     `SELECT vault_id, note_slug, chunk_id, note_title, note_type, tags, heading_path, content,
             content_hash, embedding, updated_at
      FROM note_embeddings
-     WHERE vault_id = $1`,
+     WHERE vault_id = ?`,
     [vaultId]
   );
 
-  return result.rows.map(mapNoteEmbedding);
+  return rows.map(mapNoteEmbedding);
 }
 
 export async function deleteMissingNoteEmbeddings(
@@ -973,25 +1114,29 @@ export async function deleteMissingNoteEmbeddings(
   const db = getDatabase();
 
   if (existingSlugs.length === 0) {
-    await db.query(`DELETE FROM note_embeddings WHERE vault_id = $1`, [vaultId]);
+    runExec(db, `DELETE FROM note_embeddings WHERE vault_id = ?`, [vaultId]);
     return;
   }
 
-  await db.query(
+  const ph = placeholders(existingSlugs.length);
+  runExec(
+    db,
     `DELETE FROM note_embeddings
-     WHERE vault_id = $1
-       AND NOT (note_slug = ANY($2::text[]))`,
-    [vaultId, existingSlugs]
+     WHERE vault_id = ?
+       AND note_slug NOT IN (${ph})`,
+    [vaultId, ...existingSlugs]
   );
 }
 
 export async function createExtractionJob(
   input: CreateExtractionJobInput
 ): Promise<ExtractionJobSnapshot> {
+  const db = getDatabase();
   const now = Date.now();
   const id = crypto.randomUUID();
 
-  const insertResult = await getDatabase().query<ExtractionJobRow>(
+  const row = firstRow<ExtractionJobRow>(
+    db,
     `INSERT INTO extraction_jobs (
        id,
        session_id,
@@ -1007,7 +1152,7 @@ export async function createExtractionJob(
        preferred_local_model_id,
        created_at
      )
-     VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9, $10, $11, $12)
+     VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)
      RETURNING id, session_id, vault_id, status, trigger, mode, provider, model,
                transcript_start_index, transcript_end_index, transcript_digest,
                attempt_count, applied_update_count, session_title, error_message,
@@ -1029,7 +1174,6 @@ export async function createExtractionJob(
     ]
   );
 
-  const row = insertResult.rows[0];
   if (!row) {
     throw new Error(`Could not load newly created extraction job ${id}.`);
   }
@@ -1038,56 +1182,58 @@ export async function createExtractionJob(
 }
 
 export async function getExtractionJob(jobId: string): Promise<ExtractionJobSnapshot | null> {
-  const result = await getDatabase().query<ExtractionJobRow>(
+  const db = getDatabase();
+  const row = firstRow<ExtractionJobRow>(
+    db,
     `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
             transcript_start_index, transcript_end_index, transcript_digest,
             attempt_count, applied_update_count, session_title, error_message,
             cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
             created_at, started_at, finished_at
      FROM extraction_jobs
-     WHERE id = $1`,
+     WHERE id = ?`,
     [jobId]
   );
 
-  const row = result.rows[0];
   return row ? mapExtractionJob(row) : null;
 }
 
 export async function updateExtractionJob(
   input: UpdateExtractionJobInput
 ): Promise<ExtractionJobSnapshot> {
-  const existing = await getDatabase().query<ExtractionJobRow>(
+  const db = getDatabase();
+  const row = firstRow<ExtractionJobRow>(
+    db,
     `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
             transcript_start_index, transcript_end_index, transcript_digest,
             attempt_count, applied_update_count, session_title, error_message,
             cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
             created_at, started_at, finished_at
      FROM extraction_jobs
-     WHERE id = $1`,
+     WHERE id = ?`,
     [input.id]
   );
-
-  const row = existing.rows[0];
 
   if (!row) {
     throw new Error(`Unknown extraction job: ${input.id}`);
   }
 
-  const updated = await getDatabase().query<ExtractionJobRow>(
+  const updated = firstRow<ExtractionJobRow>(
+    db,
     `UPDATE extraction_jobs
-     SET status = $1,
-         provider = $2,
-         model = $3,
-         transcript_start_index = $4,
-         transcript_end_index = $5,
-         transcript_digest = $6,
-         attempt_count = $7,
-         applied_update_count = $8,
-         session_title = $9,
-         error_message = $10,
-         started_at = $11,
-         finished_at = $12
-     WHERE id = $13
+     SET status = ?,
+         provider = ?,
+         model = ?,
+         transcript_start_index = ?,
+         transcript_end_index = ?,
+         transcript_digest = ?,
+         attempt_count = ?,
+         applied_update_count = ?,
+         session_title = ?,
+         error_message = ?,
+         started_at = ?,
+         finished_at = ?
+     WHERE id = ?
      RETURNING id, session_id, vault_id, status, trigger, mode, provider, model,
                transcript_start_index, transcript_end_index, transcript_digest,
                attempt_count, applied_update_count, session_title, error_message,
@@ -1110,74 +1256,79 @@ export async function updateExtractionJob(
     ]
   );
 
-  const out = updated.rows[0];
-  if (!out) {
+  if (!updated) {
     throw new Error(`Unknown extraction job: ${input.id}`);
   }
 
-  return mapExtractionJob(out);
+  return mapExtractionJob(updated);
 }
 
 export async function getLatestCompletedExtractionJob(
   sessionId: string
 ): Promise<ExtractionJobSnapshot | null> {
-  const result = await getDatabase().query<ExtractionJobRow>(
+  const db = getDatabase();
+  const row = firstRow<ExtractionJobRow>(
+    db,
     `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
             transcript_start_index, transcript_end_index, transcript_digest,
             attempt_count, applied_update_count, session_title, error_message,
             cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
             created_at, started_at, finished_at
      FROM extraction_jobs
-     WHERE session_id = $1 AND status = 'completed'
+     WHERE session_id = ? AND status = 'completed'
      ORDER BY finished_at DESC, created_at DESC
      LIMIT 1`,
     [sessionId]
   );
 
-  const row = result.rows[0];
   return row ? mapExtractionJob(row) : null;
 }
 
 export async function listQueuedExtractionJobsBySession(
   sessionId: string
 ): Promise<ExtractionJobSnapshot[]> {
-  const result = await getDatabase().query<ExtractionJobRow>(
+  const db = getDatabase();
+  const rows = allRows<ExtractionJobRow>(
+    db,
     `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
             transcript_start_index, transcript_end_index, transcript_digest,
             attempt_count, applied_update_count, session_title, error_message,
             cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
             created_at, started_at, finished_at
      FROM extraction_jobs
-     WHERE session_id = $1 AND status IN ('pending', 'running')
+     WHERE session_id = ? AND status IN ('pending', 'running')
      ORDER BY created_at ASC`,
     [sessionId]
   );
 
-  return result.rows.map(mapExtractionJob);
+  return rows.map(mapExtractionJob);
 }
 
 export async function getNextPendingExtractionJob(
   sessionId: string
 ): Promise<ExtractionJobSnapshot | null> {
-  const result = await getDatabase().query<ExtractionJobRow>(
+  const db = getDatabase();
+  const row = firstRow<ExtractionJobRow>(
+    db,
     `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
             transcript_start_index, transcript_end_index, transcript_digest,
             attempt_count, applied_update_count, session_title, error_message,
             cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
             created_at, started_at, finished_at
      FROM extraction_jobs
-     WHERE session_id = $1 AND status = 'pending'
+     WHERE session_id = ? AND status = 'pending'
      ORDER BY created_at ASC
      LIMIT 1`,
     [sessionId]
   );
 
-  const row = result.rows[0];
   return row ? mapExtractionJob(row) : null;
 }
 
 export async function listResumableExtractionJobs(): Promise<ExtractionJobSnapshot[]> {
-  const result = await getDatabase().query<ExtractionJobRow>(
+  const db = getDatabase();
+  const rows = allRows<ExtractionJobRow>(
+    db,
     `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
             transcript_start_index, transcript_end_index, transcript_digest,
             attempt_count, applied_update_count, session_title, error_message,
@@ -1188,7 +1339,7 @@ export async function listResumableExtractionJobs(): Promise<ExtractionJobSnapsh
      ORDER BY created_at ASC`
   );
 
-  return result.rows.map(mapExtractionJob);
+  return rows.map(mapExtractionJob);
 }
 
 export async function getExtractionJobConfig(
@@ -1198,14 +1349,14 @@ export async function getExtractionJobConfig(
   cloudPublishableKey: string | null;
   preferredLocalModelId: string | null;
 } | null> {
-  const result = await getDatabase().query<ExtractionJobConfigRow>(
+  const db = getDatabase();
+  const row = firstRow<ExtractionJobConfigRow>(
+    db,
     `SELECT cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id
      FROM extraction_jobs
-     WHERE id = $1`,
+     WHERE id = ?`,
     [jobId]
   );
-
-  const row = result.rows[0];
 
   if (!row) {
     return null;

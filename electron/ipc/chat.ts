@@ -3,17 +3,21 @@ import { z } from "zod";
 import type {
   AppSettings,
   AppWorkspaceId,
+  ApplyVaultOrganizeInput,
   BuildChatContextInput,
   ChatStreamPayloadMessage,
   ChatStreamRequest,
   ChatProvider,
   DeleteProviderKeyInput,
   LocalChatRunInput,
+  ProposeChatNoteActionsInput,
   SetProviderKeyInput,
   StoreChatMemoryInput
 } from "./types";
 import { chatModelIds, ipcChannels } from "./types";
 import { buildChatContextPacket } from "../lib/chat/context";
+import { proposeChatNoteActions } from "../lib/chat/noteActions";
+import { executeVaultOrganize } from "../lib/chat/vaultOrganize";
 import { storeTurnMemory } from "../lib/chat/memory";
 import { runLocalChatReply } from "../lib/chat/local";
 import {
@@ -38,6 +42,7 @@ const chatContextReferenceSchema = z.object({
   title: z.string().min(1),
   excerpt: z.string(),
   content: z.string().min(1),
+  tags: z.array(z.string()).optional(),
   slug: z.string().min(1).optional(),
   linkedNoteSlug: z.string().min(1).nullable().optional(),
   isExplicitMatch: z.boolean().optional()
@@ -48,6 +53,7 @@ const buildChatContextSchema = z.object({
   vaultId: z.string().min(1).optional(),
   activeNoteSlug: z.string().min(1).nullable().optional(),
   sessionTitle: z.string().min(1).nullable().optional(),
+  currentSessionId: z.string().uuid().nullable().optional(),
   messages: z.array(messageSchema).min(1)
 });
 
@@ -62,6 +68,22 @@ const runLocalReplySchema = z.object({
   model: z.enum(chatModelIds),
   messages: z.array(messageSchema).min(1),
   references: z.array(chatContextReferenceSchema).optional()
+});
+
+const proposeNoteActionsMessageSchema = messageSchema.extend({
+  id: z.string().uuid()
+});
+
+const proposeNoteActionsSchema = z.object({
+  mode: z.enum(["auto", "off", "local"]),
+  vaultId: z.string().min(1).optional(),
+  activeNoteSlug: z.string().min(1).nullable().optional(),
+  messages: z.array(proposeNoteActionsMessageSchema).min(1)
+});
+
+const applyVaultOrganizeSchema = z.object({
+  vaultId: z.string().min(1),
+  userMessage: z.string().min(1).max(500_000)
 });
 
 const providerKeyInputSchema = z.object({
@@ -285,6 +307,18 @@ export function registerChatIpc(options: {
       messages: parsed.messages,
       references: parsed.references
     });
+  });
+
+  ipcMain.handle(ipcChannels.chatProposeNoteActions, async (_event, input: unknown) =>
+    proposeChatNoteActions(
+      options.getSettings,
+      proposeNoteActionsSchema.parse(input) as ProposeChatNoteActionsInput
+    )
+  );
+
+  ipcMain.handle(ipcChannels.chatApplyVaultOrganize, async (_event, input: unknown) => {
+    const parsed = applyVaultOrganizeSchema.parse(input) as ApplyVaultOrganizeInput;
+    return executeVaultOrganize(options.getSettings, parsed);
   });
 
   ipcMain.handle(ipcChannels.chatRunLocalReply, async (_event, input: unknown) =>

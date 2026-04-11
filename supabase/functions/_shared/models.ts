@@ -233,6 +233,11 @@ function shouldExtractKnowledge(corpus: string, sourceType?: "pdf" | "web" | "te
   return true;
 }
 
+function isTemplateCreationRequest(corpus: string): boolean {
+  return /\b(?:reusable\s+)?(?:trellis\s+)?template\b/i.test(corpus) &&
+    /\b(create|make|draft|build|design|save)\b/i.test(corpus);
+}
+
 const CHAT_ATTACHMENT_CONTEXT_MARKER = "\n\n---\n\n## Attached context";
 
 function stripAttachmentContextForTitle(content: string): string {
@@ -638,6 +643,7 @@ export function extractKnowledgeHeuristic(input: {
     keywords,
     input.sourceTitle ? slugify(input.sourceTitle) : undefined
   );
+  const templateCreationRequest = isTemplateCreationRequest(corpus);
   const primaryTitle = preferredTarget?.title ??
     (input.sourceTitle
       ? input.sourceTitle
@@ -661,6 +667,12 @@ export function extractKnowledgeHeuristic(input: {
   const bullets = buildBulletPoints(corpus);
   const noteType = input.sourceType ? "source-summary" : "concept";
   const summary = splitSentences(corpus).slice(0, 2).join(" ");
+  const tags = [
+    ...new Set([
+      ...keywords.filter((keyword) => keyword !== "template"),
+      ...(templateCreationRequest ? ["template"] : [])
+    ])
+  ].slice(0, 4);
   const titleForLinks = linkedTo
     .map((title) => `- [[${title}]]`)
     .join("\n");
@@ -693,7 +705,7 @@ export function extractKnowledgeHeuristic(input: {
       targetType: noteType,
       summary: summary || primaryTitle,
       body: primaryContent,
-      tags: keywords.slice(0, 4),
+      tags,
       links: linkedTo,
       evidence: [
         {

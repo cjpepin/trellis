@@ -89,15 +89,29 @@ function readVaultPaths(settingsPath) {
   return [];
 }
 
-function removePglite(userDataDir) {
-  const pglitePath = path.join(userDataDir, "pglite-data");
+/** Remove a SQLite database file and any WAL/SHM sidecars. */
+function removeSqliteDatabase(filePath) {
+  const targets = [filePath, `${filePath}-wal`, `${filePath}-shm`];
+  let removed = false;
 
-  if (!fs.existsSync(pglitePath)) {
-    return { pglitePath, removed: false };
+  for (const p of targets) {
+    if (fs.existsSync(p)) {
+      fs.rmSync(p, { force: true });
+      removed = true;
+    }
   }
 
-  fs.rmSync(pglitePath, { recursive: true, force: true });
-  return { pglitePath, removed: true };
+  return { filePath, removed };
+}
+
+/** Legacy PGlite workspace directory (pre-SQLite). */
+function removePgliteDir(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    return { dirPath, removed: false };
+  }
+
+  fs.rmSync(dirPath, { recursive: true, force: true });
+  return { dirPath, removed: true };
 }
 
 const appName = readAppName();
@@ -150,19 +164,40 @@ if (vaultPaths.length === 0) {
   console.log("");
 }
 
-const databasePaths =
+const sqlitePaths =
   workspaceSelection === "all"
-    ? [path.join(userDataDir, "pglite-data"), ...workspaceIds.map((workspaceId) => path.join(userDataDir, "workspaces", workspaceId, "pglite-data"))]
-    : [path.join(userDataDir, "workspaces", workspaceSelection, "pglite-data")];
+    ? workspaceIds.map((workspaceId) =>
+        path.join(userDataDir, "workspaces", workspaceId, "local.sqlite")
+      )
+    : [path.join(userDataDir, "workspaces", workspaceSelection, "local.sqlite")];
 
-for (const databasePath of databasePaths) {
-  const { pglitePath, removed } = removePglite(path.dirname(databasePath));
+for (const sqliteFile of sqlitePaths) {
+  const { filePath, removed } = removeSqliteDatabase(sqliteFile);
 
   if (removed) {
-    console.log(`Removed PGlite data: ${pglitePath}`);
+    console.log(`Removed local SQLite (and WAL/SHM if present): ${filePath}`);
   } else {
-    console.log(`PGlite data not present (ok): ${pglitePath}`);
+    console.log(`Local SQLite not present (ok): ${filePath}`);
   }
 }
 
-console.log("\nQuit Trellis before running this script if the app is open. Next launch recreates PGlite and empty wiki/raw folders as needed.");
+const legacyPgliteDirs = [
+  path.join(userDataDir, "pglite-data"),
+  ...(workspaceSelection === "all"
+    ? workspaceIds.map((workspaceId) =>
+        path.join(userDataDir, "workspaces", workspaceId, "pglite-data")
+      )
+    : [path.join(userDataDir, "workspaces", workspaceSelection, "pglite-data")])
+];
+
+for (const pgDir of legacyPgliteDirs) {
+  const { dirPath, removed } = removePgliteDir(pgDir);
+
+  if (removed) {
+    console.log(`Removed legacy PGlite directory: ${dirPath}`);
+  }
+}
+
+console.log(
+  "\nQuit Trellis before running this script if the app is open. Next launch recreates local SQLite and empty wiki/raw folders as needed."
+);

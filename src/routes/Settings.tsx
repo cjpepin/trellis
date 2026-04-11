@@ -30,17 +30,15 @@ import {
   defaultLocalExtractionModelApproxDownload,
   defaultLocalExtractionModelId
 } from "@shared/extraction/config";
-import { getOptionalExtractionCloudConfig } from "@/lib/api";
+import { normalizeExternalHttpsUrl } from "@shared/shell/externalHttpsUrl";
 import {
   chatPrivacyModeOptions,
-  getExtractionModeOptions,
   getActiveVault,
   resolveExtractionModeForSubscription,
   themeOptions
 } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { getSupabase, getSupabaseConfigError } from "@/lib/supabase";
-import { ExtractionModeSelect } from "@/components/ExtractionModeSelect";
 import { ListboxSelect } from "@/components/ListboxSelect";
 import { PremiumPlansModal } from "@/components/PremiumPlansModal";
 import { useChatStore } from "@/store/chatStore";
@@ -78,10 +76,6 @@ function formatBytes(value?: number): string | null {
 
 function findLocalProvider(status: ExtractionRuntimeStatus | null) {
   return status?.providers.find((provider) => provider.id === "embedded") ?? null;
-}
-
-function findCloudProvider(status: ExtractionRuntimeStatus | null) {
-  return status?.providers.find((provider) => provider.id === "cloud") ?? null;
 }
 
 function pickInstalledExtractionModelId(
@@ -272,23 +266,15 @@ export function Settings({
   const activeVault = getActiveVault(settings);
   const normalizedEmail = email.trim().toLowerCase();
   const localProvider = useMemo(() => findLocalProvider(runtimeStatus), [runtimeStatus]);
-  const cloudProvider = useMemo(() => findCloudProvider(runtimeStatus), [runtimeStatus]);
   const localExtractionEnabled = features.localExtraction;
   const effectiveExtractionMode = resolveExtractionModeForSubscription(
     settings.extraction.mode,
     authState.subscriptionTier
   );
-  const availableExtractionModeOptions = useMemo(
-    () => getExtractionModeOptions(localExtractionEnabled, authState.subscriptionTier),
-    [authState.subscriptionTier, localExtractionEnabled]
-  );
   const localModels = localProvider?.models ?? [];
   const extractionModels = localModels.filter((model) => model.purpose === "extraction");
   const embeddingModels = localModels.filter((model) => model.purpose === "embedding");
-  const needsLocalSetup =
-    localExtractionEnabled &&
-    effectiveExtractionMode === "local" &&
-    !localProvider?.available;
+  const needsLocalSetup = localExtractionEnabled && !localProvider?.available;
 
   const defaultNoteProcessorModel = extractionModels.find(
     (model) => model.id === defaultLocalExtractionModelId
@@ -296,8 +282,7 @@ export function Settings({
   const showDefaultNoteProcessorSetup =
     localExtractionEnabled &&
     Boolean(defaultNoteProcessorModel) &&
-    !defaultNoteProcessorModel?.installed &&
-    (effectiveExtractionMode === "auto" || effectiveExtractionMode === "local");
+    !defaultNoteProcessorModel?.installed;
   const manualExtractionSession = useMemo(
     () =>
       chatSessions.find((session) => session.id === activeSessionId) ??
@@ -314,39 +299,20 @@ export function Settings({
       return "Checking status…";
     }
     if (!localExtractionEnabled) {
-      return cloudProvider?.available
-        ? "Cloud ready."
-        : (cloudProvider?.reason ?? "Cloud unavailable.");
+      return "On-device note processing is turned off in this build.";
     }
 
-    const mode = effectiveExtractionMode;
     const localOk = localProvider?.available;
-    const cloudOk = cloudProvider?.available;
 
-    if (mode === "cloud") {
-      return cloudOk
-        ? "Cloud processing."
-        : (cloudProvider?.reason ?? "Cloud unavailable.");
+    if (localOk) {
+      return localProvider?.selectedModel
+        ? `On-device · ${localProvider.selectedModel}`
+        : "On-device ready.";
     }
-
-    if (mode === "local") {
-      if (localOk) {
-        return localProvider?.selectedModel
-          ? `On-device · ${localProvider.selectedModel}`
-          : "On-device ready.";
-      }
-      return localProvider?.reason ?? "On-device not ready.";
-    }
-
-    return [
-      localOk ? "On-device ready" : "On-device not ready",
-      cloudOk ? "Cloud available" : (cloudProvider?.reason ?? "Cloud unavailable")
-    ].join(" · ");
+    return localProvider?.reason ?? "On-device not ready.";
   }, [
-    effectiveExtractionMode,
     isRefreshingRuntime,
     localExtractionEnabled,
-    cloudProvider,
     localProvider
   ]);
 
@@ -359,8 +325,7 @@ export function Settings({
 
     try {
       const status = await window.trellis.extraction.getRuntimeStatus({
-        mode: effectiveExtractionMode,
-        cloud: getOptionalExtractionCloudConfig(authState.accessToken ?? null)
+        mode: effectiveExtractionMode
       });
       setRuntimeStatus(status);
     } catch (error) {
@@ -430,7 +395,6 @@ export function Settings({
         sessionId: manualExtractionSession.id,
         trigger: "manual",
         mode: effectiveExtractionMode,
-        cloud: getOptionalExtractionCloudConfig(authState.accessToken ?? null),
         preferredLocalModelId: settings.extraction.preferredLocalModelId ?? undefined,
         force: true
       });
@@ -495,7 +459,7 @@ export function Settings({
 
   useEffect(() => {
     void refreshRuntimeStatus();
-  }, [authState.accessToken, effectiveExtractionMode]);
+  }, [effectiveExtractionMode]);
 
   useEffect(() => {
     void refreshDebugRuns();
@@ -817,23 +781,6 @@ export function Settings({
     }
   }
 
-  async function updateExtractionMode(mode: AppSettings["extraction"]["mode"]): Promise<void> {
-    try {
-      await onUpdateSettings({
-        ...settings,
-        extraction: {
-          ...settings.extraction,
-          mode: resolveExtractionModeForSubscription(mode, authState.subscriptionTier)
-        }
-      });
-    } catch (error) {
-      pushToast({
-        title: error instanceof Error ? error.message : "Could not update how chats are turned into notes.",
-        tone: "error"
-      });
-    }
-  }
-
   async function saveProviderKey(provider: ChatProvider): Promise<void> {
     const apiKey = providerKeyDrafts[provider].trim();
 
@@ -920,7 +867,17 @@ export function Settings({
         plan
       });
       setPremiumPlansModalOpen(false);
-      await window.trellis.shell.openExternal(result.url);
+      const checkoutUrl = normalizeExternalHttpsUrl(result.url);
+
+      if (!checkoutUrl) {
+        pushToast({
+          title: "Checkout returned an invalid link.",
+          tone: "error"
+        });
+        return;
+      }
+
+      await window.trellis.shell.openExternal(checkoutUrl);
     } catch (error) {
       pushToast({
         title: error instanceof Error ? error.message : "Could not open the checkout page.",
@@ -1391,7 +1348,7 @@ export function Settings({
             <div className="mt-3 rounded-panel border border-trellis-border bg-trellis-surface-2 px-3 py-2.5">
               <p className="text-xs leading-6 text-trellis-muted">
                 BYOK keeps chat inference on your own provider account, so Trellis only turns chats
-                into notes on-device. Cloud note processing is not included on this tier.
+                into notes on-device.
               </p>
             </div>
           )}
@@ -1405,19 +1362,19 @@ export function Settings({
                   "sm:flex-row sm:items-start sm:gap-4"
               )}
             >
-              <ExtractionModeSelect
-                id="settings-notes-from-chats-mode"
+              <div
                 className={
                   showDefaultNoteProcessorSetup && defaultNoteProcessorModel
                     ? "w-full shrink-0 self-start sm:max-w-[min(100%,240px)]"
                     : undefined
                 }
-                options={availableExtractionModeOptions}
-                value={effectiveExtractionMode}
-                onSelect={(mode) => {
-                  void updateExtractionMode(mode);
-                }}
-              />
+              >
+                <p className="text-sm text-trellis-text">On-device only</p>
+                <p className="mt-1 text-[11px] leading-snug text-trellis-muted">
+                  Chats and imports are turned into notes with the downloaded model on this Mac. Nothing
+                  in that pipeline is sent to Trellis cloud inference.
+                </p>
+              </div>
 
               {showDefaultNoteProcessorSetup && defaultNoteProcessorModel && (
                 <div

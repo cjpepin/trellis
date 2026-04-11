@@ -26,6 +26,7 @@ function createUpdate(overrides = {}) {
 function createExistingNote(overrides = {}) {
   return {
     title: "Product Strategy",
+    folderPath: "",
     content: [
       "## Decisions",
       "",
@@ -78,6 +79,7 @@ test("prepareExtractionWrite demotes duplicate headings and normalizes links", (
   assert.ok(!prepared.content.includes("\n## Decisions\n\nRetention matters more than breadth."));
   assert.match(prepared.content, /\[\[Habit Loop\]\]/);
   assert.deepEqual(prepared.tags, ["product", "strategy"]);
+  assert.equal(prepared.folderPath, "");
 });
 
 test("prepareExtractionWrite strips transcript-like lines", () => {

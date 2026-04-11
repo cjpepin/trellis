@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
+  Copy,
   Download,
   Link2,
   LoaderCircle,
@@ -22,6 +23,7 @@ import type { MessageMeta } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
 import { useWikiStore } from "@/store/wikiStore";
 import { RichTextRenderer } from "@/components/shared/RichTextRenderer";
+import { NoteActionReviewCard } from "@/components/chat/NoteActionReviewCard";
 import { StreamingIndicator } from "./StreamingIndicator";
 
 interface Props {
@@ -39,6 +41,14 @@ interface Props {
   onReadAloud?: (messageId: string, text: string) => void | Promise<void>;
   readAloudLoading?: boolean;
   readAloudDisabled?: boolean;
+  onApproveNoteAction?: (messageId: string, actionId: string) => void | Promise<void>;
+  onRejectNoteAction?: (messageId: string, actionId: string) => void | Promise<void>;
+  onNoteActionDraftChange?: (
+    messageId: string,
+    actionId: string,
+    afterMarkdown: string
+  ) => void;
+  busyNoteActionId?: string | null;
 }
 
 function GeneratedImageSkeleton() {
@@ -72,7 +82,11 @@ export function MessageBubble({
   waitingForTokens = false,
   onReadAloud,
   readAloudLoading = false,
-  readAloudDisabled = false
+  readAloudDisabled = false,
+  onApproveNoteAction,
+  onRejectNoteAction,
+  onNoteActionDraftChange,
+  busyNoteActionId = null
 }: Props) {
   const isUser = message.role === "user";
   const isFailed = meta?.status === "failed";
@@ -320,7 +334,13 @@ export function MessageBubble({
                                       });
                                       pushToast({
                                         title: `Image added to ${defaultCaptureLabel}.`,
-                                        tone: "success"
+                                        tone: "success",
+                                        noteLinks: [
+                                          {
+                                            label: defaultCaptureLabel,
+                                            noteSlug: TRELLIS_DEFAULT_CHAT_IMAGE_NOTE_SLUG
+                                          }
+                                        ]
                                       });
                                       setAddMenuFileId(null);
                                       setNoteSearchQuery("");
@@ -383,7 +403,10 @@ export function MessageBubble({
                                               });
                                               pushToast({
                                                 title: `Image added to ${item.title}.`,
-                                                tone: "success"
+                                                tone: "success",
+                                                noteLinks: [
+                                                  { label: item.title, noteSlug: item.slug }
+                                                ]
                                               });
                                               setAddMenuFileId(null);
                                               setNoteSearchQuery("");
@@ -459,24 +482,80 @@ export function MessageBubble({
               {hasMedia ? "No message text (see image above)." : "No message text (attachments only)."}
             </p>
           )}
-          {!isUser && onReadAloud && hasRenderableText && (
-            <div className="mt-3 flex w-full justify-start">
+          {hasRenderableText && (
+            <div
+              className={cn(
+                "mt-3 flex w-full gap-1",
+                isUser ? "justify-end" : "justify-start"
+              )}
+            >
               <button
                 type="button"
-                disabled={readAloudDisabled || readAloudLoading}
-                className="rounded-full border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-accent disabled:cursor-not-allowed disabled:opacity-40"
-                title={readAloudLoading ? "Preparing audio…" : "Read this reply aloud with text-to-speech"}
-                aria-label={readAloudLoading ? "Preparing read aloud" : "Read aloud"}
+                data-testid="chat-message-copy"
+                className="rounded-full border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-accent"
+                title="Copy message"
+                aria-label="Copy message"
                 onClick={() => {
-                  void onReadAloud(message.id, message.content);
+                  void navigator.clipboard.writeText(message.content).then(
+                    () => {
+                      pushToast({
+                        title: "Copied to clipboard.",
+                        tone: "success"
+                      });
+                    },
+                    () => {
+                      pushToast({
+                        title: "Could not copy to clipboard.",
+                        tone: "warning"
+                      });
+                    }
+                  );
                 }}
               >
-                {readAloudLoading ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin text-trellis-accent" aria-hidden />
-                ) : (
-                  <Volume2 className="h-4 w-4" aria-hidden />
-                )}
+                <Copy className="h-4 w-4" aria-hidden />
               </button>
+              {!isUser && onReadAloud ? (
+                <button
+                  type="button"
+                  disabled={readAloudDisabled || readAloudLoading}
+                  className="rounded-full border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-accent disabled:cursor-not-allowed disabled:opacity-40"
+                  title={readAloudLoading ? "Preparing audio…" : "Read this reply aloud with text-to-speech"}
+                  aria-label={readAloudLoading ? "Preparing read aloud" : "Read aloud"}
+                  onClick={() => {
+                    void onReadAloud(message.id, message.content);
+                  }}
+                >
+                  {readAloudLoading ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin text-trellis-accent" aria-hidden />
+                  ) : (
+                    <Volume2 className="h-4 w-4" aria-hidden />
+                  )}
+                </button>
+              ) : null}
+            </div>
+          )}
+          {!isUser && message.noteActions && message.noteActions.length > 0 && (
+            <div className="mt-3 grid gap-3">
+              {message.noteActions.map((action) => (
+                <NoteActionReviewCard
+                  key={action.id}
+                  action={action}
+                  busy={busyNoteActionId === action.id}
+                  onApprove={() => {
+                    void onApproveNoteAction?.(message.id, action.id);
+                  }}
+                  onReject={() => {
+                    void onRejectNoteAction?.(message.id, action.id);
+                  }}
+                  onDraftChange={
+                    onNoteActionDraftChange
+                      ? (next) => {
+                          onNoteActionDraftChange(message.id, action.id, next);
+                        }
+                      : undefined
+                  }
+                />
+              ))}
             </div>
           )}
         </div>

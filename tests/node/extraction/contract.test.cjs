@@ -6,6 +6,9 @@ const {
   parseExtractionResponseJson,
   validateExtractionResponse
 } = require(fromRepoRoot("shared", "extraction", "validate.ts"));
+const { buildExtractionUserMessage } = require(
+  fromRepoRoot("shared", "extraction", "buildPrompt.ts")
+);
 
 test("normalizes legacy extraction output and merges duplicate targets", () => {
   const payload = {
@@ -112,4 +115,21 @@ test("returns null for invalid JSON responses", () => {
 
   assert.equal(result.value, null);
   assert.equal(result.issues[0].message, "Extraction payload was not valid JSON.");
+});
+
+test("extraction prompt marks template notes distinctly", () => {
+  const message = buildExtractionUserMessage({
+    transcript: [{ role: "user", content: "Use my daily reflection template." }],
+    index: [
+      {
+        slug: "daily-reflection-template",
+        title: "Daily Reflection Template",
+        tags: ["template"],
+        isTemplate: true
+      }
+    ]
+  });
+
+  assert.match(message, /Daily Reflection Template/);
+  assert.match(message, /\{template\}/);
 });

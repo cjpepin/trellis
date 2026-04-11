@@ -7,6 +7,7 @@ import {
   extractWikiLinkTitles,
   normalizeTitleKey
 } from "../../../shared/extraction/wikiLinks";
+import { normalizeWikiFolderPath } from "../../../shared/vault/folderPath";
 import type { WikiNote } from "../../ipc/types";
 
 interface PreparedExtractionWrite {
@@ -16,13 +17,14 @@ interface PreparedExtractionWrite {
   tags: string[];
   type: ExtractionUpdate["targetType"];
   sources: number;
+  folderPath: string;
   url?: string;
   operation: "create" | "append" | "rewrite";
 }
 
 interface PrepareExtractionWriteInput {
   update: ExtractionUpdate;
-  existingNote: Pick<WikiNote, "title" | "content" | "tags" | "sources" | "type"> | null;
+  existingNote: Pick<WikiNote, "title" | "content" | "tags" | "sources" | "type" | "folderPath"> | null;
   index: ExtractionIndexEntry[];
 }
 
@@ -320,6 +322,11 @@ export function prepareExtractionWrite(
       ? input.existingNote.type
       : input.update.targetType;
 
+  const resolvedFolderPath =
+    input.update.folderPath !== undefined
+      ? normalizeWikiFolderPath(input.update.folderPath)
+      : normalizeWikiFolderPath(input.existingNote?.folderPath ?? "");
+
   return {
     slug: input.update.targetSlug,
     title: nextTitle,
@@ -327,6 +334,7 @@ export function prepareExtractionWrite(
     tags: nextTags,
     type: nextType,
     sources: nextSources,
+    folderPath: resolvedFolderPath,
     url: input.update.url,
     operation: input.update.operation
   };

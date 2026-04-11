@@ -137,9 +137,8 @@ export function Ingest({ settings, workspace }: Props) {
 
         {workspace.isPreview && (
           <div className="trellis-accent-surface rounded-panel border border-trellis-accent/20 px-5 py-4 text-sm text-trellis-text">
-            Preview starts with seeded local data, but ingest still works here like normal. If your
-            on-device note processor is not ready, sign in for cloud-backed ingest or install the
-            local model in Settings.
+            Preview starts with seeded local data, but ingest still works here like normal. If the
+            on-device note processor is not ready yet, install it from Settings (a one-time download).
           </div>
         )}
 

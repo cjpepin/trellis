@@ -1,4 +1,6 @@
 import { useEffect } from "react";
+import { Link } from "react-router-dom";
+import { notesRoutePath } from "@/lib/noteRoutes";
 import { useUiStore } from "@/store/uiStore";
 import { cn } from "@/lib/utils";
 
@@ -35,7 +37,20 @@ export function Toast() {
             toneStyles[toast.tone]
           )}
         >
-          {toast.title}
+          <p>{toast.title}</p>
+          {toast.noteLinks && toast.noteLinks.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-trellis-border/50 pt-2">
+              {toast.noteLinks.map((link) => (
+                <Link
+                  key={link.noteSlug}
+                  to={notesRoutePath(link.noteSlug)}
+                  className="text-xs font-medium text-trellis-accent underline decoration-trellis-accent/35 underline-offset-2 transition hover:decoration-trellis-accent"
+                >
+                  {link.label}
+                </Link>
+              ))}
+            </div>
+          ) : null}
         </div>
       ))}
     </div>

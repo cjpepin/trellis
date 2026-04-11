@@ -30,7 +30,10 @@ export interface ExtractionIndexEntry {
   slug: string;
   title: string;
   tags: string[];
+  /** Wiki subfolder path under `wiki/` (POSIX, no leading slash). Empty = root. */
+  folderPath?: string;
   isPlaceholder?: boolean;
+  isTemplate?: boolean;
 }
 
 export interface ExtractionEvidence {
@@ -60,6 +63,8 @@ export interface ExtractionUpdate {
   links: string[];
   evidence: ExtractionEvidence[];
   confidence: number;
+  /** When set, place or move the note under this wiki folder (POSIX path, root = empty). */
+  folderPath?: string;
   sources?: number;
   url?: string;
 }

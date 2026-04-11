@@ -1,7 +1,6 @@
 import type {
   ChatContextReference,
   ChatModel,
-  ExtractionCloudConfig,
   ExtractionRunInput,
   MessageRecord,
   SubscriptionTier
@@ -54,23 +53,6 @@ interface IngestExtractInput extends ExtractInput {
   onProgress: (event: IngestProgress) => void;
 }
 
-export function getOptionalExtractionCloudConfig(
-  accessToken: string | null
-): ExtractionCloudConfig | undefined {
-  const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
-
-  if (!publishableKey || !supabaseUrl) {
-    return undefined;
-  }
-
-  return {
-    functionsBaseUrl: `${supabaseUrl}/functions/v1`,
-    publishableKey,
-    accessToken
-  };
-}
-
 async function resolveAccessToken(fallbackToken: string): Promise<string> {
   if (!hasSupabaseConfig()) {
     return fallbackToken;
@@ -105,14 +87,21 @@ async function resolveAccessToken(fallbackToken: string): Promise<string> {
 }
 
 async function runExtractionRequest(
-  input: Omit<ExtractionRunInput, "cloud"> & { accessToken: string | null }
+  input: ExtractionRunInput & { accessToken: string | null }
 ): Promise<ExtractionResponse> {
-  const accessToken = await resolveAccessToken(input.accessToken ?? "");
-  const { accessToken: _accessToken, ...runInput } = input;
-  const result = await window.trellis.extraction.run({
-    ...runInput,
-    cloud: getOptionalExtractionCloudConfig(accessToken)
-  });
+  const runInput: ExtractionRunInput = {
+    mode: input.mode,
+    sessionId: input.sessionId,
+    transcript: input.transcript,
+    index: input.index,
+    relatedNotes: input.relatedNotes,
+    sourceType: input.sourceType,
+    sourceTitle: input.sourceTitle,
+    sourcePath: input.sourcePath,
+    sourceContent: input.sourceContent,
+    preferredLocalModelId: input.preferredLocalModelId
+  };
+  const result = await window.trellis.extraction.run(runInput);
 
   return result.response;
 }

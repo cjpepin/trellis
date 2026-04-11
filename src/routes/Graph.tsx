@@ -147,7 +147,8 @@ export function Graph() {
       });
       pushToast({
         title: "Stub note created",
-        tone: "success"
+        tone: "success",
+        noteLinks: [{ label: result.note.title, noteSlug: result.note.slug }]
       });
       navigate(notesRoutePath(result.note.slug));
     } catch (error) {

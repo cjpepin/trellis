@@ -6,6 +6,7 @@ import type {
   NoteSummary
 } from "../../ipc/types";
 import { buildSnapshot, resolveVault } from "../../ipc/vault";
+import { listRecentSessionNoteLinks } from "../database";
 import { searchRelevantNotes } from "../retrieval/index";
 import { searchMemoryItems } from "./memory";
 import { takeFirstSentence, tokenize, truncateForContext } from "./scoring";
@@ -14,9 +15,26 @@ import {
   normalizeTitleKey,
   slugifyExtractionTitle
 } from "../../../shared/extraction/wikiLinks";
+import { hasVaultOrganizeIntent } from "./vaultOrganize";
 
 const maxContextRefs = 5;
 const maxContextChars = 6_500;
+
+function asksForRecentChats(messages: Array<{ content: string }>): boolean {
+  const latestUser = [...messages].reverse().find((message) => message.content.trim().length > 0);
+  const content = latestUser?.content ?? "";
+
+  const mentionsChatHistory =
+    /\b(?:past|recent|last|previous)\s+\d*\s*(?:chats?|conversations?|sessions?)\b/i.test(content) ||
+    /\b\d+\s+(?:most\s+recent\s+)?(?:chats?|conversations?|sessions?)\b/i.test(content) ||
+    (/\b(?:summarize|summary)\b/i.test(content) && /\b(?:chats?|conversations?|sessions?)\b/i.test(content));
+
+  const asksForChatLinks =
+    /\b(?:chats?|conversations?|sessions?)\b/i.test(content) &&
+    /\b(?:link|links|notes?|wiki)\b/i.test(content);
+
+  return mentionsChatHistory || asksForChatLinks;
+}
 
 function resolveExplicitSlugs(messages: Array<{ content: string }>, notes: NoteSummary[]): string[] {
   const byTitle = new Map(notes.map((note) => [normalizeTitleKey(note.title), note.slug]));
@@ -56,6 +74,7 @@ function buildNoteReference(input: {
   slug: string;
   title: string;
   content: string;
+  tags: string[];
   headingPath?: string;
   isExplicitMatch?: boolean;
 }): ChatContextReference {
@@ -65,6 +84,7 @@ function buildNoteReference(input: {
     title: input.title,
     excerpt: takeFirstSentence(input.headingPath || input.content, 160),
     content: truncateForContext(input.content, 1_400),
+    tags: input.tags,
     isExplicitMatch: input.isExplicitMatch
   };
 }
@@ -73,14 +93,41 @@ function buildMemoryReference(input: {
   title: string;
   content: string;
   linkedNoteSlug: string | null;
+  /** Defaults to 750; recent-session summaries need more room for [[links]]. */
+  contentMaxChars?: number;
 }): ChatContextReference {
+  const contentMaxChars = input.contentMaxChars ?? 750;
   return {
     type: "memory",
     title: input.title,
     excerpt: takeFirstSentence(input.content, 140),
-    content: truncateForContext(input.content, 750),
+    content: truncateForContext(input.content, contentMaxChars),
     linkedNoteSlug: input.linkedNoteSlug
   };
+}
+
+const recentChatsMemoryTitle = "Recent Chats";
+const vaultOrganizeMemoryTitle = "Trellis wiki actions";
+
+function buildVaultOrganizeContextHint(
+  messages: BuildChatContextInput["messages"]
+): ChatContextReference | null {
+  const latestUser = [...messages].reverse().find((message) => message.role === "user");
+
+  if (!latestUser || !hasVaultOrganizeIntent(latestUser.content)) {
+    return null;
+  }
+
+  return buildMemoryReference({
+    title: vaultOrganizeMemoryTitle,
+    content: [
+      "The user asked to create wiki folders and/or move notes within Trellis (not a generic external app).",
+      "Trellis can create folders and move notes in the local vault when they ask from chat; your answer must match that capability.",
+      "Do not refuse, do not say you cannot create folders or move files, and do not redirect them to another note app or a generic preferred system.",
+      "Respond helpfully: confirm what they want organized, mention they can verify in Wiki, and stay consistent with Trellis, not a plain web chatbot."
+    ].join("\n"),
+    linkedNoteSlug: null
+  });
 }
 
 function referenceWeight(reference: ChatContextReference): number {
@@ -93,6 +140,12 @@ function referenceWeight(reference: ChatContextReference): number {
   }
 
   return 20;
+}
+
+function referenceCharBudget(reference: ChatContextReference): number {
+  return (
+    reference.title.length + reference.excerpt.length + reference.content.length
+  );
 }
 
 export async function buildChatContextPacket(
@@ -116,14 +169,22 @@ export async function buildChatContextPacket(
       ? snapshot.notes.find((note) => note.slug === input.activeNoteSlug)?.title ?? null
       : null;
   const explicitSlugs = resolveExplicitSlugs(input.messages, snapshot.notes);
+  const recentSessionLinks = asksForRecentChats(input.messages)
+    ? await listRecentSessionNoteLinks(3, input.currentSessionId ?? null)
+    : [];
+  const recentSessionSlugs = recentSessionLinks.flatMap((session) =>
+    session.noteFiles
+      .map((file) => file.replace(/\.md$/i, ""))
+      .filter((slug) => snapshot.notes.some((note) => note.slug === slug))
+  );
   const preferredSlugs = [
-    ...new Set([input.activeNoteSlug ?? "", ...explicitSlugs].filter(Boolean))
+    ...new Set([input.activeNoteSlug ?? "", ...explicitSlugs, ...recentSessionSlugs].filter(Boolean))
   ];
   const query = buildQuery(input, explicitSlugs, activeNoteTitle);
   const noteCandidates = await searchRelevantNotes({
     vaultId: vault.id,
     query,
-    explicitSlugs,
+    explicitSlugs: [...new Set([...explicitSlugs, ...recentSessionSlugs])],
     limit: 6
   });
   const memoryCandidates = await searchMemoryItems({
@@ -145,10 +206,44 @@ export async function buildChatContextPacket(
         slug: candidate.slug,
         title: candidate.title,
         content: candidate.content,
+        tags: candidate.tags,
         headingPath: candidate.headingPath,
         isExplicitMatch: candidate.isExplicitMatch
       })
     );
+  }
+
+  let recentChatsReference: ChatContextReference | null = null;
+
+  if (recentSessionLinks.length > 0) {
+    const titleBySlug = new Map(snapshot.notes.map((note) => [note.slug, note.title]));
+    const recentSummary = recentSessionLinks
+      .map((session) => {
+        const bracketLinks = session.noteFiles
+          .map((file) => titleBySlug.get(file.replace(/\.md$/i, "")))
+          .filter((title): title is string => Boolean(title))
+          .map((title) => `[[${title}]]`);
+
+        const linkPart =
+          bracketLinks.length > 0
+            ? `: notes touched in that chat — ${bracketLinks.join(", ")}`
+            : ": (no wiki writes recorded for this chat yet; extraction or approved note saves add links here)";
+
+        return `- **${session.title}**${linkPart}`;
+      })
+      .join("\n");
+
+    recentChatsReference = buildMemoryReference({
+      title: recentChatsMemoryTitle,
+      content: [
+        "Recent chat sessions (most recently updated first, excluding this conversation).",
+        "Cite notes using the exact [[Note Title]] links below when you summarize.",
+        "",
+        recentSummary
+      ].join("\n"),
+      linkedNoteSlug: null,
+      contentMaxChars: 3_200
+    });
   }
 
   for (const candidate of memoryCandidates) {
@@ -184,15 +279,24 @@ export async function buildChatContextPacket(
   const selected: ChatContextReference[] = [];
   let charCount = 0;
 
+  if (recentChatsReference) {
+    selected.push(recentChatsReference);
+    charCount += referenceCharBudget(recentChatsReference);
+  }
+
+  const vaultOrganizeHint = buildVaultOrganizeContextHint(input.messages);
+
+  if (vaultOrganizeHint) {
+    selected.push(vaultOrganizeHint);
+    charCount += referenceCharBudget(vaultOrganizeHint);
+  }
+
   for (const candidate of ranked) {
     if (selected.length >= maxContextRefs) {
       break;
     }
 
-    const referenceChars =
-      candidate.reference.title.length +
-      candidate.reference.excerpt.length +
-      candidate.reference.content.length;
+    const referenceChars = referenceCharBudget(candidate.reference);
 
     if (selected.length > 0 && charCount + referenceChars > maxContextChars) {
       continue;

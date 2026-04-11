@@ -38,6 +38,20 @@ export const chatModelOptions: ChatModelOption[] = [
     summary: "Affordable omni model for quick, focused responses."
   },
   {
+    id: "gpt-5.4-nano",
+    label: "GPT-5.4 Nano",
+    provider: "openai",
+    tier: "cheap",
+    summary: "Newest low-cost OpenAI option; strong for high-volume everyday chat."
+  },
+  {
+    id: "gpt-5.4-mini",
+    label: "GPT-5.4 Mini",
+    provider: "openai",
+    tier: "cheap",
+    summary: "Fast GPT-5.4-class model balanced for daily use and longer context."
+  },
+  {
     id: "gpt-4.1",
     label: "GPT-4.1",
     provider: "openai",
@@ -52,11 +66,25 @@ export const chatModelOptions: ChatModelOption[] = [
     summary: "Higher-end omni model for richer, more capable chat."
   },
   {
+    id: "gpt-5.4",
+    label: "GPT-5.4",
+    provider: "openai",
+    tier: "premium",
+    summary: "OpenAI’s latest frontier model for demanding reasoning and long context."
+  },
+  {
     id: "claude-3-5-haiku-latest",
     label: "Claude 3.5 Haiku",
     provider: "anthropic",
     tier: "cheap",
     summary: "Fast and low-cost Claude model for everyday use."
+  },
+  {
+    id: "claude-haiku-4-5",
+    label: "Claude Haiku 4.5",
+    provider: "anthropic",
+    tier: "cheap",
+    summary: "Anthropic’s latest fast Haiku line—near-frontier quality with low latency."
   },
   {
     id: "claude-3-7-sonnet-latest",
@@ -70,7 +98,21 @@ export const chatModelOptions: ChatModelOption[] = [
     label: "Claude Sonnet 4",
     provider: "anthropic",
     tier: "premium",
-    summary: "Current high-performance Claude option for deeper chat quality."
+    summary: "High-performance Claude Sonnet snapshot for deeper chat quality."
+  },
+  {
+    id: "claude-sonnet-4-6",
+    label: "Claude Sonnet 4.6",
+    provider: "anthropic",
+    tier: "premium",
+    summary: "Current Sonnet generation: strong default for serious work and agents."
+  },
+  {
+    id: "claude-opus-4-6",
+    label: "Claude Opus 4.6",
+    provider: "anthropic",
+    tier: "premium",
+    summary: "Most capable Claude for complex reasoning and highest-quality answers."
   }
 ];
 

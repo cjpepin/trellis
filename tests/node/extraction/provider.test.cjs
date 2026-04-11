@@ -41,38 +41,18 @@ test("buildExtractionUserMessage includes related notes and transcript context",
   assert.match(message, /We decided to keep onboarding lightweight/);
 });
 
-test("pickSelectedProviderId prefers local in auto mode", () => {
-  const selected = pickSelectedProviderId(
-    [
-      { id: "cloud", label: "Cloud", available: true },
-      { id: "embedded", label: "On-device", available: true }
-    ],
-    "auto"
-  );
+test("pickSelectedProviderId selects embedded when available", () => {
+  const selected = pickSelectedProviderId([
+    { id: "embedded", label: "On-device", available: true }
+  ]);
 
   assert.equal(selected, "embedded");
 });
 
-test("pickSelectedProviderId respects forced cloud mode", () => {
-  const selected = pickSelectedProviderId(
-    [
-      { id: "cloud", label: "Cloud", available: true },
-      { id: "embedded", label: "On-device", available: true }
-    ],
-    "cloud"
-  );
-
-  assert.equal(selected, "cloud");
-});
-
-test("pickSelectedProviderId returns null when requested mode is unavailable", () => {
-  const selected = pickSelectedProviderId(
-    [
-      { id: "cloud", label: "Cloud", available: false },
-      { id: "embedded", label: "On-device", available: true }
-    ],
-    "cloud"
-  );
+test("pickSelectedProviderId returns null when the on-device provider is unavailable", () => {
+  const selected = pickSelectedProviderId([
+    { id: "embedded", label: "On-device", available: false, reason: "missing model" }
+  ]);
 
   assert.equal(selected, null);
 });

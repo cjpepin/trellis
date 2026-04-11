@@ -3,6 +3,7 @@ import {
   ipcChannels,
   type AppBootstrap,
   type AppSettings,
+  type ApplyVaultOrganizeInput,
   type AuthSessionSnapshot,
   type ChatModel,
   type ChatStreamEvent,
@@ -28,7 +29,9 @@ import {
   type SaveNoteInput,
   type SelectDirectoryInput,
   type SetProviderKeyInput,
-  type VaultAppendChatImageInput
+  type VaultAppendChatImageInput,
+  type VaultImportNoteImageInput,
+  type VaultReadNoteAssetDataUrlInput
 } from "./ipc/types";
 
 const trellis: TrellisBridge = {
@@ -109,6 +112,10 @@ const trellis: TrellisBridge = {
     writeNote: (input: SaveNoteInput) => ipcRenderer.invoke(ipcChannels.vaultWriteNote, input),
     appendChatImageToNote: (input: VaultAppendChatImageInput) =>
       ipcRenderer.invoke(ipcChannels.vaultAppendChatImage, input),
+    importNoteImage: (input: VaultImportNoteImageInput) =>
+      ipcRenderer.invoke(ipcChannels.vaultImportNoteImage, input),
+    readNoteAssetDataUrl: (input: VaultReadNoteAssetDataUrlInput) =>
+      ipcRenderer.invoke(ipcChannels.vaultReadNoteAssetDataUrl, input),
     createStub: (input: CreateStubInput) =>
       ipcRenderer.invoke(ipcChannels.vaultCreateStub, input),
     deleteNote: (input: DeleteNoteInput) =>
@@ -146,6 +153,10 @@ const trellis: TrellisBridge = {
     pickAttachment: () => ipcRenderer.invoke(ipcChannels.chatPickAttachment),
     buildContext: (input) => ipcRenderer.invoke(ipcChannels.chatBuildContext, input),
     storeMemory: (input) => ipcRenderer.invoke(ipcChannels.chatStoreMemory, input),
+    proposeNoteActions: (input) =>
+      ipcRenderer.invoke(ipcChannels.chatProposeNoteActions, input),
+    applyVaultOrganize: (input: ApplyVaultOrganizeInput) =>
+      ipcRenderer.invoke(ipcChannels.chatApplyVaultOrganize, input),
     runLocalReply: (input) => ipcRenderer.invoke(ipcChannels.chatRunLocalReply, input),
     stream: async (input: ChatStreamInput) => {
       const requestId = crypto.randomUUID();

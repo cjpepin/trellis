@@ -35,6 +35,7 @@ import {
 } from "./ipc/vault";
 import { getProviderKeyStatusSnapshot } from "./lib/providerKeys";
 import { defaultLocalExtractionModelId } from "../shared/extraction/config";
+import { normalizeExternalHttpsUrl } from "@shared/shell/externalHttpsUrl";
 import {
   ipcChannels,
   type AppBootstrap,
@@ -90,6 +91,7 @@ const settingsSchema = z.object({
     .optional(),
   extraction: z
     .object({
+      /** Legacy values are accepted when reading settings files; normalized to `"local"`. */
       mode: z.enum(["auto", "cloud", "local"]).optional(),
       preferredLocalModelId: z.string().min(1).nullable().optional()
     })
@@ -210,8 +212,7 @@ function createDefaultExtractionSettings(): ExtractionSettings {
   const localExtractionEnabled = isLocalExtractionFeatureEnabled();
 
   return {
-    // Prefer on-device when installed, but fall back to cloud until the GGUF is present.
-    mode: localExtractionEnabled ? "auto" : "cloud",
+    mode: "local",
     preferredLocalModelId: localExtractionEnabled ? defaultLocalExtractionModelId : null
   };
 }
@@ -269,9 +270,6 @@ function normalizeSettings(rawSettings: unknown): AppSettings {
 
   const activeVaultExists = parsed.vaults.some((vault) => vault.id === parsed.activeVaultId);
   const localExtractionEnabled = isLocalExtractionFeatureEnabled();
-  const extractionMode =
-    parsed.extraction?.mode ?? (localExtractionEnabled ? "auto" : "cloud");
-
   return {
     vaults: parsed.vaults,
     activeVaultId: activeVaultExists ? parsed.activeVaultId : firstVault.id,
@@ -282,10 +280,7 @@ function normalizeSettings(rawSettings: unknown): AppSettings {
       readAloudAutoPlay: parsed.chat?.readAloudAutoPlay ?? false
     },
     extraction: {
-      mode:
-        localExtractionEnabled || extractionMode === "cloud"
-          ? extractionMode
-          : "cloud",
+      mode: "local",
       preferredLocalModelId: localExtractionEnabled
         ? parsed.extraction?.preferredLocalModelId ?? defaultLocalExtractionModelId
         : null
@@ -320,7 +315,7 @@ function createPreviewSettings(vaultPath: string, vaultName: string): AppSetting
     rememberSession: getSharedRememberSessionDefault(),
     chat: createDefaultChatSettings(),
     extraction: {
-      mode: isLocalExtractionFeatureEnabled() ? "local" : "cloud",
+      mode: "local",
       preferredLocalModelId: isLocalExtractionFeatureEnabled()
         ? defaultLocalExtractionModelId
         : null
@@ -363,13 +358,13 @@ function canPersistAuthSession(): boolean {
 }
 
 function parseExternalUrl(url: unknown): string {
-  const parsedUrl = new URL(z.string().url().parse(url));
+  const normalized = normalizeExternalHttpsUrl(url);
 
-  if (parsedUrl.protocol !== "https:") {
+  if (!normalized) {
     throw new Error("Only https URLs can be opened externally.");
   }
 
-  return parsedUrl.toString();
+  return normalized;
 }
 
 function pathsEqualNormalized(left: string, right: string): boolean {
@@ -642,7 +637,6 @@ async function rebindWorkspace(
   await initializeDatabase(getWorkspacePaths(workspaceId).databasePath);
   extractionOrchestrator = createExtractionOrchestrator({
     getSettings,
-    getAuthSession: () => readAuthSession(),
     notifyJobUpdate: notifyExtractionJobUpdate
   });
   await extractionOrchestrator.resumePendingJobs();
@@ -711,7 +705,7 @@ function registerAppIpc(): void {
   ipcMain.handle(ipcChannels.settingsSet, async (_event, settings: unknown) => {
     const parsed = normalizeSettings(settings);
 
-    if (!getAppFeatureFlags().localExtraction && parsed.extraction.mode !== "cloud") {
+    if (!getAppFeatureFlags().localExtraction) {
       console.warn(getLocalExtractionFeatureDisabledReason());
     }
 
@@ -819,7 +813,6 @@ async function bootstrapApplication(): Promise<void> {
   await initializeDatabase(getWorkspacePaths(currentWorkspaceState.activeWorkspaceId).databasePath);
   extractionOrchestrator = createExtractionOrchestrator({
     getSettings,
-    getAuthSession: () => readAuthSession(),
     notifyJobUpdate: notifyExtractionJobUpdate
   });
   registerAppIpc();

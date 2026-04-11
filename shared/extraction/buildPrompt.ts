@@ -31,7 +31,9 @@ export function buildExtractionUserMessage(input: ExtractionPromptInput): string
           .map(
             (note) =>
               `- ${note.title} (${note.slug}.md) [${note.tags.join(", ")}]${
-                note.isPlaceholder ? " {placeholder target}" : ""
+                note.folderPath ? ` folder:${note.folderPath}/` : ""
+              }${note.isPlaceholder ? " {placeholder target}" : ""}${
+                note.isTemplate ? " {template}" : ""
               }`
           )
           .join("\n")

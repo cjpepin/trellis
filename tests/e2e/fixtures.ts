@@ -87,13 +87,6 @@ export async function dismissLocalNoteProcessorFirstRun(page: Page): Promise<voi
       return;
     }
 
-    const useCloud = page.getByTestId("local-note-processor-use-cloud");
-    if (await useCloud.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await useCloud.click();
-      await expect(dialog).toHaveCount(0);
-      return;
-    }
-
     if (!(await dialog.isVisible().catch(() => false))) {
       return;
     }

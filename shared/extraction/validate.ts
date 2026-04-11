@@ -15,6 +15,7 @@ import {
   type ExtractionValidationResult
 } from "./contracts.ts";
 import { extractWikiLinkTitles, normalizeTitleKey, slugifyExtractionTitle } from "./wikiLinks.ts";
+import { normalizeWikiFolderPath } from "../vault/folderPath.ts";
 
 const noteTypeSet = new Set<string>(extractionNoteTypeValues);
 const evidenceKindSet = new Set<string>(extractionEvidenceKindValues);
@@ -420,6 +421,17 @@ function normalizeUpdate(
 
   const evidence = normalizeEvidence(raw.evidence, fallbackEvidence);
 
+  let resolvedFolderPath: string | undefined;
+  if ("folderPath" in raw || "targetFolderPath" in raw) {
+    const rawFolder = raw.folderPath ?? raw.targetFolderPath;
+    if (typeof rawFolder === "string") {
+      resolvedFolderPath = normalizeWikiFolderPath(rawFolder);
+    }
+  } else if (matchedIndexNote?.folderPath) {
+    const fromIndex = normalizeWikiFolderPath(matchedIndexNote.folderPath);
+    resolvedFolderPath = fromIndex.length > 0 ? fromIndex : undefined;
+  }
+
   return {
     update: {
       operation: normalizedOperation,
@@ -432,6 +444,7 @@ function normalizeUpdate(
       links: normalizedLinks,
       evidence,
       confidence,
+      ...(resolvedFolderPath !== undefined ? { folderPath: resolvedFolderPath } : {}),
       sources: options.sourceType ? 1 : 0,
       url: options.sourceType === "web" ? options.sourcePath : undefined
     },
@@ -473,6 +486,17 @@ function mergeOperations(updates: ExtractionUpdate[]): ExtractionOperation {
   return "noop";
 }
 
+function mergeFolderPaths(updates: ExtractionUpdate[]): string | undefined {
+  for (let index = updates.length - 1; index >= 0; index -= 1) {
+    const value = updates[index]?.folderPath;
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
 function mergeDuplicateUpdates(
   updates: ExtractionUpdate[],
   lookups: IndexLookups
@@ -506,6 +530,8 @@ function mergeDuplicateUpdates(
       continue;
     }
 
+    const mergedFolderPath = mergeFolderPaths(group);
+
     merged.push({
       operation,
       targetSlug: first.targetSlug,
@@ -520,6 +546,7 @@ function mergeDuplicateUpdates(
       links: mergedLinks,
       evidence: uniqueEvidence(group.flatMap((update) => update.evidence)),
       confidence: Math.max(...group.map((update) => update.confidence)),
+      ...(mergedFolderPath !== undefined ? { folderPath: mergedFolderPath } : {}),
       sources: Math.max(...group.map((update) => update.sources ?? 0)),
       url: [...group].reverse().find((update) => typeof update.url === "string")?.url
     });

@@ -29,14 +29,7 @@ const extractionContextNoteSchema = z.object({
 });
 
 const extractionInputSchema = z.object({
-  mode: z.enum(["auto", "cloud", "local"]).optional(),
-  cloud: z
-    .object({
-      functionsBaseUrl: z.string().url(),
-      publishableKey: z.string().min(1),
-      accessToken: z.string().min(1).optional().nullable()
-    })
-    .optional(),
+  mode: z.literal("local").optional(),
   sessionId: z.string().uuid().optional(),
   transcript: z.array(
     z.object({
@@ -61,27 +54,13 @@ const extractionInputSchema = z.object({
 });
 
 const runtimeStatusSchema = z.object({
-  mode: z.enum(["auto", "cloud", "local"]).optional(),
-  cloud: z
-    .object({
-      functionsBaseUrl: z.string().url(),
-      publishableKey: z.string().min(1),
-      accessToken: z.string().min(1).optional().nullable()
-    })
-    .optional()
+  mode: z.literal("local").optional()
 });
 
 const queueSessionSchema = z.object({
   sessionId: z.string().uuid(),
   trigger: z.enum(["idle", "session-switch", "manual", "startup"]).optional(),
-  mode: z.enum(["auto", "cloud", "local"]).optional(),
-  cloud: z
-    .object({
-      functionsBaseUrl: z.string().url(),
-      publishableKey: z.string().min(1),
-      accessToken: z.string().min(1).optional().nullable()
-    })
-    .optional(),
+  mode: z.literal("local").optional(),
   preferredLocalModelId: z.string().min(1).optional(),
   force: z.boolean().optional()
 });

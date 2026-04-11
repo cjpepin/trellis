@@ -27,7 +27,7 @@ This repository follows [`mvp.md`](/Users/connorpepin/Cursor/mnemo/mvp.md) as th
 - Supabase owns auth sessions, subscription metadata, usage counters, and AI orchestration through Edge Functions.
 - Prompts live only in `supabase/functions/_shared/prompts.ts`.
 - IPC channel names and payload contracts live only in `electron/ipc/types.ts`.
-- Default on-device extraction uses `node-llama-cpp` in the Electron main process against a single GGUF path under app user data (`embeddedExtractionGgufFilename` / `defaultLocalExtractionModelId` in `shared/extraction/config.ts`); weights are not bundled—first run downloads once (override URL with `TRELLIS_EMBEDDED_EXTRACTION_MODEL_URL`). The local extraction feature flag defaults **on**; set `TRELLIS_FEATURE_LOCAL_EXTRACTION=0` to disable. Dev eval against a running HTTP chat API: `npm run eval:extraction:ollama` (optional; override with `TRELLIS_EXTRACTION_MODEL`).
+- Default on-device extraction uses `node-llama-cpp` in the Electron main process against a single GGUF path under app user data (`embeddedExtractionGgufFilename` / `defaultLocalExtractionModelId` in `shared/extraction/config.ts`); weights are not bundled—first run downloads once (override URL with `TRELLIS_EMBEDDED_EXTRACTION_MODEL_URL`). The local extraction feature flag defaults **on**; set `TRELLIS_FEATURE_LOCAL_EXTRACTION=0` to disable on-device note processing entirely (there is no cloud extraction path). Dev eval against a running HTTP chat API: `npm run eval:extraction:ollama` (optional; override with `TRELLIS_EXTRACTION_MODEL`).
 
 ## UX Standards
 

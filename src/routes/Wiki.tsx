@@ -22,8 +22,20 @@ import type {
   WikiNote
 } from "@electron/ipc/types";
 import { NoteViewer } from "@/components/wiki/NoteViewer";
+import {
+  buildNoteContentFromTemplate,
+  isTemplateNote,
+  templateTag
+} from "@/lib/chatTemplates";
 import { cn } from "@/lib/utils";
 import { notesRoutePath } from "@/lib/noteRoutes";
+import {
+  folderPathToCreateParts,
+  shouldHandleWikiExplorerUndoRedo,
+  sortFolderPathsForRestore,
+  wikiNoteToSavePayload,
+  WIKI_EXPLORER_UNDO_LIMIT
+} from "@/lib/wikiExplorerUndo";
 import { readWorkspaceLocalStorage, writeWorkspaceLocalStorage } from "@/lib/workspace";
 import { useUiStore } from "@/store/uiStore";
 import { useWikiStore } from "@/store/wikiStore";
@@ -140,6 +152,13 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
   const renameFolderRef = useRef<HTMLInputElement | null>(null);
   const listResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const folderDragHoverTimeoutRef = useRef<number | null>(null);
+  const explorerUndoStackRef = useRef<Array<{ undo: () => Promise<void>; redo: () => Promise<void> }>>(
+    []
+  );
+  const explorerRedoStackRef = useRef<Array<{ undo: () => Promise<void>; redo: () => Promise<void> }>>(
+    []
+  );
+  const explorerUndoBusyRef = useRef(false);
   const [listWidth, setListWidth] = useState(getStoredWikiListWidth);
   const [listCollapsed, setListCollapsed] = useState(() =>
     getStoredWikiListCollapsed(workspaceId)
@@ -157,6 +176,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     kind: "note" | "folder";
     parentPath: string;
   } | null>(null);
+  const [pendingCreateTemplateSlug, setPendingCreateTemplateSlug] = useState("");
   const [pendingFolderRenamePath, setPendingFolderRenamePath] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [isSubmittingCreate, setIsSubmittingCreate] = useState(false);
@@ -169,6 +189,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
   const replaceIndex = useWikiStore((state) => state.replaceIndex);
   const pushToast = useUiStore((state) => state.pushToast);
   const activeNote = activeNoteSlug ? noteCache[activeNoteSlug] : null;
+  const templateNotes = useMemo(() => notes.filter(isTemplateNote), [notes]);
 
   useEffect(() => {
     const requestedNote = searchParams.get("note");
@@ -243,9 +264,92 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     setSelectedTag(null);
     setSelectedFolderPath(null);
     setPendingCreate(null);
+    setPendingCreateTemplateSlug("");
     setPendingFolderRenamePath(null);
     setExpandedFolders(getStoredExpandedFolders(workspaceId));
+    explorerUndoStackRef.current = [];
+    explorerRedoStackRef.current = [];
   }, [workspaceId]);
+
+  useEffect(() => {
+    async function runExplorerUndo(): Promise<void> {
+      if (explorerUndoBusyRef.current) {
+        return;
+      }
+      const entry = explorerUndoStackRef.current[0];
+      if (!entry) {
+        pushToast({
+          title: "Nothing to undo for the note list.",
+          tone: "warning"
+        });
+        return;
+      }
+      explorerUndoBusyRef.current = true;
+      try {
+        await entry.undo();
+        explorerUndoStackRef.current = explorerUndoStackRef.current.slice(1);
+        explorerRedoStackRef.current = [entry, ...explorerRedoStackRef.current].slice(
+          0,
+          WIKI_EXPLORER_UNDO_LIMIT
+        );
+      } catch (error) {
+        pushToast({
+          title: error instanceof Error ? error.message : "Undo failed.",
+          tone: "error"
+        });
+      } finally {
+        explorerUndoBusyRef.current = false;
+      }
+    }
+
+    async function runExplorerRedo(): Promise<void> {
+      if (explorerUndoBusyRef.current) {
+        return;
+      }
+      const entry = explorerRedoStackRef.current[0];
+      if (!entry) {
+        pushToast({
+          title: "Nothing to redo for the note list.",
+          tone: "warning"
+        });
+        return;
+      }
+      explorerUndoBusyRef.current = true;
+      try {
+        await entry.redo();
+        explorerRedoStackRef.current = explorerRedoStackRef.current.slice(1);
+        explorerUndoStackRef.current = [entry, ...explorerUndoStackRef.current].slice(
+          0,
+          WIKI_EXPLORER_UNDO_LIMIT
+        );
+      } catch (error) {
+        pushToast({
+          title: error instanceof Error ? error.message : "Redo failed.",
+          tone: "error"
+        });
+      } finally {
+        explorerUndoBusyRef.current = false;
+      }
+    }
+
+    function onExplorerUndoRedoKey(event: KeyboardEvent): void {
+      if (!shouldHandleWikiExplorerUndoRedo(event)) {
+        return;
+      }
+      if (event.shiftKey) {
+        event.preventDefault();
+        void runExplorerRedo();
+      } else {
+        event.preventDefault();
+        void runExplorerUndo();
+      }
+    }
+
+    window.addEventListener("keydown", onExplorerUndoRedoKey, true);
+    return () => {
+      window.removeEventListener("keydown", onExplorerUndoRedoKey, true);
+    };
+  }, [pushToast]);
 
   useEffect(() => {
     if (!isResizingList) {
@@ -456,6 +560,14 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     }
   }
 
+  function pushExplorerUndo(entry: { undo: () => Promise<void>; redo: () => Promise<void> }): void {
+    explorerUndoStackRef.current = [entry, ...explorerUndoStackRef.current].slice(
+      0,
+      WIKI_EXPLORER_UNDO_LIMIT
+    );
+    explorerRedoStackRef.current = [];
+  }
+
   async function openNote(slug: string): Promise<void> {
     try {
       const summary = notes.find((note) => note.slug === slug);
@@ -493,11 +605,13 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       parentPath: selectedFolderPath ?? activeNote?.folderPath ?? ""
     });
     setDraftName("");
+    setPendingCreateTemplateSlug("");
   }
 
   function closeCreateForm(): void {
     setPendingCreate(null);
     setDraftName("");
+    setPendingCreateTemplateSlug("");
   }
 
   function openRenameFolderForm(folder: FolderSummary): void {
@@ -530,42 +644,111 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
 
     try {
       if (pendingCreate.kind === "folder") {
+        const parentPath = pendingCreate.parentPath;
         const snapshot = await window.trellis.vault.createFolder({
           name: value,
-          parentPath: pendingCreate.parentPath
+          parentPath
         });
         applySnapshot(snapshot, activeNoteSlug);
-        setSelectedFolderPath(
-          pendingCreate.parentPath ? `${pendingCreate.parentPath}/${value}` : value
-        );
+        const createdFolderPath = parentPath ? `${parentPath}/${value}` : value;
+        setSelectedFolderPath(createdFolderPath);
         setExpandedFolders((current) => {
-          const nextPath = pendingCreate.parentPath
-            ? `${pendingCreate.parentPath}/${value}`
-            : value;
           const next = new Set(current);
 
-          for (const ancestor of getAncestorFolderPaths(nextPath)) {
+          for (const ancestor of getAncestorFolderPaths(createdFolderPath)) {
             next.add(ancestor);
           }
 
           return next;
+        });
+        pushExplorerUndo({
+          undo: async () => {
+            const snap = await window.trellis.vault.deleteFolder({ path: createdFolderPath });
+            applySnapshot(snap, activeNoteSlug);
+            setSelectedFolderPath(parentPath || null);
+          },
+          redo: async () => {
+            const snap = await window.trellis.vault.createFolder({
+              name: value,
+              parentPath
+            });
+            applySnapshot(snap, activeNoteSlug);
+            setSelectedFolderPath(createdFolderPath);
+            setExpandedFolders((current) => {
+              const next = new Set(current);
+              for (const ancestor of getAncestorFolderPaths(createdFolderPath)) {
+                next.add(ancestor);
+              }
+              return next;
+            });
+          }
         });
         pushToast({
           title: "Folder created",
           tone: "success"
         });
       } else {
-        const result = await window.trellis.vault.createStub({
-          title: value,
-          folderPath: pendingCreate.parentPath
-        });
+        const parentPath = pendingCreate.parentPath;
+        const templateSlug = pendingCreateTemplateSlug;
+        const template = templateSlug ? await window.trellis.vault.readNote(templateSlug) : null;
+        const result = template
+          ? await window.trellis.vault.writeNote({
+              title: value,
+              folderPath: parentPath,
+              content: buildNoteContentFromTemplate(template),
+              frontmatter: {
+                tags: template.tags.filter((tag) => tag.trim().toLowerCase() !== templateTag),
+                type: template.type,
+                sources: 0
+              }
+            })
+          : await window.trellis.vault.createStub({
+              title: value,
+              folderPath: parentPath
+            });
         setNote(result.note);
         setSelectedFolderPath(result.note.folderPath || null);
-        setActiveNote(result.note.slug);
         const snapshot = await window.trellis.vault.listIndex();
         applySnapshot(snapshot, result.note.slug);
+        const createdSlug = result.note.slug;
+        const createdRelativePath = result.note.relativePath;
+        pushExplorerUndo({
+          undo: async () => {
+            const snap = await window.trellis.vault.deleteNote({
+              slug: createdSlug,
+              relativePath: createdRelativePath
+            });
+            applySnapshot(snap, activeNoteSlug);
+          },
+          redo: async () => {
+            if (template) {
+              const tpl = await window.trellis.vault.readNote(templateSlug);
+              const r = await window.trellis.vault.writeNote({
+                title: value,
+                folderPath: parentPath,
+                content: buildNoteContentFromTemplate(tpl),
+                frontmatter: {
+                  tags: tpl.tags.filter((tag) => tag.trim().toLowerCase() !== templateTag),
+                  type: tpl.type,
+                  sources: 0
+                }
+              });
+              setNote(r.note);
+              const snap = await window.trellis.vault.listIndex();
+              applySnapshot(snap, r.note.slug);
+            } else {
+              const r = await window.trellis.vault.createStub({
+                title: value,
+                folderPath: parentPath
+              });
+              setNote(r.note);
+              const snap = await window.trellis.vault.listIndex();
+              applySnapshot(snap, r.note.slug);
+            }
+          }
+        });
         pushToast({
-          title: "Note created",
+          title: template ? "Note created from template" : "Note created",
           tone: "success"
         });
       }
@@ -614,9 +797,31 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     });
     const snapshot = await window.trellis.vault.listIndex();
     applySnapshot(snapshot, result.note.slug);
+    const stubSlug = result.note.slug;
+    const stubRelativePath = result.note.relativePath;
+    const folderPathForStub = activeNote?.folderPath ?? "";
+    pushExplorerUndo({
+      undo: async () => {
+        const snap = await window.trellis.vault.deleteNote({
+          slug: stubSlug,
+          relativePath: stubRelativePath
+        });
+        applySnapshot(snap, activeNoteSlug);
+      },
+      redo: async () => {
+        const r = await window.trellis.vault.createStub({
+          title,
+          folderPath: folderPathForStub
+        });
+        setNote(r.note);
+        const snap = await window.trellis.vault.listIndex();
+        applySnapshot(snap, r.note.slug);
+      }
+    });
     pushToast({
       title: "Stub note created",
-      tone: "success"
+      tone: "success",
+      noteLinks: [{ label: result.note.title, noteSlug: result.note.slug }]
     });
   }
 
@@ -624,19 +829,24 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     note: WikiNote,
     overrides: Partial<Pick<SaveNoteInput, "title" | "content" | "folderPath">> & {
       tags?: string[];
-    }
+    },
+    options?: { recordExplorerMoveUndo?: boolean; skipExplorerUndo?: boolean }
   ): Promise<void> {
+    const previousFolderPath = note.folderPath;
+    const nextFolderPath =
+      overrides.folderPath === undefined ? note.folderPath : overrides.folderPath ?? "";
+
     const result = await window.trellis.vault.writeNote({
       slug: note.slug,
       relativePath: note.relativePath,
-      folderPath:
-        overrides.folderPath === undefined ? note.folderPath : overrides.folderPath ?? "",
+      folderPath: nextFolderPath,
       title: overrides.title ?? note.title,
       content: overrides.content ?? note.content,
       frontmatter: {
         tags: overrides.tags ?? note.tags,
         type: note.type,
-        sources: note.sources
+        sources: note.sources,
+        url: note.url
       }
     });
 
@@ -655,6 +865,35 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     });
     const snapshot = await window.trellis.vault.listIndex();
     applySnapshot(snapshot, result.note.slug);
+
+    if (
+      !options?.skipExplorerUndo &&
+      options?.recordExplorerMoveUndo &&
+      overrides.folderPath !== undefined &&
+      previousFolderPath !== nextFolderPath
+    ) {
+      const slug = note.slug;
+      pushExplorerUndo({
+        undo: async () => {
+          const current = useWikiStore.getState().noteCache[slug];
+          if (!current) {
+            return;
+          }
+          await saveExistingNote(
+            current,
+            { folderPath: previousFolderPath },
+            { skipExplorerUndo: true }
+          );
+        },
+        redo: async () => {
+          const current = useWikiStore.getState().noteCache[slug];
+          if (!current) {
+            return;
+          }
+          await saveExistingNote(current, { folderPath: nextFolderPath }, { skipExplorerUndo: true });
+        }
+      });
+    }
   }
 
   async function handleSaveTitle(title: string, slug: string): Promise<void> {
@@ -763,9 +1002,13 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     }
 
     try {
-      await saveExistingNote(activeNote, {
-        folderPath
-      });
+      await saveExistingNote(
+        activeNote,
+        {
+          folderPath
+        },
+        { recordExplorerMoveUndo: true }
+      );
     } catch (error) {
       pushToast({
         title: error instanceof Error ? error.message : "Could not move that note.",
@@ -787,12 +1030,24 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     }
 
     try {
-      const snapshot = await window.trellis.vault.deleteNote({
-        slug: note.slug,
-        relativePath: note.relativePath
-      });
+      const cached = useWikiStore.getState().noteCache[note.slug];
+      const fullBody = cached ?? (await window.trellis.vault.readNote(note.slug));
+      const deleteInput = { slug: note.slug, relativePath: note.relativePath };
+      const preferredAfterDelete = activeNoteSlug === note.slug ? note.slug : activeNoteSlug;
+      const snapshot = await window.trellis.vault.deleteNote(deleteInput);
       setSelectedFolderPath(note.folderPath || null);
-      applySnapshot(snapshot, activeNoteSlug === note.slug ? note.slug : activeNoteSlug);
+      applySnapshot(snapshot, preferredAfterDelete);
+      pushExplorerUndo({
+        undo: async () => {
+          await window.trellis.vault.writeNote(wikiNoteToSavePayload(fullBody));
+          const snap = await window.trellis.vault.listIndex();
+          applySnapshot(snap, fullBody.slug);
+        },
+        redo: async () => {
+          const snap = await window.trellis.vault.deleteNote(deleteInput);
+          applySnapshot(snap, preferredAfterDelete);
+        }
+      });
       pushToast({
         title: "Note deleted",
         tone: "success"
@@ -835,13 +1090,21 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       }
 
       if (note) {
-        await saveExistingNote(note, { folderPath: nextFolderPath });
+        await saveExistingNote(
+          note,
+          { folderPath: nextFolderPath },
+          { recordExplorerMoveUndo: true }
+        );
         return;
       }
 
       const fullNote = await window.trellis.vault.readNote(payload.slug);
       setNote(fullNote);
-      await saveExistingNote(fullNote, { folderPath: nextFolderPath });
+      await saveExistingNote(
+        fullNote,
+        { folderPath: nextFolderPath },
+        { recordExplorerMoveUndo: true }
+      );
       return;
     }
 
@@ -894,6 +1157,79 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
 
       return changed ? next : current;
     });
+    const fromPath = payload.path;
+    const folderSegment = payload.name;
+    const targetParent = nextFolderPath;
+    pushExplorerUndo({
+      undo: async () => {
+        const snap = await window.trellis.vault.renameFolder({
+          path: movedPath,
+          name: folderSegment,
+          parentPath: getParentFolderPath(fromPath)
+        });
+        applySnapshot(snap, activeNoteSlug);
+        const liveFolders = useWikiStore.getState().folders;
+        setSelectedFolderPath((current) => {
+          if (!current) {
+            return current;
+          }
+          if (current === movedPath) {
+            return fromPath;
+          }
+          return current.startsWith(`${movedPath}/`)
+            ? remapFolderPath(current, movedPath, fromPath)
+            : current;
+        });
+        setExpandedFolders((current) => {
+          const descendants = getDescendantFolderPaths(movedPath, liveFolders);
+          const next = new Set(current);
+          let changed = false;
+          for (const path of descendants) {
+            if (!next.has(path)) {
+              continue;
+            }
+            next.delete(path);
+            next.add(remapFolderPath(path, movedPath, fromPath));
+            changed = true;
+          }
+          return changed ? next : current;
+        });
+      },
+      redo: async () => {
+        const snap = await window.trellis.vault.renameFolder({
+          path: fromPath,
+          name: folderSegment,
+          parentPath: targetParent
+        });
+        applySnapshot(snap, activeNoteSlug);
+        const liveFolders = useWikiStore.getState().folders;
+        setSelectedFolderPath((current) => {
+          if (!current) {
+            return current;
+          }
+          if (current === fromPath) {
+            return movedPath;
+          }
+          return current.startsWith(`${fromPath}/`)
+            ? remapFolderPath(current, fromPath, movedPath)
+            : current;
+        });
+        setExpandedFolders((current) => {
+          const descendants = getDescendantFolderPaths(fromPath, liveFolders);
+          const next = new Set(current);
+          let changed = false;
+          for (const path of descendants) {
+            if (!next.has(path)) {
+              continue;
+            }
+            next.delete(path);
+            next.add(remapFolderPath(path, fromPath, movedPath));
+            changed = true;
+          }
+          return changed ? next : current;
+        });
+      }
+    });
   }
 
   function canDropOnFolder(folderPath: string): boolean {
@@ -933,11 +1269,14 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     }
 
     try {
-      const nextPath = [getParentFolderPath(folder.path), trimmed].filter(Boolean).join("/");
+      const oldPath = folder.path;
+      const oldName = folder.name;
+      const parentPath = getParentFolderPath(folder.path);
+      const nextPath = [parentPath, trimmed].filter(Boolean).join("/");
       const snapshot = await window.trellis.vault.renameFolder({
         path: folder.path,
         name: trimmed,
-        parentPath: getParentFolderPath(folder.path)
+        parentPath
       });
       applySnapshot(snapshot, activeNoteSlug);
       setSelectedFolderPath((current) => {
@@ -970,6 +1309,76 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
 
         return changed ? next : current;
       });
+      pushExplorerUndo({
+        undo: async () => {
+          const snap = await window.trellis.vault.renameFolder({
+            path: nextPath,
+            name: oldName,
+            parentPath
+          });
+          applySnapshot(snap, activeNoteSlug);
+          const liveFolders = useWikiStore.getState().folders;
+          setSelectedFolderPath((current) => {
+            if (!current) {
+              return current;
+            }
+            if (current === nextPath) {
+              return oldPath;
+            }
+            return current.startsWith(`${nextPath}/`)
+              ? remapFolderPath(current, nextPath, oldPath)
+              : current;
+          });
+          setExpandedFolders((current) => {
+            const descendants = getDescendantFolderPaths(nextPath, liveFolders);
+            const next = new Set(current);
+            let changed = false;
+            for (const path of descendants) {
+              if (!next.has(path)) {
+                continue;
+              }
+              next.delete(path);
+              next.add(remapFolderPath(path, nextPath, oldPath));
+              changed = true;
+            }
+            return changed ? next : current;
+          });
+        },
+        redo: async () => {
+          const snap = await window.trellis.vault.renameFolder({
+            path: oldPath,
+            name: trimmed,
+            parentPath
+          });
+          applySnapshot(snap, activeNoteSlug);
+          const liveFolders = useWikiStore.getState().folders;
+          setSelectedFolderPath((current) => {
+            if (!current) {
+              return current;
+            }
+            if (current === oldPath) {
+              return nextPath;
+            }
+            return current.startsWith(`${oldPath}/`)
+              ? remapFolderPath(current, oldPath, nextPath)
+              : current;
+          });
+          setExpandedFolders((current) => {
+            const descendants = getDescendantFolderPaths(oldPath, liveFolders);
+            const next = new Set(current);
+            let changed = false;
+            for (const path of descendants) {
+              if (!next.has(path)) {
+                continue;
+              }
+              next.delete(path);
+              next.add(remapFolderPath(path, oldPath, nextPath));
+              changed = true;
+            }
+            return changed ? next : current;
+          });
+        }
+      });
       closeRenameFolderForm();
       pushToast({
         title: "Folder renamed",
@@ -993,11 +1402,44 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     }
 
     try {
+      const rootPath = folder.path;
+      const subtreeFolders = sortFolderPathsForRestore(
+        folders
+          .map((f) => f.path)
+          .filter((p) => p === rootPath || p.startsWith(`${rootPath}/`))
+      );
+      const affectedSummaries = notes.filter(
+        (n) => n.folderPath === rootPath || n.folderPath.startsWith(`${rootPath}/`)
+      );
+      const wikiBodies = await Promise.all(
+        affectedSummaries.map((summary) => window.trellis.vault.readNote(summary.slug))
+      );
       const snapshot = await window.trellis.vault.deleteFolder({
         path: folder.path
       });
       applySnapshot(snapshot, activeNoteSlug);
       setSelectedFolderPath(null);
+      pushExplorerUndo({
+        undo: async () => {
+          for (const fp of subtreeFolders) {
+            const { name, parentPath } = folderPathToCreateParts(fp);
+            await window.trellis.vault.createFolder({
+              name,
+              parentPath: parentPath || undefined
+            });
+          }
+          for (const body of wikiBodies) {
+            await window.trellis.vault.writeNote(wikiNoteToSavePayload(body));
+          }
+          const snap = await window.trellis.vault.listIndex();
+          applySnapshot(snap, wikiBodies[0]?.slug ?? activeNoteSlug);
+        },
+        redo: async () => {
+          const snap = await window.trellis.vault.deleteFolder({ path: rootPath });
+          applySnapshot(snap, activeNoteSlug);
+          setSelectedFolderPath(null);
+        }
+      });
       pushToast({
         title: "Folder deleted",
         tone: "success"
@@ -1463,48 +1905,76 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
                   </div>
                 </div>
                 {pendingCreate ? (
-                  <div className="flex items-center gap-1 rounded-field border border-trellis-accent/25 bg-trellis-surface-2/70">
-                    <span className="flex items-center px-2.5 text-trellis-faint">
-                      {pendingCreate.kind === "folder" ? (
-                        <Folder className="h-4 w-4" />
-                      ) : (
-                        <FileText className="h-4 w-4" />
-                      )}
-                    </span>
-                    <div className="flex min-w-0 flex-1 items-center py-1.5 pr-1.5">
-                      <input
-                        ref={createNameRef}
-                        value={draftName}
-                        onChange={(event) => setDraftName(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            void handleCreate();
+                  <div className="rounded-field border border-trellis-accent/25 bg-trellis-surface-2/70">
+                    <div className="flex items-center gap-1">
+                      <span className="flex items-center px-2.5 text-trellis-faint">
+                        {pendingCreate.kind === "folder" ? (
+                          <Folder className="h-4 w-4" />
+                        ) : (
+                          <FileText className="h-4 w-4" />
+                        )}
+                      </span>
+                      <div className="flex min-w-0 flex-1 items-center py-1.5 pr-1.5">
+                        <input
+                          ref={createNameRef}
+                          value={draftName}
+                          onChange={(event) => setDraftName(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void handleCreate();
+                            }
+                            if (event.key === "Escape") {
+                              closeCreateForm();
+                            }
+                          }}
+                          className="min-w-0 flex-1 bg-transparent px-1.5 text-[13px] font-medium text-trellis-text outline-none placeholder:text-trellis-faint"
+                          placeholder={
+                            pendingCreate.kind === "folder"
+                              ? `New folder in ${formatFolderLabel(pendingCreate.parentPath)}`
+                              : `New note in ${formatFolderLabel(pendingCreate.parentPath)}`
                           }
-                          if (event.key === "Escape") {
-                            closeCreateForm();
-                          }
-                        }}
-                        className="min-w-0 flex-1 bg-transparent px-1.5 text-[13px] font-medium text-trellis-text outline-none placeholder:text-trellis-faint"
-                        placeholder={
-                          pendingCreate.kind === "folder"
-                            ? `New folder in ${formatFolderLabel(pendingCreate.parentPath)}`
-                            : `New note in ${formatFolderLabel(pendingCreate.parentPath)}`
-                        }
-                        disabled={isSubmittingCreate}
-                        aria-label={pendingCreate.kind === "folder" ? "Folder name" : "Note title"}
-                      />
-                      <button
-                        type="button"
-                        className="rounded-field border border-transparent p-1 text-trellis-faint transition hover:border-trellis-border hover:text-trellis-text"
-                        aria-label="Cancel create"
-                        title="Cancel"
-                        disabled={isSubmittingCreate}
-                        onClick={closeCreateForm}
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
+                          disabled={isSubmittingCreate}
+                          aria-label={pendingCreate.kind === "folder" ? "Folder name" : "Note title"}
+                        />
+                        <button
+                          type="button"
+                          className="rounded-field border border-transparent p-1 text-trellis-faint transition hover:border-trellis-border hover:text-trellis-text"
+                          aria-label="Cancel create"
+                          title="Cancel"
+                          disabled={isSubmittingCreate}
+                          onClick={closeCreateForm}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
                     </div>
+                    {pendingCreate.kind === "note" && templateNotes.length > 0 ? (
+                      <div className="border-t border-trellis-border/70 px-2.5 pb-2 pt-1.5">
+                        <label
+                          className="text-[10px] uppercase tracking-[0.14em] text-trellis-faint"
+                          htmlFor="notes-create-template"
+                        >
+                          Template
+                        </label>
+                        <select
+                          id="notes-create-template"
+                          className="mt-1 w-full rounded-field border border-trellis-border bg-trellis-surface px-2 py-1.5 text-xs text-trellis-text outline-none transition focus:border-trellis-accent/50"
+                          value={pendingCreateTemplateSlug}
+                          disabled={isSubmittingCreate}
+                          onChange={(event) => {
+                            setPendingCreateTemplateSlug(event.target.value);
+                          }}
+                        >
+                          <option value="">Blank note</option>
+                          {templateNotes.map((template) => (
+                            <option key={template.slug} value={template.slug}>
+                              {template.title}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {rootFolders.map((folder) => renderFolderRow(folder, 0))}

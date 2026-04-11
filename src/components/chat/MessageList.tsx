@@ -18,6 +18,14 @@ interface Props {
   onReadAloud?: (messageId: string, text: string) => void | Promise<void>;
   readAloudLoadingMessageId?: string | null;
   readAloudDisabled?: boolean;
+  onApproveNoteAction?: (messageId: string, actionId: string) => void | Promise<void>;
+  onRejectNoteAction?: (messageId: string, actionId: string) => void | Promise<void>;
+  onNoteActionDraftChange?: (
+    messageId: string,
+    actionId: string,
+    afterMarkdown: string
+  ) => void;
+  busyNoteActionId?: string | null;
 }
 
 export function MessageList({
@@ -34,7 +42,11 @@ export function MessageList({
   onRetryMessage,
   onReadAloud,
   readAloudLoadingMessageId,
-  readAloudDisabled
+  readAloudDisabled,
+  onApproveNoteAction,
+  onRejectNoteAction,
+  onNoteActionDraftChange,
+  busyNoteActionId
 }: Props) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const lastMessageSignature = useMemo(() => {
@@ -88,6 +100,10 @@ export function MessageList({
           onReadAloud={onReadAloud}
           readAloudLoading={readAloudLoadingMessageId === message.id}
           readAloudDisabled={readAloudDisabled}
+          onApproveNoteAction={onApproveNoteAction}
+          onRejectNoteAction={onRejectNoteAction}
+          onNoteActionDraftChange={onNoteActionDraftChange}
+          busyNoteActionId={busyNoteActionId}
         />
       ))}
       <div ref={endRef} />
