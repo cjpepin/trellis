@@ -92,12 +92,24 @@ export function isPremiumChatModel(model: ChatModel): boolean {
   return chatModelConfig[model].tier === "premium";
 }
 
-export function assertChatModelAccess(profile: ProfileRow, model: ChatModel): void {
+export function assertChatModelAccess(
+  profile: ProfileRow,
+  model: ChatModel,
+  context?: { previewWorkspaceRequest?: boolean }
+): void {
+  if (profile.subscription_tier === "pro" || profile.subscription_tier === "byok") {
+    return;
+  }
+
   if (
-    profile.subscription_tier === "pro" ||
-    profile.subscription_tier === "byok" ||
-    !isPremiumChatModel(model)
+    context?.previewWorkspaceRequest &&
+    profile.subscription_tier === "trial" &&
+    profile.is_admin === true
   ) {
+    return;
+  }
+
+  if (!isPremiumChatModel(model)) {
     return;
   }
 

@@ -10,7 +10,6 @@ import {
   Mic,
   Paperclip,
   RotateCcw,
-  Sparkles,
   Wand2,
   X
 } from "lucide-react";
@@ -31,6 +30,49 @@ import {
   insertNoteReference
 } from "@/lib/noteReferences";
 import { cn } from "@/lib/utils";
+import { ComposerPendingPreviews } from "@/components/chat/ComposerPendingPreviews";
+
+/** Native `title` does not show on disabled `<button>` in Chromium; wrap so the span receives hover. */
+function ComposerIconButton({
+  title,
+  ariaLabel,
+  disabled,
+  onClick,
+  active = false,
+  buttonClassName,
+  children
+}: {
+  title: string;
+  ariaLabel: string;
+  disabled: boolean;
+  onClick: () => void;
+  active?: boolean;
+  buttonClassName?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      title={disabled ? title : undefined}
+      className={cn("inline-flex items-center justify-center", disabled && "cursor-not-allowed")}
+    >
+      <button
+        type="button"
+        title={disabled ? undefined : title}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        className={cn(
+          "rounded-full border border-transparent p-1.5 transition hover:border-trellis-border hover:bg-trellis-surface disabled:opacity-40",
+          buttonClassName,
+          active && "border-trellis-border bg-trellis-surface text-trellis-text",
+          disabled && "pointer-events-none"
+        )}
+        onClick={onClick}
+      >
+        {children}
+      </button>
+    </span>
+  );
+}
 
 interface Props {
   disabled?: boolean;
@@ -61,6 +103,8 @@ interface Props {
   speechAllowed: boolean;
   imageGenAllowed: boolean;
   accessToken: string | null;
+  /** Unlocks every catalog model in the picker (preview workspace). */
+  previewWorkspace?: boolean;
 }
 
 export function InputBar({
@@ -91,7 +135,8 @@ export function InputBar({
   visionAllowed,
   speechAllowed,
   imageGenAllowed,
-  accessToken
+  accessToken,
+  previewWorkspace = false
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
@@ -110,8 +155,11 @@ export function InputBar({
   const [imageGenBusy, setImageGenBusy] = useState(false);
   const selectedModel = useMemo(() => getChatModelOption(model), [model]);
   const selectedModelAccess = useMemo(
-    () => getChatModelAccess(model, subscriptionTier, providerKeys),
-    [model, providerKeys, subscriptionTier]
+    () =>
+      getChatModelAccess(model, subscriptionTier, providerKeys, {
+        previewWorkspace
+      }),
+    [model, previewWorkspace, providerKeys, subscriptionTier]
   );
 
   useEffect(() => {
@@ -368,15 +416,12 @@ export function InputBar({
       return;
     }
 
+    setImageGenOpen(false);
+    setImageGenDraft("");
     setImageGenBusy(true);
 
     try {
-      const ok = await onGenerateImageWithPrompt(next);
-
-      if (ok) {
-        setImageGenOpen(false);
-        setImageGenDraft("");
-      }
+      await onGenerateImageWithPrompt(next);
     } finally {
       setImageGenBusy(false);
     }
@@ -385,58 +430,13 @@ export function InputBar({
   return (
     <div className="trellis-chat-composer w-full px-3 pb-2.5 pt-2">
       <div className="flex items-start gap-2.5">
-        <Sparkles className="mt-2 h-4 w-4 text-trellis-accent" aria-hidden />
         <div className="relative flex-1">
-          {pendingAttachments.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {pendingAttachments.map((attachment) => (
-                <span
-                  key={attachment.clientId}
-                  className="inline-flex max-w-[200px] items-center gap-1 rounded-full border border-trellis-border bg-trellis-surface-2 pl-2.5 pr-1 py-0.5 text-[11px] text-trellis-muted"
-                >
-                  {attachment.kind === "url" ? (
-                    <Link2 className="h-3 w-3 shrink-0 text-trellis-accent" aria-hidden />
-                  ) : (
-                    <Paperclip className="h-3 w-3 shrink-0 text-trellis-accent" aria-hidden />
-                  )}
-                  <span className="min-w-0 truncate text-trellis-text">{attachment.label}</span>
-                  <button
-                    type="button"
-                    className="rounded-full p-0.5 text-trellis-faint transition hover:bg-trellis-surface hover:text-trellis-text"
-                    aria-label={`Remove ${attachment.label}`}
-                    onClick={() => {
-                      onRemoveAttachment(attachment.clientId);
-                    }}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          {pendingImages.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {pendingImages.map((image) => (
-                <span
-                  key={image.clientId}
-                  className="inline-flex max-w-[200px] items-center gap-1 rounded-full border border-trellis-border bg-trellis-surface-2 pl-2.5 pr-1 py-0.5 text-[11px] text-trellis-muted"
-                >
-                  <ImagePlus className="h-3 w-3 shrink-0 text-trellis-accent" aria-hidden />
-                  <span className="min-w-0 truncate text-trellis-text">{image.label}</span>
-                  <button
-                    type="button"
-                    className="rounded-full p-0.5 text-trellis-faint transition hover:bg-trellis-surface hover:text-trellis-text"
-                    aria-label={`Remove ${image.label}`}
-                    onClick={() => {
-                      onRemoveImage(image.clientId);
-                    }}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
+          <ComposerPendingPreviews
+            pendingAttachments={pendingAttachments}
+            pendingImages={pendingImages}
+            onRemoveAttachment={onRemoveAttachment}
+            onRemoveImage={onRemoveImage}
+          />
           <textarea
             ref={textareaRef}
             value={value}
@@ -519,27 +519,42 @@ export function InputBar({
             </div>
           )}
         </div>
-        <button
-          type="button"
-          disabled={disabled || !canSend || isStreaming || !selectedModelAccess.allowed}
-          className={cn(
-            "mt-1.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition",
-            disabled || !canSend || isStreaming
-              ? "border-trellis-border text-trellis-faint"
-              : "trellis-accent-surface border-trellis-accent/35 text-trellis-accent hover:border-trellis-accent"
-          )}
-          title={
-            disabled || !canSend || isStreaming
-              ? "Add a message or attachment to send"
-              : "Send message (Enter)"
-          }
-          aria-label="Send message"
-          onClick={() => {
-            void handleSubmit();
-          }}
-        >
-          <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
-        </button>
+        {(() => {
+          const sendHardDisabled =
+            disabled || !canSend || isStreaming || !selectedModelAccess.allowed;
+          const sendTitle = sendHardDisabled
+            ? "Add a message or attachment to send"
+            : "Send message (Enter)";
+
+          return (
+            <span
+              title={sendHardDisabled ? sendTitle : undefined}
+              className={cn(
+                "mt-1.5 inline-flex h-9 w-9 shrink-0 items-center justify-center",
+                sendHardDisabled && "cursor-not-allowed"
+              )}
+            >
+              <button
+                type="button"
+                title={sendHardDisabled ? undefined : sendTitle}
+                disabled={sendHardDisabled}
+                aria-label="Send message"
+                className={cn(
+                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition",
+                  sendHardDisabled
+                    ? "border-trellis-border text-trellis-faint"
+                    : "trellis-accent-surface border-trellis-accent/35 text-trellis-accent hover:border-trellis-accent",
+                  sendHardDisabled && "pointer-events-none"
+                )}
+                onClick={() => {
+                  void handleSubmit();
+                }}
+              >
+                <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </span>
+          );
+        })()}
       </div>
       {linkEntryOpen && (
         <div className="mt-3 flex flex-col gap-2 border-t border-trellis-border pt-3">
@@ -649,74 +664,53 @@ export function InputBar({
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              disabled={disabled || isStreaming}
-              className="rounded-full border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text disabled:opacity-40"
+            <ComposerIconButton
               title="Attach a text or PDF file from your computer as context for this message"
-              aria-label="Attach file from computer"
+              ariaLabel="Attach file from computer"
+              disabled={disabled || isStreaming}
               onClick={() => {
                 onAttachFile();
               }}
+              buttonClassName="text-trellis-muted hover:text-trellis-text"
             >
               <Paperclip className="h-4 w-4" aria-hidden />
-            </button>
-            <button
-              type="button"
+            </ComposerIconButton>
+            <ComposerIconButton
+              title="Clip readable text from a public web page (HTTPS) to attach as context"
+              ariaLabel="Clip web page from URL"
               disabled={disabled || isStreaming}
-              className={cn(
-                "rounded-full border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text disabled:opacity-40",
-                linkEntryOpen && "border-trellis-border bg-trellis-surface text-trellis-text"
-              )}
-              title="Clip readable text from a public HTTPS page to attach as context"
-              aria-label="Clip web page from URL"
+              active={linkEntryOpen}
               onClick={() => {
                 setImageGenOpen(false);
                 setLinkEntryOpen((current) => !current);
               }}
+              buttonClassName="text-trellis-muted hover:text-trellis-text"
             >
               <Link2 className="h-4 w-4" aria-hidden />
-            </button>
-            <button
-              type="button"
-              disabled={
-                disabled ||
-                isStreaming ||
-                !visionAllowed ||
-                privacyLocal ||
-                pendingAttachments.length + pendingImages.length >= 12
-              }
-              className="rounded-full border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text disabled:opacity-40"
+            </ComposerIconButton>
+            <ComposerIconButton
               title={
                 privacyLocal
                   ? "Vision needs cloud chat — turn off local-only privacy to attach images"
                   : !visionAllowed
-                    ? "This model does not accept images — choose a vision-capable model"
+                    ? "Attach an image file — your current model is not vision-capable; switch to GPT-4o Mini, GPT-4o, or Claude, or Trellis will remind you when you click"
                     : "Attach an image file (PNG, JPEG, WebP, GIF) for vision-capable models"
               }
-              aria-label="Attach image file"
-              onClick={() => {
-                onAttachImage();
-              }}
-            >
-              <ImagePlus className="h-4 w-4" aria-hidden />
-            </button>
-            <button
-              type="button"
+              ariaLabel="Attach image file"
               disabled={
                 disabled ||
                 isStreaming ||
-                !cloudMediaAllowed ||
-                !speechAllowed ||
-                !accessToken ||
-                isTranscribing
+                privacyLocal ||
+                pendingAttachments.length + pendingImages.length >= 12
               }
-              className={cn(
-                "rounded-full border border-transparent p-1.5 transition hover:border-trellis-border hover:bg-trellis-surface disabled:opacity-40",
-                isRecording
-                  ? "text-trellis-error"
-                  : "text-trellis-muted hover:text-trellis-text"
-              )}
+              onClick={() => {
+                onAttachImage();
+              }}
+              buttonClassName="text-trellis-muted hover:text-trellis-text"
+            >
+              <ImagePlus className="h-4 w-4" aria-hidden />
+            </ComposerIconButton>
+            <ComposerIconButton
               title={
                 privacyLocal
                   ? "Voice to text needs cloud chat — turn off local-only privacy"
@@ -728,47 +722,57 @@ export function InputBar({
                         ? "Stop recording and transcribe into the composer"
                         : "Record your voice, then transcribe it into the message box"
               }
-              aria-label={
+              ariaLabel={
                 isTranscribing
                   ? "Transcribing speech"
                   : isRecording
                     ? "Stop recording"
                     : "Start voice dictation"
               }
+              disabled={
+                disabled ||
+                isStreaming ||
+                !cloudMediaAllowed ||
+                !speechAllowed ||
+                !accessToken ||
+                isTranscribing
+              }
               onClick={() => {
                 void toggleRecording();
               }}
+              buttonClassName={cn(
+                isRecording
+                  ? "text-trellis-error hover:border-trellis-border hover:bg-trellis-surface"
+                  : "text-trellis-muted hover:text-trellis-text"
+              )}
             >
               {isTranscribing ? (
                 <LoaderCircle className="h-4 w-4 animate-spin text-trellis-accent" aria-hidden />
               ) : (
                 <Mic className="h-4 w-4" aria-hidden />
               )}
-            </button>
-            <button
-              type="button"
-              disabled={
-                disabled || isStreaming || !cloudMediaAllowed || !imageGenAllowed || privacyLocal
-              }
-              className={cn(
-                "rounded-full border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text disabled:opacity-40",
-                imageGenOpen && "border-trellis-border bg-trellis-surface text-trellis-text"
-              )}
+            </ComposerIconButton>
+            <ComposerIconButton
               title={
                 privacyLocal
                   ? "Image generation needs cloud chat — turn off local-only privacy"
                   : !imageGenAllowed
-                    ? "Switch to an image-capable model (e.g. GPT-4o) to generate images"
-                    : "Generate a PNG with AI from a short description (opens prompt below)"
+                    ? "Describe an image to generate — requires GPT-4o; Trellis will remind you if your model cannot generate"
+                    : imageGenBusy
+                      ? "Generating an image…"
+                      : "Generate a PNG with AI from a short description (opens prompt below)"
               }
-              aria-label="Generate image with AI"
+              ariaLabel="Generate image with AI"
+              disabled={disabled || isStreaming || !cloudMediaAllowed || privacyLocal || imageGenBusy}
+              active={imageGenOpen}
               onClick={() => {
                 setLinkEntryOpen(false);
                 setImageGenOpen((current) => !current);
               }}
+              buttonClassName="text-trellis-muted hover:text-trellis-text"
             >
               <Wand2 className="h-4 w-4" aria-hidden />
-            </button>
+            </ComposerIconButton>
           </div>
           <p className="min-w-0 text-xs text-trellis-muted">
             Type <code>/</code> for notes. Attach files, links, or images for context. Enter sends ·
@@ -796,20 +800,28 @@ export function InputBar({
             </span>
           )}
           <div className="relative" ref={modelMenuRef}>
-            <button
-              type="button"
-              disabled={disabled}
-              className="trellis-accent-button flex max-w-[200px] items-center gap-2 rounded-full border px-3 py-1.5 text-left text-xs transition hover:border-trellis-accent/50 disabled:cursor-not-allowed disabled:border-trellis-border disabled:text-trellis-faint"
-              title="Choose which model generates replies"
-              aria-label="Choose chat model"
-              aria-expanded={modelMenuOpen}
-              onClick={() => {
-                setModelMenuOpen((current) => !current);
-              }}
+            <span
+              title={disabled ? "Choose which model generates replies" : undefined}
+              className={cn("inline-flex max-w-[200px]", disabled && "cursor-not-allowed")}
             >
-              <span className="min-w-0 truncate text-trellis-text">{selectedModel.label}</span>
-              <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-trellis-muted" aria-hidden />
-            </button>
+              <button
+                type="button"
+                disabled={disabled}
+                title={disabled ? undefined : "Choose which model generates replies"}
+                aria-label="Choose chat model"
+                aria-expanded={modelMenuOpen}
+                className={cn(
+                  "trellis-accent-button flex max-w-[200px] items-center gap-2 rounded-full border px-3 py-1.5 text-left text-xs transition hover:border-trellis-accent/50 disabled:border-trellis-border disabled:text-trellis-faint",
+                  disabled && "pointer-events-none"
+                )}
+                onClick={() => {
+                  setModelMenuOpen((current) => !current);
+                }}
+              >
+                <span className="min-w-0 truncate text-trellis-text">{selectedModel.label}</span>
+                <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-trellis-muted" aria-hidden />
+              </button>
+            </span>
             {modelMenuOpen && (
               <div className="trellis-elevated absolute bottom-full right-0 z-30 mb-3 w-[340px] overflow-hidden">
                 <div className="border-b border-trellis-border px-3 py-2">
@@ -825,7 +837,9 @@ export function InputBar({
                   <div className="space-y-1">
                     {chatModelOptions.map((option) => {
                       const isSelected = option.id === model;
-                      const access = getChatModelAccess(option.id, subscriptionTier, providerKeys);
+                      const access = getChatModelAccess(option.id, subscriptionTier, providerKeys, {
+                        previewWorkspace
+                      });
                       const isAccessible = access.allowed;
 
                       return (

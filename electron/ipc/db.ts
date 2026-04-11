@@ -30,7 +30,8 @@ const chatMediaArtifactSchema = z.object({
   fileId: z.string().uuid(),
   mimeType: z.string().min(1).max(120),
   label: z.string().min(1).max(500),
-  prompt: z.string().max(4000).optional()
+  prompt: z.string().max(4000).optional(),
+  pendingGeneration: z.boolean().optional()
 });
 
 const messageSchema = z

@@ -335,6 +335,10 @@ export function registerChatIpc(options: {
       headers["x-trellis-provider-key"] = providerApiKey;
     }
 
+    if (options.getWorkspaceId() === "preview") {
+      headers["x-trellis-preview-workspace"] = "1";
+    }
+
     const messagesForEdge = await enrichStreamMessagesForEdge(parsed.messages);
 
     const response = await fetch(`${getFunctionsBaseUrl()}/chat`, {

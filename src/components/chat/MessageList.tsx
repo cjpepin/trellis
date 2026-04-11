@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { MessageRecord } from "@electron/ipc/types";
+import type { MessageRecord, NoteSummary } from "@electron/ipc/types";
 import type { MessageMeta } from "@/store/chatStore";
 import { MessageBubble } from "./MessageBubble";
 
@@ -7,6 +7,8 @@ interface Props {
   messages: MessageRecord[];
   columnClassName: string;
   existingSlugs: string[];
+  vaultId: string;
+  notes: NoteSummary[];
   messageMetaById: Record<string, MessageMeta>;
   awaitingFirstToken: boolean;
   isStreaming: boolean;
@@ -22,6 +24,8 @@ export function MessageList({
   messages,
   columnClassName,
   existingSlugs,
+  vaultId,
+  notes,
   messageMetaById,
   awaitingFirstToken,
   isStreaming,
@@ -65,13 +69,15 @@ export function MessageList({
 
   return (
     <div
-      className={`mx-auto flex w-full ${columnClassName} flex-col gap-8 px-6 pb-14 pt-10 md:gap-10 md:px-10`}
+      className={`mx-auto flex w-full ${columnClassName} flex-col gap-8 px-6 pb-5 pt-10 md:gap-10 md:px-10`}
     >
       {messages.map((message, index) => (
         <MessageBubble
           key={message.id}
           message={message}
           existingSlugs={existingSlugs}
+          vaultId={vaultId}
+          notes={notes}
           meta={messageMetaById[message.id]}
           canEdit={message.role === "user" && !isStreaming}
           canRetry={message.role === "user" && !isStreaming}

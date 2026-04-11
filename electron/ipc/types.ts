@@ -48,6 +48,7 @@ export const ipcChannels = {
   vaultSelectDirectory: "vault:select:directory",
   vaultImportFromObsidian: "vault:import:obsidian",
   vaultExportToObsidian: "vault:export:obsidian",
+  vaultAppendChatImage: "vault:append:chat-image",
   retrievalSearchNotes: "retrieval:search:notes",
   retrievalRebuildIndex: "retrieval:rebuild:index",
   ingestParsePdf: "ingest:parse:pdf",
@@ -176,6 +177,8 @@ export interface ChatMediaArtifact {
   label: string;
   /** Set for generated images. */
   prompt?: string;
+  /** Inline image generation in progress; no cache file for `fileId` yet. */
+  pendingGeneration?: boolean;
 }
 
 export interface MessageRecord {
@@ -297,6 +300,17 @@ export interface CreateStubInput {
   title: string;
   folderPath?: string | null;
   vaultId?: string;
+}
+
+/** Default wiki note slug for saving generated chat images when the user does not pick a specific note. */
+export const TRELLIS_DEFAULT_CHAT_IMAGE_NOTE_SLUG = "trellis-captures";
+
+/** Appends a chat media cache image into a wiki note as markdown. Uses {@link TRELLIS_DEFAULT_CHAT_IMAGE_NOTE_SLUG} when `slug` is omitted. */
+export interface VaultAppendChatImageInput {
+  vaultId?: string;
+  fileId: string;
+  slug?: string;
+  alt?: string;
 }
 
 export interface DeleteNoteInput {
@@ -700,6 +714,7 @@ export interface VaultBridge {
   listIndex: (vaultId?: string) => Promise<VaultSnapshot>;
   readNote: (slug: string, vaultId?: string) => Promise<WikiNote>;
   writeNote: (input: SaveNoteInput) => Promise<SaveNoteResult>;
+  appendChatImageToNote: (input: VaultAppendChatImageInput) => Promise<SaveNoteResult>;
   createStub: (input: CreateStubInput) => Promise<SaveNoteResult>;
   deleteNote: (input: DeleteNoteInput) => Promise<VaultSnapshot>;
   createFolder: (input: CreateFolderInput) => Promise<VaultSnapshot>;

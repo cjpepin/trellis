@@ -179,7 +179,8 @@ Deno.serve(async (request) => {
     const { user, profile, admin } = await requireUser(request);
     assertEntitlement(profile, "message");
     const parsed = parseBody(await request.json());
-    assertChatModelAccess(profile, parsed.model);
+    const previewWorkspaceRequest = request.headers.get("x-trellis-preview-workspace") === "1";
+    assertChatModelAccess(profile, parsed.model, { previewWorkspaceRequest });
 
     const mediaCaps = getChatModelMediaCapabilities(parsed.model);
     const hasVisionImages = parsed.messages.some(

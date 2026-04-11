@@ -21,6 +21,7 @@ interface AuthState {
   accessToken: string | null;
   subscriptionTier: SubscriptionTier;
   subscriptionStatus: "trialing" | "active" | "expired";
+  isAdmin: boolean;
   usage: UsageSnapshot;
   providerKeys: ProviderKeyStatusSnapshot;
   errorMessage: string | null;
@@ -31,6 +32,7 @@ interface AuthState {
     user: { id: string; email: string | null };
     subscriptionTier: SubscriptionTier;
     subscriptionStatus: "trialing" | "active" | "expired";
+    isAdmin: boolean;
     usage: UsageSnapshot;
   }) => void;
   setProviderKeys: (providerKeys: ProviderKeyStatusSnapshot) => void;
@@ -71,6 +73,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   accessToken: null,
   subscriptionTier: "trial",
   subscriptionStatus: "trialing",
+  isAdmin: false,
   usage: defaultUsage,
   providerKeys: defaultProviderKeys,
   errorMessage: null,
@@ -83,6 +86,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       accessToken: payload.accessToken,
       subscriptionTier: payload.subscriptionTier,
       subscriptionStatus: payload.subscriptionStatus,
+      isAdmin: payload.isAdmin,
       usage: payload.usage,
       errorMessage: null
     }),
@@ -94,6 +98,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       accessToken: null,
       subscriptionTier: "trial",
       subscriptionStatus: "trialing",
+      isAdmin: false,
       usage: defaultUsage,
       errorMessage: null
     }),

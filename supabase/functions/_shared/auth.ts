@@ -11,6 +11,8 @@ export interface ProfileRow {
   ingests_used: number;
   ingest_limit: number;
   stripe_customer_id: string | null;
+  /** Set in DB only via service role / SQL; enables preview sandbox entitlements. */
+  is_admin: boolean;
 }
 
 export function getEnvironment(name: string): string {

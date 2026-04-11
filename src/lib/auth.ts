@@ -5,6 +5,8 @@ import { getSupabase, hasSupabaseConfig } from "./supabase";
 export interface ProfileSnapshot {
   subscriptionTier: SubscriptionTier;
   subscriptionStatus: "trialing" | "active" | "expired";
+  /** From `profiles.is_admin`; enables preview-workspace model sandbox when true. */
+  isAdmin: boolean;
   usage: {
     messagesUsed: number;
     messageLimit: number;
@@ -29,6 +31,7 @@ function mapProfileRow(row: Record<string, unknown> | null): ProfileSnapshot {
         : row?.subscription_status === "expired"
           ? "expired"
           : "trialing",
+    isAdmin: row?.is_admin === true,
     usage: {
       messagesUsed: typeof row?.messages_used === "number" ? row.messages_used : 0,
       messageLimit: typeof row?.message_limit === "number" ? row.message_limit : 50,
@@ -102,7 +105,7 @@ export async function getProfileSnapshot(userId: string): Promise<ProfileSnapsho
   const { data, error } = await getSupabase()
     .from("profiles")
     .select(
-      "subscription_tier, subscription_status, messages_used, message_limit, ingests_used, ingest_limit"
+      "subscription_tier, subscription_status, is_admin, messages_used, message_limit, ingests_used, ingest_limit"
     )
     .eq("id", userId)
     .maybeSingle();

@@ -54,6 +54,7 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
   const accessToken = useAuthStore((state) => state.accessToken);
   const authStatus = useAuthStore((state) => state.status);
   const subscriptionTier = useAuthStore((state) => state.subscriptionTier);
+  const isAdmin = useAuthStore((state) => state.isAdmin);
   const providerKeys = useAuthStore((state) => state.providerKeys);
   const notes = useWikiStore((state) => state.notes);
   const activeNoteSlug = useWikiStore((state) => state.activeNoteSlug);
@@ -123,17 +124,34 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
     setPendingImageAttachments([]);
   }, [activeSessionId]);
 
+  const previewModelAccess = useMemo(
+    () => ({ previewWorkspace: workspace.isPreview && isAdmin }),
+    [isAdmin, workspace.isPreview]
+  );
+
   useEffect(() => {
-    if (canUseChatModel(activeModel, subscriptionTier, providerKeys.statuses)) {
+    if (
+      canUseChatModel(activeModel, subscriptionTier, providerKeys.statuses, previewModelAccess)
+    ) {
       return;
     }
 
-    const fallbackModel = getFirstAccessibleChatModel(subscriptionTier, providerKeys.statuses);
+    const fallbackModel = getFirstAccessibleChatModel(
+      subscriptionTier,
+      providerKeys.statuses,
+      previewModelAccess
+    );
 
     if (fallbackModel !== activeModel) {
       setActiveModel(fallbackModel);
     }
-  }, [activeModel, providerKeys.statuses, setActiveModel, subscriptionTier]);
+  }, [
+    activeModel,
+    previewModelAccess,
+    providerKeys.statuses,
+    setActiveModel,
+    subscriptionTier
+  ]);
 
   const queueExtraction = useCallback(
     async (
@@ -710,6 +728,70 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
       return false;
     }
 
+    let sessionId = activeSessionId;
+
+    if (!sessionId) {
+      try {
+        const session = await window.trellis.db.createSession({
+          model: activeModel,
+          vaultId: activeVault.id
+        });
+        sessionId = session.id;
+        setActiveSession(session.id);
+        upsertSession(session);
+      } catch (error) {
+        pushToast({
+          title: error instanceof Error ? error.message : "Could not start a chat session.",
+          tone: "warning"
+        });
+        return false;
+      }
+    }
+
+    const priorMessages = useChatStore.getState().messagesBySession[sessionId] ?? [];
+    const userMessage: MessageRecord = {
+      id: crypto.randomUUID(),
+      sessionId,
+      role: "user",
+      content: `(Image request) ${trimmed}`,
+      createdAt: Date.now(),
+      tokens: null
+    };
+    const assistantMessageId = crypto.randomUUID();
+    const pendingFileId = crypto.randomUUID();
+    const assistantPending: MessageRecord = {
+      id: assistantMessageId,
+      sessionId,
+      role: "assistant",
+      content: "Generating image…",
+      createdAt: Date.now(),
+      tokens: null,
+      mediaArtifacts: [
+        {
+          kind: "generated_image",
+          fileId: pendingFileId,
+          mimeType: "image/png",
+          label: "Generated image",
+          prompt: trimmed,
+          pendingGeneration: true
+        }
+      ]
+    };
+
+    const optimisticMessages = [...priorMessages, userMessage, assistantPending];
+    replaceSessionMessages(sessionId, optimisticMessages);
+
+    try {
+      await window.trellis.db.replaceMessages({ sessionId, messages: optimisticMessages });
+    } catch (error) {
+      replaceSessionMessages(sessionId, priorMessages);
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not save messages.",
+        tone: "warning"
+      });
+      return false;
+    }
+
     try {
       const result = await window.trellis.media.generateImage({
         accessToken: accessToken ?? "",
@@ -721,36 +803,14 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
         mimeType: "image/png"
       });
 
-      let sessionId = activeSessionId;
-      const sessionVaultId = activeSession?.vaultId || activeVault.id;
-
-      if (!sessionId) {
-        const session = await window.trellis.db.createSession({
-          model: activeModel,
-          vaultId: activeVault.id
-        });
-        sessionId = session.id;
-        setActiveSession(session.id);
-        upsertSession(session);
-      }
-
-      const userMessage: MessageRecord = {
-        id: crypto.randomUUID(),
-        sessionId,
-        role: "user",
-        content: `(Image request) ${trimmed}`,
-        createdAt: Date.now(),
-        tokens: null
-      };
-
-      const assistantMessage: MessageRecord = {
-        id: crypto.randomUUID(),
+      const assistantFinal: MessageRecord = {
+        id: assistantMessageId,
         sessionId,
         role: "assistant",
         content: result.revisedPrompt
           ? `Generated image.\n\n${result.revisedPrompt}`
           : "Generated image.",
-        createdAt: Date.now(),
+        createdAt: assistantPending.createdAt,
         tokens: null,
         mediaArtifacts: [
           {
@@ -763,10 +823,9 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
         ]
       };
 
-      const sessionMessages = useChatStore.getState().messagesBySession[sessionId] ?? [];
-      const nextMessages = [...sessionMessages, userMessage, assistantMessage];
-      replaceSessionMessages(sessionId, nextMessages);
-      await window.trellis.db.replaceMessages({ sessionId, messages: nextMessages });
+      const finalMessages = [...priorMessages, userMessage, assistantFinal];
+      replaceSessionMessages(sessionId, finalMessages);
+      await window.trellis.db.replaceMessages({ sessionId, messages: finalMessages });
       const updatedSession = await window.trellis.db.updateSession({
         id: sessionId,
         model: activeModel
@@ -775,6 +834,12 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
       void queueExtraction(sessionId, "idle");
       return true;
     } catch (error) {
+      replaceSessionMessages(sessionId, priorMessages);
+      try {
+        await window.trellis.db.replaceMessages({ sessionId, messages: priorMessages });
+      } catch {
+        // ignore secondary persistence failure after rollback
+      }
       pushToast({
         title: error instanceof Error ? error.message : "Could not generate that image.",
         tone: "warning"
@@ -856,6 +921,8 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
           messages={currentMessages}
           columnClassName={chatColumnClassName}
           existingSlugs={existingSlugs}
+          vaultId={activeSession?.vaultId ?? activeVault.id}
+          notes={notes}
           messageMetaById={messageMetaById}
           awaitingFirstToken={awaitingFirstToken}
           isStreaming={isStreaming}
@@ -898,7 +965,7 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
           }
         />
       </div>
-      <div className="trellis-overlay-surface border-t border-trellis-border px-5 py-4 backdrop-blur">
+      <div className="trellis-overlay-surface border-t border-trellis-border px-5 pb-4 pt-2 backdrop-blur">
         {editingMessage && (
           <div className={`mx-auto mb-4 w-full ${chatColumnClassName} rounded-field border border-trellis-accent/20 bg-trellis-surface px-4 py-3 text-sm text-trellis-text`}>
             Editing an earlier message will regenerate the conversation from that point.
@@ -938,6 +1005,14 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
                 );
               }}
               onAttachImage={() => {
+                if (!getChatModelMediaCapabilities(activeModel).visionInput) {
+                  pushToast({
+                    title:
+                      "Choose a vision-capable model (for example GPT-4o Mini, GPT-4o, or Claude) to attach images to the chat.",
+                    tone: "warning"
+                  });
+                  return;
+                }
                 void handleAttachImage();
               }}
               onPasteImage={(input) => {
@@ -953,6 +1028,7 @@ export function Chat({ settings, workspace, onUpdateSettings, onSwitchWorkspace 
               speechAllowed={getChatModelMediaCapabilities(activeModel).speechToText}
               imageGenAllowed={getChatModelMediaCapabilities(activeModel).imageGeneration}
               accessToken={accessToken}
+              previewWorkspace={workspace.isPreview && isAdmin}
             />
           </div>
           <div className="flex w-full max-w-[200px] shrink-0 flex-col gap-2 self-end sm:w-auto">

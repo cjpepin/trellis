@@ -109,14 +109,27 @@ function hasProviderKey(
   return providerKeys?.some((status) => status.provider === provider && status.configured) ?? false;
 }
 
+/** When set, every model in the catalog is selectable (preview sandbox). */
+export interface ChatModelAccessOptions {
+  previewWorkspace?: boolean;
+}
+
 export function getChatModelAccess(
   model: ChatModel,
   subscriptionTier: SubscriptionTier,
-  providerKeys?: ProviderKeyStatus[]
+  providerKeys?: ProviderKeyStatus[],
+  options?: ChatModelAccessOptions
 ): {
   allowed: boolean;
   reason: string | null;
 } {
+  if (options?.previewWorkspace) {
+    return {
+      allowed: true,
+      reason: null
+    };
+  }
+
   if (subscriptionTier === "pro") {
     return {
       allowed: true,
@@ -156,17 +169,19 @@ export function getChatModelAccess(
 export function canUseChatModel(
   model: ChatModel,
   subscriptionTier: SubscriptionTier,
-  providerKeys?: ProviderKeyStatus[]
+  providerKeys?: ProviderKeyStatus[],
+  options?: ChatModelAccessOptions
 ): boolean {
-  return getChatModelAccess(model, subscriptionTier, providerKeys).allowed;
+  return getChatModelAccess(model, subscriptionTier, providerKeys, options).allowed;
 }
 
 export function getFirstAccessibleChatModel(
   subscriptionTier: SubscriptionTier,
-  providerKeys?: ProviderKeyStatus[]
+  providerKeys?: ProviderKeyStatus[],
+  options?: ChatModelAccessOptions
 ): ChatModel {
   return (
-    chatModelOptions.find((option) => canUseChatModel(option.id, subscriptionTier, providerKeys))
+    chatModelOptions.find((option) => canUseChatModel(option.id, subscriptionTier, providerKeys, options))
       ?.id ?? defaultChatModel
   );
 }

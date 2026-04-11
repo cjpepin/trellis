@@ -27,7 +27,8 @@ import {
   type RecordWikiOpInput,
   type SaveNoteInput,
   type SelectDirectoryInput,
-  type SetProviderKeyInput
+  type SetProviderKeyInput,
+  type VaultAppendChatImageInput
 } from "./ipc/types";
 
 const trellis: TrellisBridge = {
@@ -106,6 +107,8 @@ const trellis: TrellisBridge = {
     readNote: (slug: string, vaultId?: string) =>
       ipcRenderer.invoke(ipcChannels.vaultReadNote, { slug, vaultId }),
     writeNote: (input: SaveNoteInput) => ipcRenderer.invoke(ipcChannels.vaultWriteNote, input),
+    appendChatImageToNote: (input: VaultAppendChatImageInput) =>
+      ipcRenderer.invoke(ipcChannels.vaultAppendChatImage, input),
     createStub: (input: CreateStubInput) =>
       ipcRenderer.invoke(ipcChannels.vaultCreateStub, input),
     deleteNote: (input: DeleteNoteInput) =>

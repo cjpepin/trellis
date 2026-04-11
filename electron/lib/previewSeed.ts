@@ -28,7 +28,8 @@ const chatMediaArtifactSeedSchema = z.object({
   fileId: z.string().uuid(),
   mimeType: z.string().min(1),
   label: z.string().min(1),
-  prompt: z.string().optional()
+  prompt: z.string().optional(),
+  pendingGeneration: z.boolean().optional()
 });
 
 const seedFixtureSchema = z.object({

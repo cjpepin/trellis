@@ -313,6 +313,7 @@ export default function App() {
           },
           subscriptionTier: profile.subscriptionTier,
           subscriptionStatus: profile.subscriptionStatus,
+          isAdmin: profile.isAdmin,
           usage: profile.usage
         });
       } catch (error) {
@@ -328,6 +329,7 @@ export default function App() {
           },
           subscriptionTier: "trial",
           subscriptionStatus: "trialing",
+          isAdmin: false,
           usage: {
             messagesUsed: 0,
             messageLimit: 50,

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
@@ -26,7 +27,8 @@ import type {
   VaultSnapshot,
   WikiNote
 } from "./types";
-import { ipcChannels } from "./types";
+import { ipcChannels, TRELLIS_DEFAULT_CHAT_IMAGE_NOTE_SLUG } from "./types";
+import { readMediaCacheBytes } from "../lib/chatMediaCache";
 import { rebuildVaultEmbeddings, syncNoteEmbeddings } from "../lib/retrieval/index";
 
 const noteTypeSchema = z.enum([
@@ -118,6 +120,116 @@ const exportToObsidianSchema = z.object({
   targetPath: z.string().min(1),
   vaultId: z.string().min(1).optional()
 });
+
+const appendChatImageSchema = z.object({
+  vaultId: z.string().min(1).optional(),
+  fileId: z.string().uuid(),
+  slug: slugSchema.optional(),
+  alt: z.string().max(200).optional()
+});
+
+function extensionForMime(mimeType: string): string {
+  const lower = mimeType.toLowerCase();
+
+  if (lower.includes("png")) {
+    return ".png";
+  }
+
+  if (lower.includes("jpeg") || lower.includes("jpg")) {
+    return ".jpg";
+  }
+
+  if (lower.includes("webp")) {
+    return ".webp";
+  }
+
+  if (lower.includes("gif")) {
+    return ".gif";
+  }
+
+  return ".png";
+}
+
+function encodeMarkdownPathSegments(rel: string): string {
+  return rel
+    .split("/")
+    .map((segment) => {
+      if (segment === "." || segment === "..") {
+        return segment;
+      }
+
+      return encodeURIComponent(segment);
+    })
+    .join("/");
+}
+
+function relativeMarkdownPathToFile(fromDir: string, toFile: string): string {
+  let rel = path.relative(fromDir, toFile);
+  rel = rel.split(path.sep).join("/");
+
+  if (rel.length === 0) {
+    return "";
+  }
+
+  const encoded = encodeMarkdownPathSegments(rel);
+
+  if (!encoded.startsWith(".")) {
+    return `./${encoded}`;
+  }
+
+  return encoded;
+}
+
+async function appendChatImageToNoteForVault(
+  vaultPath: string,
+  vaultId: string,
+  input: { fileId: string; slug?: string; alt?: string }
+): Promise<SaveNoteResult> {
+  const got = await readMediaCacheBytes(input.fileId);
+
+  if (!got) {
+    throw new Error("That image is no longer in local cache. Generate it again.");
+  }
+
+  const ext = extensionForMime(got.mimeType);
+  const fileName = `chat-${Date.now()}-${randomUUID().slice(0, 8)}${ext}`;
+  await ensureVaultLayout(vaultPath);
+  const mediaDirAbsolute = ensureInsideVault(
+    vaultPath,
+    path.join(vaultPath, "wiki", ".trellis-chat-media")
+  );
+  await ensureDirectory(mediaDirAbsolute);
+  const imageAbsolutePath = path.join(mediaDirAbsolute, fileName);
+  await fs.writeFile(imageAbsolutePath, got.bytes);
+
+  const targetSlug = input.slug ?? TRELLIS_DEFAULT_CHAT_IMAGE_NOTE_SLUG;
+  const note = await readNoteOrCreateIfMissing(vaultPath, targetSlug);
+  const wikiRoot = path.join(vaultPath, "wiki");
+  const noteAbsolutePath = ensureInsideVault(vaultPath, path.join(wikiRoot, note.relativePath));
+  const rel = relativeMarkdownPathToFile(path.dirname(noteAbsolutePath), imageAbsolutePath);
+
+  if (!rel) {
+    throw new Error("Could not compute a link path for that image.");
+  }
+
+  const alt = input.alt?.trim() || "Generated image";
+  const addition = `\n\n![${alt}](${rel})\n`;
+  const nextContent = `${note.content.trimEnd()}${addition}`;
+
+  return writeNoteFile(vaultPath, vaultId, {
+    vaultId,
+    slug: note.slug,
+    relativePath: note.relativePath,
+    folderPath: note.folderPath,
+    title: note.title,
+    content: nextContent,
+    frontmatter: {
+      tags: note.tags,
+      type: note.type,
+      sources: note.sources
+    }
+  });
+}
 
 interface ObsidianImportCandidate {
   content: string;
@@ -1016,6 +1128,11 @@ export function registerVaultIpc(getSettings: () => AppSettings): void {
     const parsed = saveNoteSchema.parse(input);
     const vault = resolveVault(getSettings(), parsed.vaultId);
     return writeNoteFile(vault.path, vault.id, parsed);
+  });
+  ipcMain.handle(ipcChannels.vaultAppendChatImage, async (_event, input: unknown) => {
+    const parsed = appendChatImageSchema.parse(input);
+    const vault = resolveVault(getSettings(), parsed.vaultId);
+    return appendChatImageToNoteForVault(vault.path, vault.id, parsed);
   });
   ipcMain.handle(ipcChannels.vaultCreateStub, async (_event, input: unknown) => {
     const parsed = createStubSchema.parse(input);
