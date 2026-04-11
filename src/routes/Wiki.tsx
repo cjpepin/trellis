@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -187,9 +187,34 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
   const setActiveNote = useWikiStore((state) => state.setActiveNote);
   const setNote = useWikiStore((state) => state.setNote);
   const replaceIndex = useWikiStore((state) => state.replaceIndex);
+  const isHydrated = useWikiStore((state) => state.isHydrated);
   const pushToast = useUiStore((state) => state.pushToast);
   const activeNote = activeNoteSlug ? noteCache[activeNoteSlug] : null;
   const templateNotes = useMemo(() => notes.filter(isTemplateNote), [notes]);
+
+  const applySnapshot = useCallback(
+    (snapshot: VaultSnapshot, preferredSlug?: string | null): void => {
+      replaceIndex({
+        notes: snapshot.notes,
+        folders: snapshot.folders,
+        graph: snapshot.graph
+      });
+
+      const nextActiveSlug =
+        preferredSlug && snapshot.notes.some((note) => note.slug === preferredSlug)
+          ? preferredSlug
+          : snapshot.notes[0]?.slug ?? null;
+
+      setActiveNote(nextActiveSlug);
+
+      if (nextActiveSlug) {
+        navigate(notesRoutePath(nextActiveSlug));
+      } else {
+        navigate(notesRoutePath());
+      }
+    },
+    [navigate, replaceIndex, setActiveNote]
+  );
 
   useEffect(() => {
     const requestedNote = searchParams.get("note");
@@ -198,8 +223,13 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       return;
     }
 
+    if (isHydrated && !notes.some((note) => note.slug === requestedNote)) {
+      navigate(notesRoutePath(activeNoteSlug), { replace: true });
+      return;
+    }
+
     setActiveNote(requestedNote);
-  }, [activeNoteSlug, searchParams, setActiveNote]);
+  }, [activeNoteSlug, isHydrated, navigate, notes, searchParams, setActiveNote]);
 
   useEffect(() => {
     if (!activeNoteSlug || activeNote) {
@@ -235,8 +265,13 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
           title: error instanceof Error ? error.message : "Could not load that note.",
           tone: "warning"
         });
+        void window.trellis.vault.listIndex().then((snapshot) => {
+          if (!snapshot.notes.some((note) => note.slug === slug)) {
+            applySnapshot(snapshot, null);
+          }
+        });
       });
-  }, [activeNote, activeNoteSlug, notes, pushToast, replaceIndex, setNote]);
+  }, [activeNote, activeNoteSlug, applySnapshot, notes, pushToast, setNote]);
 
   useEffect(() => {
     writeWorkspaceLocalStorage(WIKI_LIST_WIDTH_KEY, String(listWidth), workspaceId);
@@ -538,27 +573,6 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       }
     };
   }, []);
-
-  function applySnapshot(snapshot: VaultSnapshot, preferredSlug?: string | null): void {
-    replaceIndex({
-      notes: snapshot.notes,
-      folders: snapshot.folders,
-      graph: snapshot.graph
-    });
-
-    const nextActiveSlug =
-      preferredSlug && snapshot.notes.some((note) => note.slug === preferredSlug)
-        ? preferredSlug
-        : snapshot.notes[0]?.slug ?? null;
-
-    setActiveNote(nextActiveSlug);
-
-    if (nextActiveSlug) {
-      navigate(notesRoutePath(nextActiveSlug));
-    } else {
-      navigate(notesRoutePath());
-    }
-  }
 
   function pushExplorerUndo(entry: { undo: () => Promise<void>; redo: () => Promise<void> }): void {
     explorerUndoStackRef.current = [entry, ...explorerUndoStackRef.current].slice(
@@ -1033,7 +1047,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       const cached = useWikiStore.getState().noteCache[note.slug];
       const fullBody = cached ?? (await window.trellis.vault.readNote(note.slug));
       const deleteInput = { slug: note.slug, relativePath: note.relativePath };
-      const preferredAfterDelete = activeNoteSlug === note.slug ? note.slug : activeNoteSlug;
+      const preferredAfterDelete = activeNoteSlug === note.slug ? null : activeNoteSlug;
       const snapshot = await window.trellis.vault.deleteNote(deleteInput);
       setSelectedFolderPath(note.folderPath || null);
       applySnapshot(snapshot, preferredAfterDelete);

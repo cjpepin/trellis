@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   type AppFeatureFlags,
@@ -64,6 +64,7 @@ export function Chat({
   /** True while queuing manual save or until that extraction job finishes. */
   const [manualNoteCaptureActive, setManualNoteCaptureActive] = useState(false);
   const pendingManualExtractionJobIdRef = useRef<string | null>(null);
+  const manualSaveToastIdRef = useRef<string | null>(null);
   const accessToken = useAuthStore((state) => state.accessToken);
   const authStatus = useAuthStore((state) => state.status);
   const subscriptionTier = useAuthStore((state) => state.subscriptionTier);
@@ -89,6 +90,7 @@ export function Chat({
   const setMessageMeta = useChatStore((state) => state.setMessageMeta);
   const clearMessageMeta = useChatStore((state) => state.clearMessageMeta);
   const pushToast = useUiStore((state) => state.pushToast);
+  const removeToast = useUiStore((state) => state.removeToast);
   const streamAssistant = useStream({
     accessToken,
     model: activeModel,
@@ -202,6 +204,35 @@ export function Chat({
     ]
   );
 
+  /** Skips IPC when on-device extraction is disabled (matches Save to note / feature flag). */
+  const maybeQueueSessionExtraction = useCallback(
+    async (
+      sessionId: string,
+      trigger: "idle" | "session-switch",
+      options?: { force?: boolean }
+    ): Promise<QueueSessionExtractionResult | null> => {
+      if (!features.localExtraction) {
+        return null;
+      }
+      return queueExtraction(sessionId, trigger, options);
+    },
+    [features.localExtraction, queueExtraction]
+  );
+
+  const queueIdleExtractionWithToast = useCallback(
+    (sessionId: string) => {
+      void maybeQueueSessionExtraction(sessionId, "idle").then((result) => {
+        if (result?.state === "queued") {
+          pushToast({
+            title: "Updating your vault from this chat in the background…",
+            tone: "default"
+          });
+        }
+      });
+    },
+    [maybeQueueSessionExtraction, pushToast]
+  );
+
   const canSaveChatToNote = useMemo(
     () => Boolean(activeSessionId) && currentMessages.length >= 2 && !chatDisabled,
     [activeSessionId, chatDisabled, currentMessages.length]
@@ -214,6 +245,12 @@ export function Chat({
 
     setManualNoteCaptureActive(true);
     pendingManualExtractionJobIdRef.current = null;
+
+    const processingToastId = pushToast({
+      title: "Processing this chat into notes in the background…",
+      tone: "default"
+    });
+    manualSaveToastIdRef.current = processingToastId;
 
     try {
       const result = await window.trellis.extraction.queueSession({
@@ -234,11 +271,15 @@ export function Chat({
         return;
       }
 
+      removeToast(processingToastId);
+      manualSaveToastIdRef.current = null;
       pushToast({
         title: "Add at least one exchange before saving to a note.",
         tone: "warning"
       });
     } catch (error) {
+      removeToast(processingToastId);
+      manualSaveToastIdRef.current = null;
       pushToast({
         title:
           error instanceof Error ? error.message : "Could not save this chat to your notes.",
@@ -254,6 +295,7 @@ export function Chat({
     canSaveChatToNote,
     manualNoteCaptureActive,
     pushToast,
+    removeToast,
     settings.extraction.mode,
     settings.extraction.preferredLocalModelId,
     subscriptionTier
@@ -270,24 +312,70 @@ export function Chat({
         notification.status === "failed" ||
         notification.status === "skipped"
       ) {
+        const toastId = manualSaveToastIdRef.current;
+        if (toastId) {
+          useUiStore.getState().removeToast(toastId);
+          manualSaveToastIdRef.current = null;
+        }
         pendingManualExtractionJobIdRef.current = null;
         setManualNoteCaptureActive(false);
+
+        const push = useUiStore.getState().pushToast;
+
+        if (notification.status === "completed") {
+          const applied = notification.appliedNotes ?? [];
+          if (applied.length > 0) {
+            push({
+              title:
+                applied.length === 1
+                  ? "Chat processed — your note is ready."
+                  : `Chat processed — ${applied.length} notes updated.`,
+              tone: "success",
+              noteLinks: applied.map((note) => ({
+                noteSlug: note.slug,
+                label: note.title
+              }))
+            });
+          } else {
+            push({
+              title: "Chat processed — your wiki is up to date.",
+              tone: "success"
+            });
+          }
+        } else if (notification.status === "failed") {
+          push({
+            title:
+              notification.errorMessage ?? "Could not finish saving this chat to your notes.",
+            tone: "error"
+          });
+        } else {
+          push({
+            title:
+              notification.errorMessage ?? "Nothing new to save from this chat yet.",
+            tone: "warning"
+          });
+        }
       }
     });
   }, []);
 
   useEffect(() => {
+    const toastId = manualSaveToastIdRef.current;
+    if (toastId) {
+      removeToast(toastId);
+      manualSaveToastIdRef.current = null;
+    }
     pendingManualExtractionJobIdRef.current = null;
     setManualNoteCaptureActive(false);
-  }, [activeSessionId]);
+  }, [activeSessionId, removeToast]);
 
   useEffect(() => {
     if (previousSessionId.current && previousSessionId.current !== activeSessionId) {
-      void queueExtraction(previousSessionId.current, "session-switch");
+      void maybeQueueSessionExtraction(previousSessionId.current, "session-switch");
     }
 
     previousSessionId.current = activeSessionId;
-  }, [activeSessionId, queueExtraction]);
+  }, [activeSessionId, maybeQueueSessionExtraction]);
 
   const loadNote = useCallback(
     async (slug: string, vaultId: string) => {
@@ -502,6 +590,7 @@ export function Chat({
             upsertSession(updatedSession);
             setPendingAttachments([]);
             setPendingImageAttachments([]);
+            queueIdleExtractionWithToast(sessionId);
             return;
           }
         } catch (error) {
@@ -608,14 +697,7 @@ export function Chat({
         model: activeModel
       });
       upsertSession(updatedSession);
-      void queueExtraction(sessionId, "idle").then((result) => {
-        if (result?.state === "queued") {
-          pushToast({
-            title: "Updating your vault from this chat in the background…",
-            tone: "default"
-          });
-        }
-      });
+      queueIdleExtractionWithToast(sessionId);
       void window.trellis.chat
         .applyVaultOrganize({
           vaultId: sessionVaultId,
@@ -1028,14 +1110,7 @@ export function Chat({
         model: activeModel
       });
       upsertSession(updatedSession);
-      void queueExtraction(sessionId, "idle").then((result) => {
-        if (result?.state === "queued") {
-          pushToast({
-            title: "Updating your vault from this chat in the background…",
-            tone: "default"
-          });
-        }
-      });
+      queueIdleExtractionWithToast(sessionId);
       return true;
     } catch (error) {
       replaceSessionMessages(sessionId, priorMessages);
@@ -1531,11 +1606,6 @@ export function Chat({
             )}
             {features.localExtraction && activeSessionId ? (
               <span
-                title={
-                  !canSaveChatToNote
-                    ? "Add at least one back-and-forth message before saving to your notes"
-                    : undefined
-                }
                 className={cn(
                   "block w-full",
                   (!canSaveChatToNote || manualNoteCaptureActive) && "cursor-not-allowed"
@@ -1547,10 +1617,10 @@ export function Chat({
                   disabled={!canSaveChatToNote || manualNoteCaptureActive}
                   aria-busy={manualNoteCaptureActive}
                   title={
-                    manualNoteCaptureActive
-                      ? "Saving conversation to notes…"
-                      : !canSaveChatToNote
-                        ? undefined
+                    !canSaveChatToNote
+                      ? "Add at least one back-and-forth message before saving to your notes"
+                      : manualNoteCaptureActive
+                        ? "Processing this chat into notes in the background"
                         : "Turn this conversation into wiki notes now (same as background capture)"
                   }
                   className={cn(
@@ -1563,11 +1633,13 @@ export function Chat({
                     void handleSaveChatToNote();
                   }}
                 >
-                  {manualNoteCaptureActive ? (
-                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-trellis-muted" aria-hidden />
-                  ) : (
-                    <Sparkles className="h-4 w-4 shrink-0 text-trellis-accent" aria-hidden />
-                  )}
+                  <Sparkles
+                    className={cn(
+                      "h-4 w-4 shrink-0",
+                      manualNoteCaptureActive ? "text-trellis-faint" : "text-trellis-accent"
+                    )}
+                    aria-hidden
+                  />
                   Save to note
                 </button>
               </span>

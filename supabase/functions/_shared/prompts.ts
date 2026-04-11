@@ -151,11 +151,13 @@ TITLES:
 - Titles should name the actual concept, project, decision, or idea — not vague keywords.
 - Good: "Mobile App MVP for Habit Tracking", "React vs Vue Comparison"
 - Bad: "Want", "App Create", "Discussion"
+- Never use the user's raw chat prompt as the note title (e.g. questions like "Can you make a…"). Name the topic instead (e.g. "Volleyball rotations (seven players)").
 
 CONTENT:
 - For "create" and "rewrite", write the note as if you are documenting the idea for your future self.
 - For "append", write only the new markdown section(s) that should be appended to the note. Do not repeat the note title as a top-level "# Heading" when appending.
-- Synthesize — do NOT paste raw transcript. Distill the key insight, decision, plan, or concept.
+- Synthesize — do NOT paste the transcript. Distill the key insight, decision, plan, or concept.
+- The note must be useful on its own: include the substantive facts, steps, lists, tables, or reasoning from the assistant's answer—enough detail to act on later (typically a few short paragraphs or structured sections). Rewrite for clarity; avoid copying the user's question verbatim and avoid giant unbroken paste of the assistant reply—prefer structured markdown.
 - Never format note bodies as labeled chat turns (e.g. "User:" / "Assistant:") or as a copy of the conversation; write clean markdown a person would keep in a notebook.
 - Use markdown structure: a brief summary paragraph, then sections like "## Key Decisions", "## Open Questions", "## Next Steps" as appropriate.
 - Include note links as [[Note Title]] to connect to related existing notes from the index.

@@ -15,25 +15,126 @@ function clampSessionTitleWords(value: string, maxWords: number): string {
   return words.join(" ");
 }
 
-function pickNoteTitle(input: {
+function normalizeContent(value: string): string {
+  return value.replace(/\r\n/g, "\n").trim();
+}
+
+function stripAssistantLeadIn(text: string): string {
+  return normalizeContent(text).replace(/^(yes|yeah|yep|sure|okay|ok)\s*[,—–-]\s*/i, "");
+}
+
+/** Heuristic: session or draft titles that mirror the user's message, not a curated title. */
+function looksLikeRawUserPrompt(text: string): boolean {
+  const t = text.trim();
+  if (t.length === 0) {
+    return false;
+  }
+  const lower = t.slice(0, 80).toLowerCase();
+  const prefixes = [
+    "can you ",
+    "could you ",
+    "would you ",
+    "please ",
+    "i need ",
+    "i want ",
+    "help me ",
+    "how do ",
+    "how can ",
+    "what is ",
+    "what are ",
+    "what should ",
+    "why ",
+    "write me ",
+    "make me ",
+    "give me "
+  ];
+  if (prefixes.some((p) => lower.startsWith(p))) {
+    return true;
+  }
+  if (t.includes("?") && t.length < 140) {
+    return true;
+  }
+  return false;
+}
+
+function clipWords(text: string, maxWords: number, maxChars: number): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const joined = words.slice(0, maxWords).join(" ");
+  if (joined.length <= maxChars) {
+    return joined;
+  }
+  const hard = text.trim().slice(0, maxChars).trimEnd();
+  const lastSpace = hard.lastIndexOf(" ");
+  return (lastSpace > 24 ? hard.slice(0, lastSpace) : hard).trimEnd();
+}
+
+/**
+ * Note title for fallback: never the user's raw prompt; prefer assistant substance or a dated label.
+ */
+function resolveFallbackTargetTitle(input: {
+  transcript: Array<{ role: "user" | "assistant"; content: string }>;
   session: ChatSessionSummary;
   suggestedSessionTitle: string;
   now: Date;
 }): string {
   const suggested = input.suggestedSessionTitle.trim();
-
-  if (suggested.length > 0) {
-    const clipped = suggested.length > 120 ? `${suggested.slice(0, 117)}…` : suggested;
-    return clipped;
+  if (suggested.length > 0 && !looksLikeRawUserPrompt(suggested)) {
+    return suggested.length > 120 ? `${suggested.slice(0, 117)}…` : suggested;
   }
 
   const sessionTitle = input.session.title.trim();
-
-  if (sessionTitle.length > 0 && sessionTitle.toLowerCase() !== "untitled session") {
+  if (
+    sessionTitle.length > 0 &&
+    sessionTitle.toLowerCase() !== "untitled session" &&
+    !looksLikeRawUserPrompt(sessionTitle)
+  ) {
     return sessionTitle.length > 120 ? `${sessionTitle.slice(0, 117)}…` : sessionTitle;
   }
 
-  return `Chat capture · ${formatInstanceDateLabel(input.now)}`;
+  const fromAssistant = titleFromAssistantMessages(input.transcript);
+  if (fromAssistant.length > 0) {
+    return fromAssistant.length > 120 ? `${fromAssistant.slice(0, 117)}…` : fromAssistant;
+  }
+
+  return `Notes · ${formatInstanceDateLabel(input.now)}`;
+}
+
+/**
+ * Derive a short title from assistant wording (first substantive sentence), not from the user.
+ */
+function titleFromAssistantMessages(
+  transcript: Array<{ role: "user" | "assistant"; content: string }>
+): string {
+  const assistantBlocks = transcript
+    .filter((m) => m.role === "assistant" && normalizeContent(m.content).length > 0)
+    .map((m) => stripAssistantLeadIn(m.content));
+
+  if (assistantBlocks.length === 0) {
+    return "";
+  }
+
+  const text = assistantBlocks.join("\n\n");
+  const firstLine = normalizeContent(text).split("\n")[0] ?? "";
+  let sentence = firstLine;
+
+  const boringOpen = /^(here'?s|here is|sure[,!]?|okay[,!]?|ok[,!]?)\s+/i;
+  sentence = sentence.replace(boringOpen, "").trim();
+
+  const end = sentence.search(/(?<=[.!?])\s/);
+  if (end > 0 && end < 140) {
+    sentence = sentence.slice(0, end + 1).trim();
+  }
+
+  sentence = sentence.replace(/^[#*`_\s]+/, "").replace(/[*`]+$/g, "").trim();
+  if (sentence.length === 0) {
+    return "";
+  }
+
+  let t = clipWords(sentence, 12, 100);
+  if (t.length < 8 && assistantBlocks[0]) {
+    t = clipWords(normalizeContent(assistantBlocks[0]), 12, 100);
+  }
+  return t.length > 0 ? t : "";
 }
 
 function ensureUniqueSlug(baseSlug: string, existing: Set<string>): string {
@@ -51,132 +152,94 @@ function ensureUniqueSlug(baseSlug: string, existing: Set<string>): string {
   return `${baseSlug}-${Date.now()}`;
 }
 
-function normalizeContent(value: string): string {
-  return value.replace(/\r\n/g, "\n").trim();
-}
-
-/** First sentence or line, for summaries (keeps it readable in Overview). */
-function firstChunk(text: string, maxChars: number): string {
+/**
+ * Take up to maxChars, preferring paragraph boundaries; then sentence, then hard cut.
+ */
+function takeRichExcerpt(text: string, maxChars: number): string {
   const t = normalizeContent(text);
   if (t.length === 0) {
     return "";
   }
-  const sentenceEnd = t.search(/(?<=[.!?])\s/);
-  if (sentenceEnd > 0 && sentenceEnd + 1 <= maxChars) {
-    return t.slice(0, sentenceEnd + 1).trim();
+  if (t.length <= maxChars) {
+    return t;
   }
-  const clipped = t.slice(0, maxChars).trimEnd();
-  return t.length > maxChars ? `${clipped}…` : clipped;
-}
 
-/** Heading-safe title derived from the opening of the first user message. */
-function topicHeadingFromTranscript(
-  transcript: Array<{ role: "user" | "assistant"; content: string }>
-): string {
-  const firstUser = transcript.find((m) => m.role === "user" && normalizeContent(m.content).length > 0);
-  if (!firstUser) {
-    return "Notes from chat";
+  const slice = t.slice(0, maxChars);
+  const para = slice.lastIndexOf("\n\n");
+  if (para > maxChars * 0.35) {
+    return slice.slice(0, para).trimEnd();
   }
-  const line = normalizeContent(firstUser.content).split("\n")[0] ?? "";
-  let h = line.replace(/[#*`_[\]]/g, "").trim();
-  if (h.length > 72) {
-    h = `${h.slice(0, 69).trimEnd()}…`;
+  const sent = slice.search(/(?<=[.!?])\s(?=[A-Za-z])/);
+  if (sent > maxChars * 0.4) {
+    return slice.slice(0, sent + 1).trim();
   }
-  return h.length > 0 ? h : "Notes from chat";
-}
-
-function stripAssistantLeadIn(text: string): string {
-  return normalizeContent(text).replace(/^(yes|yeah|yep|sure|okay|ok)\s*[,—–-]\s*/i, "");
+  const soft = slice.lastIndexOf(" ");
+  if (soft > maxChars * 0.55) {
+    return `${slice.slice(0, soft).trimEnd()}…`;
+  }
+  return `${slice.trimEnd()}…`;
 }
 
 /**
- * Wiki-style body: overview + request + guidance (not chat-log labels).
- * Passes extraction guardrails (no “User:” / “Assistant:” line prefixes).
+ * Opening + continuation: enough substance for long assistant replies without dumping the entire thread.
+ * Intentionally allows a small overlap at the boundary so nothing important is lost.
+ */
+function splitSummaryAndDetail(assistantMarkdown: string): { summary: string; detail: string } {
+  const full = normalizeContent(stripAssistantLeadIn(assistantMarkdown));
+  if (full.length === 0) {
+    return { summary: "", detail: "" };
+  }
+
+  const detailCap = 3_400;
+  const headBudget = 1_200;
+  const tailSkip = 950;
+
+  if (full.length <= headBudget + 40) {
+    return { summary: full, detail: "" };
+  }
+
+  const summary = takeRichExcerpt(full, headBudget);
+  const tail = takeRichExcerpt(full.slice(tailSkip).trim(), detailCap);
+  return { summary, detail: tail };
+}
+
+function combineAssistantBodies(
+  transcript: Array<{ role: "user" | "assistant"; content: string }>
+): string {
+  const parts = transcript
+    .filter((m) => m.role === "assistant" && normalizeContent(m.content).length > 0)
+    .map((m) => stripAssistantLeadIn(m.content));
+
+  return parts.join("\n\n").trim();
+}
+
+/**
+ * Standalone note body: assistant substance only (no user prompt quotes), medium depth.
  */
 export function buildManualFallbackBody(
   transcript: Array<{ role: "user" | "assistant"; content: string }>,
-  capturedAt: Date = new Date()
+  capturedAt: Date = new Date(),
+  noteTitle: string
 ): string {
   const dateLabel = formatInstanceDateLabel(capturedAt);
-  const topic = topicHeadingFromTranscript(transcript);
-  const userTurns = transcript.filter((m) => m.role === "user" && normalizeContent(m.content).length > 0);
-  const assistantTurns = transcript.filter(
-    (m) => m.role === "assistant" && normalizeContent(m.content).length > 0
-  );
+  const assistantBlob = combineAssistantBodies(transcript);
 
-  const firstUser = userTurns[0];
-  const firstAssistant = assistantTurns[0];
+  const lines: string[] = [`## ${noteTitle}`, "", `Saved from chat on **${dateLabel}**.`, ""];
 
-  const overviewLines: string[] = [
-    `## ${topic}`,
-    "",
-    "### Overview",
-    "",
-    `These working notes were captured on **${dateLabel}** because structured note extraction did not produce a separate wiki page for this thread. They are formatted as documentation—not as a raw chat export.`
-  ];
-
-  if (firstUser) {
-    const focus = firstChunk(firstUser.content, 320);
-    overviewLines.push("", `**What you were solving:** ${focus}`);
+  if (assistantBlob.length === 0) {
+    lines.push("_No assistant reply was available to save in this slice._");
+    return lines.join("\n").trimEnd();
   }
 
-  if (firstAssistant) {
-    const lead = firstChunk(stripAssistantLeadIn(firstAssistant.content), 360);
-    if (lead.length > 0) {
-      overviewLines.push("", `**Key direction:** ${lead}`);
-    }
+  const { summary, detail } = splitSummaryAndDetail(assistantBlob);
+
+  lines.push("### Summary", "", summary || takeRichExcerpt(assistantBlob, 720), "");
+
+  if (detail.length > 0) {
+    lines.push("### Detail", "", detail, "");
   }
 
-  overviewLines.push("", "---", "");
-
-  const chunks: string[] = [...overviewLines, "### What was asked", ""];
-
-  if (userTurns.length === 0) {
-    chunks.push("_No user messages in this slice._", "");
-  } else {
-    for (let i = 0; i < userTurns.length; i += 1) {
-      const turn = userTurns[i];
-      if (!turn) {
-        continue;
-      }
-      const block = normalizeContent(turn.content);
-      if (userTurns.length > 1) {
-        chunks.push(`#### ${i + 1}`, "", block, "");
-      } else {
-        chunks.push(block, "");
-      }
-    }
-  }
-
-  chunks.push("### Guidance", "");
-
-  if (assistantTurns.length === 0) {
-    chunks.push("_No assistant reply in this slice._", "");
-  } else {
-    for (let i = 0; i < assistantTurns.length; i += 1) {
-      const turn = assistantTurns[i];
-      if (!turn) {
-        continue;
-      }
-      let block = normalizeContent(turn.content);
-      if (i === 0) {
-        block = stripAssistantLeadIn(block);
-      }
-      if (assistantTurns.length > 1) {
-        chunks.push(`#### Part ${i + 1}`, "", block, "");
-      } else {
-        chunks.push(block, "");
-      }
-    }
-  }
-
-  chunks.push(
-    "---",
-    "",
-    `_Auto-saved from Trellis chat when on-device extraction returned no wiki updates. You can edit this page freely._`
-  );
-
-  return chunks.join("\n").trimEnd();
+  return lines.join("\n").trimEnd();
 }
 
 export function buildManualSaveFallbackResponse(input: {
@@ -187,12 +250,13 @@ export function buildManualSaveFallbackResponse(input: {
   now?: Date;
 }): ExtractionResponse {
   const now = input.now ?? new Date();
-  const body = buildManualFallbackBody(input.transcript, now);
-  const targetTitle = pickNoteTitle({
+  const targetTitle = resolveFallbackTargetTitle({
+    transcript: input.transcript,
     session: input.session,
     suggestedSessionTitle: input.suggestedSessionTitle,
     now
   });
+  const body = buildManualFallbackBody(input.transcript, now, targetTitle);
   let baseSlug = slugifyExtractionTitle(targetTitle);
   baseSlug = ensureUniqueSlug(baseSlug, input.existingSlugs);
 

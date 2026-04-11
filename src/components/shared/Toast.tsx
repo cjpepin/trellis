@@ -16,11 +16,17 @@ export function Toast() {
   const removeToast = useUiStore((state) => state.removeToast);
 
   useEffect(() => {
-    const timers = toasts.map((toast) =>
-      window.setTimeout(() => {
-        removeToast(toast.id);
-      }, 3400)
-    );
+    const timers = toasts
+      .map((toast) => {
+        const ms = toast.durationMs ?? 3400;
+        if (ms <= 0) {
+          return null;
+        }
+        return window.setTimeout(() => {
+          removeToast(toast.id);
+        }, ms);
+      })
+      .filter((timer): timer is number => timer !== null);
 
     return () => {
       timers.forEach((timer) => window.clearTimeout(timer));
