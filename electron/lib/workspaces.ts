@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { AppWorkspaceId, WorkspaceInfo } from "../ipc/types";
 import { getUserDataRoot } from "./appPaths";
 
-export const workspaceIds = ["personal", "preview"] as const satisfies readonly AppWorkspaceId[];
+export const workspaceIds = ["personal", "preview", "preview-heavy"] as const satisfies readonly AppWorkspaceId[];
 
 const workspaceStateSchema = z.object({
   activeWorkspaceId: z.enum(workspaceIds),
@@ -138,9 +138,14 @@ export function writeWorkspaceState(nextState: WorkspaceState): WorkspaceState {
   return parsed;
 }
 
+export interface PreviewWorkspaceSeedVersions {
+  preview: string | null;
+  "preview-heavy": string | null;
+}
+
 export function getWorkspaceInfo(
   workspaceId: AppWorkspaceId,
-  previewSeedVersion: string | null
+  seedVersions: PreviewWorkspaceSeedVersions
 ): WorkspaceInfo {
   if (workspaceId === "preview") {
     return {
@@ -151,7 +156,20 @@ export function getWorkspaceInfo(
       localOnly: false,
       canReset: true,
       isPreview: true,
-      seedVersion: previewSeedVersion
+      seedVersion: seedVersions.preview
+    };
+  }
+
+  if (workspaceId === "preview-heavy") {
+    return {
+      id: "preview-heavy",
+      label: "Heavy preview",
+      description:
+        "Large-scale sample vault with hundreds of interlinked notes and long chat threads. Use it to stress-test navigation, search, and graph performance.",
+      localOnly: false,
+      canReset: true,
+      isPreview: true,
+      seedVersion: seedVersions["preview-heavy"]
     };
   }
 
@@ -166,6 +184,6 @@ export function getWorkspaceInfo(
   };
 }
 
-export function listWorkspaceInfos(previewSeedVersion: string | null): WorkspaceInfo[] {
-  return workspaceIds.map((workspaceId) => getWorkspaceInfo(workspaceId, previewSeedVersion));
+export function listWorkspaceInfos(seedVersions: PreviewWorkspaceSeedVersions): WorkspaceInfo[] {
+  return workspaceIds.map((workspaceId) => getWorkspaceInfo(workspaceId, seedVersions));
 }

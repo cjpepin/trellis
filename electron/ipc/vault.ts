@@ -725,16 +725,33 @@ function buildFolderSummaries(notes: WikiNote[], folderPaths: string[]): FolderS
   }));
 }
 
+function tagAssociationStrength(sourceTags: string[], targetTags: string[]): number {
+  if (sourceTags.length === 0 && targetTags.length === 0) {
+    return 0;
+  }
+
+  const left = new Set(sourceTags);
+  let intersection = 0;
+
+  for (const tag of targetTags) {
+    if (left.has(tag)) {
+      intersection += 1;
+    }
+  }
+
+  const union = new Set([...sourceTags, ...targetTags]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
 function buildGraph(notes: WikiNote[]): GraphData {
   const inbound = new Map<string, number>();
-  const edges: GraphEdge[] = [];
+  const rawEdges: Array<{ source: string; target: string }> = [];
   const existingSlugs = new Set(notes.map((note) => note.slug));
   const placeholderTitles = new Map<string, string>();
 
   for (const note of notes) {
     for (const target of extractWikiLinkTargets(note.content)) {
-      edges.push({
-        id: `${note.slug}->${target.slug}`,
+      rawEdges.push({
         source: note.slug,
         target: target.slug
       });
@@ -744,6 +761,36 @@ function buildGraph(notes: WikiNote[]): GraphData {
         placeholderTitles.set(target.slug, target.title);
       }
     }
+  }
+
+  const directedKeys = new Set(rawEdges.map((edge) => `${edge.source}->${edge.target}`));
+  const tagsBySlug = new Map<string, string[]>(notes.map((note) => [note.slug, note.tags]));
+
+  const edges: GraphEdge[] = [];
+  const seenEdgeIds = new Set<string>();
+
+  for (const { source, target } of rawEdges) {
+    const id = `${source}->${target}`;
+    if (seenEdgeIds.has(id)) {
+      continue;
+    }
+
+    seenEdgeIds.add(id);
+
+    const mutual = directedKeys.has(`${target}->${source}`);
+    const tagA = tagsBySlug.get(source) ?? [];
+    const tagB = tagsBySlug.get(target) ?? [];
+    let association = tagAssociationStrength(tagA, tagB);
+    if (mutual) {
+      association = Math.min(1, association * 1.15 + 0.08);
+    }
+
+    edges.push({
+      id,
+      source,
+      target,
+      association
+    });
   }
 
   const nodes: GraphNode[] = notes.map((note) => {

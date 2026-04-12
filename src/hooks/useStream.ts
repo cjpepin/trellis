@@ -9,13 +9,13 @@ import { streamChat, type ChatNoteReference } from "@/lib/api";
 import { formatMessageForApi } from "@/lib/chatAttachments";
 import { messageRecordsToStreamPayload } from "@/lib/chatStreamMessages";
 import { useChatStore } from "@/store/chatStore";
-import { useUiStore } from "@/store/uiStore";
 
 interface UseStreamInput {
   accessToken: string | null;
   model: ChatModel;
   privacyMode: ChatPrivacyMode;
   subscriptionTier: SubscriptionTier;
+  previewWorkspace?: boolean;
 }
 
 interface StreamResult {
@@ -34,6 +34,20 @@ function getToastCopy(message: string): string {
 
   if (message.includes("trial has ended")) {
     return message;
+  }
+
+  if (
+    message.includes("subscription is no longer active") ||
+    message.includes("trial or free message allowance")
+  ) {
+    return message;
+  }
+
+  if (
+    message.includes("24-hour window") ||
+    message.includes("free message allowance for this")
+  ) {
+    return "Daily free message limit reached.";
   }
 
   if (
@@ -58,14 +72,19 @@ function getToastCopy(message: string): string {
   return "Trellis couldn’t reach chat right now. Your local notes are still safe.";
 }
 
-export function useStream({ accessToken, model, privacyMode, subscriptionTier }: UseStreamInput) {
-  const setStreaming = useChatStore((state) => state.setStreaming);
-  const setAwaitingFirstToken = useChatStore((state) => state.setAwaitingFirstToken);
+export function useStream({
+  accessToken,
+  model,
+  privacyMode,
+  subscriptionTier,
+  previewWorkspace = false
+}: UseStreamInput) {
   const addMessage = useChatStore((state) => state.addMessage);
   const removeMessage = useChatStore((state) => state.removeMessage);
   const patchAssistantDraft = useChatStore((state) => state.patchAssistantDraft);
+  const markChatRunAssistant = useChatStore((state) => state.markChatRunAssistant);
+  const markChatRunFirstToken = useChatStore((state) => state.markChatRunFirstToken);
   const upsertSession = useChatStore((state) => state.upsertSession);
-  const pushToast = useUiStore((state) => state.pushToast);
 
   return useCallback(
     async (
@@ -87,8 +106,8 @@ export function useStream({ accessToken, model, privacyMode, subscriptionTier }:
       };
 
       addMessage(assistantDraft);
-      setStreaming(true);
-      setAwaitingFirstToken(true);
+      markChatRunAssistant(sessionId, assistantDraft.id);
+      let failureMessage: string | null = null;
 
       try {
         const handleTitle = async (title: string) => {
@@ -100,9 +119,9 @@ export function useStream({ accessToken, model, privacyMode, subscriptionTier }:
           upsertSession(updatedSession);
         };
         const handleToken = (token: string) => {
-          setAwaitingFirstToken(false);
+          markChatRunFirstToken(sessionId);
           assistantDraft.content += token;
-          patchAssistantDraft(sessionId, assistantDraft.content);
+          patchAssistantDraft(sessionId, assistantDraft.id, assistantDraft.content);
         };
 
         const streamPayload = messageRecordsToStreamPayload(messages);
@@ -143,49 +162,45 @@ export function useStream({ accessToken, model, privacyMode, subscriptionTier }:
             sessionId,
             messages: streamPayload,
             references,
+            ...(previewWorkspace ? { previewWorkspace: true } : {}),
             onStatus: () => undefined,
             onTitle: handleTitle,
             onToken: handleToken
           });
         }
       } catch (error) {
-        const message =
+        failureMessage =
           error instanceof Error
             ? error.message
             : "Trellis couldn’t reach the AI service right now.";
-        pushToast({
-          title: getToastCopy(message),
-          tone: "warning"
-        });
         if (assistantDraft.content.length === 0) {
           removeMessage(sessionId, assistantDraft.id);
           return {
             assistantMessage: null,
-            failureMessage: message
+            failureMessage
           };
         }
-      } finally {
-        setStreaming(false);
-        setAwaitingFirstToken(false);
       }
 
       return {
         assistantMessage: assistantDraft,
-        failureMessage: null
+        failureMessage
       };
     },
     [
       accessToken,
       addMessage,
+      markChatRunAssistant,
+      markChatRunFirstToken,
       model,
       patchAssistantDraft,
+      previewWorkspace,
       privacyMode,
-      pushToast,
       removeMessage,
       subscriptionTier,
-      setAwaitingFirstToken,
-      setStreaming,
       upsertSession
     ]
   );
 }
+
+export { getToastCopy as getChatStreamToastCopy };

@@ -34,7 +34,9 @@ Vault, folders, and saving (critical—read every time):
 
 When the user asks to create or use a reusable template:
 - Help them shape the template or follow the selected template's structure
-- Ask concise follow-up questions for missing fields when that would improve the filled note
+- Templates may use Trellis macros in double braces (for example {{date}}, {{iso_date}}, {{title}}, {{time}}, {{template_title}}). Those are filled automatically: dates and times use the current local values; {{title}} is the new instance note’s title (often a dated variant of the template name); {{template_title}} is the template note’s title. When you help fill a template in chat, substitute those with the concrete values they stand for. Do not ask the user for input whose only purpose is substituting a macro.
+- When drafting a filled instance from their answers, preserve their wording and do not add details or filler they did not provide unless they explicitly asked for suggestions or examples.
+- Ask concise follow-up questions for missing fields when that would improve the filled note and the answer is not already determined by a macro or the conversation
 - Treat notes tagged "template" as reusable structure, not as the note to overwrite
 - When gathering answers for an instance, do not reprint the full blank template every turn; keep partial progress in a compact, human-readable form and only list what is still missing
 
@@ -102,22 +104,25 @@ Do NOT create notes that only restate "hello" or filler. Do create notes when th
 
 The transcript may include an "## Attached context" section with text the user clipped from a file or public URL. When that material is substantive, prefer "source-summary" or "synthesis" notes that capture the ideas (not raw paste). Link related concepts with [[note links]] (same bracket syntax).
 
-You may also receive a "## Relevant Existing Notes" section containing excerpts from notes retrieved locally from the user's vault. Treat those as the strongest candidates for append or rewrite decisions. Prefer extending one of those notes when it clearly matches the new knowledge, instead of creating a duplicate sibling note.
+You may also receive a "## Relevant Existing Notes" section containing excerpts from notes retrieved locally from the user's vault. Treat those as the strongest candidates for update decisions. Prefer rewriting one of those notes when the transcript plus the excerpt gives enough context to keep the note dense, organized, and natural. Use append only when the conversation adds a genuinely separate new section or small follow-up detail. Avoid creating duplicate sibling notes.
 
 Template handling:
 - Notes tagged "template" are reusable structures, not ordinary note targets.
 - If the user asks to create a reusable template, create a note whose tags include "template" and whose body is the reusable markdown structure plus brief guidance for the AI to follow in future chats.
 - If the user asks to use or fill a template, create or append to a separate note that applies the template. Do not append to or rewrite the template note itself.
 - Preserve the template's meaningful headings and field labels when writing the filled note, replacing placeholders and instructional parentheticals with the user's real answers.
+- For filled template notes, include only what the user (or resolved macros) supplied; do not invent specifics they did not state. Preserve their wording where it maps to a field or section.
+- When the template body contains Trellis macros ({{date}}, {{title}}, etc.), treat them as already resolved: write the filled note with actual dates, times, and titles—not literal {{token}} text—and do not ask the user for values that those macros represent.
 - The filled note must read like the user wrote it in their wiki: natural prose, no chat-log formatting, no "User:" / "Assistant:" lines, no transcript quotes, and no sections titled like a conversation export.
 
 Wiki folders:
 - The notes index may include folder:segment/ labels for each note. When the user asks to file notes into a folder, start a series in a subfolder, or group related captures, include the folderPath field on relevant **create** updates (POSIX-style path under the wiki root, e.g. daily-logs or projects/acme). Omit it or use an empty string for the vault root. Prefer short, descriptive kebab-case segments that match what they asked for.
 
-When unsure between create, append, and noop:
-- prefer append when an existing note is even a plausible home
-- if the conversation had any substantive content at all, prefer a small create or append over noop; use noop only when there is truly nothing worth revisiting
-- only choose rewrite when the transcript clearly justifies replacing the note as a whole
+When unsure between create, append, rewrite, and noop:
+- prefer updating an existing note when it is a plausible home
+- choose rewrite when the current transcript and relevant-note excerpt support a cleaner full note than adding another section to the bottom
+- choose append only when the new material is a distinct addendum, example, decision, or follow-up that reads naturally as a new section
+- if the conversation had any substantive content at all, prefer a small create, append, or rewrite over noop; use noop only when there is truly nothing worth revisiting
 
 Return a JSON object with this exact shape:
 {
@@ -155,7 +160,8 @@ TITLES:
 
 CONTENT:
 - For "create" and "rewrite", write the note as if you are documenting the idea for your future self.
-- For "append", write only the new markdown section(s) that should be appended to the note. Do not repeat the note title as a top-level "# Heading" when appending.
+- For "append", write only the new markdown section(s) that should be added to the note. Do not repeat the note title as a top-level "# Heading" when appending.
+- For "rewrite", produce the whole cleaned-up note body. Preserve valuable existing details from the provided note excerpt, fold in the new conversation, remove duplication, and keep the note readable instead of tacking new content onto the end.
 - Synthesize — do NOT paste the transcript. Distill the key insight, decision, plan, or concept.
 - The note must be useful on its own: include the substantive facts, steps, lists, tables, or reasoning from the assistant's answer—enough detail to act on later (typically a few short paragraphs or structured sections). Rewrite for clarity; avoid copying the user's question verbatim and avoid giant unbroken paste of the assistant reply—prefer structured markdown.
 - Never format note bodies as labeled chat turns (e.g. "User:" / "Assistant:") or as a copy of the conversation; write clean markdown a person would keep in a notebook.
@@ -181,8 +187,8 @@ TAGS:
 
 ACTIONS:
 - "create": Use this when creating a brand-new note, or when filling in a placeholder target that exists only as an unresolved bracket link.
-- "rewrite": Use this sparingly. Only choose it when the transcript clearly supports rewriting the full note body.
-- "append": Preferred for most additions to existing notes. Use it when the note already exists and the conversation adds a new section, decision, example, or follow-up detail.
+- "rewrite": Use this when the note already exists and the best result is a cohesive refreshed note body rather than another appended block. This is preferred for ongoing chats about the same topic when the related note excerpt is sufficient context.
+- "append": Use this when the note already exists and the conversation adds a distinct new section, decision, example, or follow-up detail that should remain visibly separate.
 - "noop": Use this only for a candidate that should not be written. Prefer returning an empty "updates" array when nothing should change.
 
 CONFIDENCE AND EVIDENCE:
@@ -198,9 +204,10 @@ SESSION TITLE:
 
 IMPORTANT:
 - Aim for one clear note per meaningful thread (or append into an existing note when it fits). Quality over spam, but an empty "updates" array should be rare when the assistant actually helped with something specific.
-- Prefer updating or appending to existing notes over creating new ones.
+- Prefer updating existing notes over creating new ones.
 - If an existing note or placeholder target already covers the topic, use that note instead of creating a sibling page.
 - If a retrieved note is a plausible home for the update, do not create a nearby duplicate note.
+- If you are torn between rewrite and append for the same existing note, choose rewrite when it will improve density and readability; choose append when the new material is a natural standalone addendum.
 - If you are torn between append and create, choose append.
 - If you are torn between a thin but real takeaway and noop, choose a short create or append with honest evidence—not noop.
 - Prefer fewer, higher-quality notes over many shallow ones.
@@ -264,16 +271,17 @@ Rules:
 - Use [[Note Title]] only when the user explicitly asked for links to notes they named; do not invent links.`;
 
 /** Used by on-device completion when extraction returns no writes but the user linked a template note. */
-export const templateInstanceFillSystemPrompt = `You format a personal wiki note from a reusable template and a chat transcript.
+export const templateInstanceFillSystemPrompt = `You fill in a personal wiki note from a reusable template using ONLY the user’s own answers supplied below.
 
 ${noteMarkdownCapabilities}
 
 Rules:
 - Output ONLY the markdown body for the new note (no YAML front matter). Do not wrap the entire answer in a markdown code fence.
 - No preamble ("Sure!", "Here is…"). Start with the template’s first heading or field line.
-- Write as if the user authored the note themselves: natural, calm, and readable. This is not a chat log.
-- Do not label content as "User", "Assistant", "Human", "AI", or similar. Do not paste dialogue, quoted turns, or sections titled "From this chat", "Transcript", or "Conversation".
-- Fill the template structure: keep field labels and headings that organize the page, map the user’s facts and reflections into the right places, and replace instructional placeholder text with real answers.
-- Use assistant turns only to infer meaning when the user agreed or supplied details; ignore assistant boilerplate, prompts, and repeated questions.
-- For fields the transcript does not cover, leave them minimal (for example an em dash on the same line) rather than copying questions into the note.
-- Prefer concise prose and light markdown (lists where the template implies lists).`;
+- Fidelity over polish: preserve the user’s wording when it maps to a template field, label, or heading. Do not substitute generic exemplar text or “typical” filler that replaces their words.
+- Do not invent facts. Do not add lists, steps, claims, or narrative that do not appear in the user’s answers. If the user gave short or informal text, keep it short in the note—do not expand or elaborate.
+- Do not label content as "User", "Assistant", "Human", "AI", or similar. Do not paste chat turns or sections titled "Transcript" or "Conversation".
+- Map each fact from the user answers into the closest matching label or section in the template. If the template uses different wording than the user, align by meaning; still use the user’s exact phrases for the substantive content.
+- The template below usually has Trellis macros ({{date}}, {{title}}, etc.) already expanded to real dates and titles. If any "{{token}}" remains, substitute the correct value from the template header context—do not ask the user for macro-only values in the finished note.
+- For template sections or fields with no user-provided answer, leave a minimal placeholder on the same line (for example an em dash) or omit elaboration—do not fill gaps with invented content.
+- Use light markdown only as the template structure suggests; avoid adding large new sections the template does not imply.`;

@@ -14,7 +14,7 @@ import type {
   SetProviderKeyInput,
   StoreChatMemoryInput
 } from "./types";
-import { chatModelIds, ipcChannels } from "./types";
+import { chatModelIds, ipcChannels, isAppPreviewWorkspace } from "./types";
 import { buildChatContextPacket } from "../lib/chat/context";
 import { proposeChatNoteActions } from "../lib/chat/noteActions";
 import { executeVaultOrganize } from "../lib/chat/vaultOrganize";
@@ -27,6 +27,7 @@ import {
   setProviderKey
 } from "../lib/providerKeys";
 import { readMediaCacheBase64ForApi } from "../lib/chatMediaCache";
+import { formatTrialQuotaChatError } from "@shared/billing/trialMessageWindow";
 
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -108,7 +109,8 @@ const chatStreamRequestSchema = z.object({
   model: z.enum(chatModelIds),
   sessionId: z.string().uuid(),
   messages: z.array(chatStreamPayloadMessageSchema).min(1),
-  references: z.array(chatContextReferenceSchema).optional()
+  references: z.array(chatContextReferenceSchema).optional(),
+  previewWorkspace: z.boolean().optional()
 });
 
 async function enrichStreamMessagesForEdge(
@@ -179,10 +181,24 @@ async function readFunctionError(response: Response, fallbackMessage: string): P
     const payload = JSON.parse(text) as {
       error?: string;
       message?: string;
+      reset_at?: string;
     };
 
+    if (payload.error === "subscription_expired") {
+      return new Error(
+        "Your subscription is no longer active. Open Settings to review plans and continue chatting."
+      );
+    }
+
+    if (payload.error === "message_quota_exceeded") {
+      const resetAt = typeof payload.reset_at === "string" ? payload.reset_at : null;
+      return new Error(formatTrialQuotaChatError(resetAt));
+    }
+
     if (payload.error === "trial_expired") {
-      return new Error("Your free trial has ended. Upgrade in Settings to continue.");
+      return new Error(
+        "Your trial or free message allowance is no longer available. Open Settings to review plans and continue chatting."
+      );
     }
 
     if (response.status === 401) {
@@ -369,7 +385,10 @@ export function registerChatIpc(options: {
       headers["x-trellis-provider-key"] = providerApiKey;
     }
 
-    if (options.getWorkspaceId() === "preview") {
+    const previewWorkspace =
+      parsed.previewWorkspace === true || isAppPreviewWorkspace(options.getWorkspaceId());
+
+    if (previewWorkspace) {
       headers["x-trellis-preview-workspace"] = "1";
     }
 
@@ -382,7 +401,8 @@ export function registerChatIpc(options: {
         sessionId: parsed.sessionId,
         model: parsed.model,
         messages: messagesForEdge,
-        references: parsed.references ?? []
+        references: parsed.references ?? [],
+        ...(previewWorkspace ? { previewWorkspace: true } : {})
       })
     });
 

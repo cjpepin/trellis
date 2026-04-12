@@ -56,6 +56,40 @@ function buildSessionBadgeLabel(title: string): string {
     .join("");
 }
 
+function getSessionRunStatus(input: {
+  sessionId: string;
+  runningSessionIds: Set<string>;
+  notificationsBySession: Record<string, "ready" | "needs_attention">;
+}): { label: string; title: string; className: string } | null {
+  if (input.runningSessionIds.has(input.sessionId)) {
+    return {
+      label: "Running",
+      title: "Chat is still running",
+      className: "border-trellis-accent/40 text-trellis-accent"
+    };
+  }
+
+  const notification = input.notificationsBySession[input.sessionId];
+
+  if (notification === "ready") {
+    return {
+      label: "Ready",
+      title: "Background chat is ready",
+      className: "border-trellis-success/40 text-trellis-success"
+    };
+  }
+
+  if (notification === "needs_attention") {
+    return {
+      label: "Needs attention",
+      title: "Background chat needs attention",
+      className: "border-trellis-accent/40 text-trellis-accent"
+    };
+  }
+
+  return null;
+}
+
 export function Sidebar({
   settings,
   onUpdateSettings,
@@ -67,6 +101,10 @@ export function Sidebar({
   const [vaultMenuOpen, setVaultMenuOpen] = useState(false);
   const sessions = useChatStore((state) => state.sessions);
   const activeSessionId = useChatStore((state) => state.activeSessionId);
+  const chatRunsBySession = useChatStore((state) => state.chatRunsBySession);
+  const chatRunNotificationsBySession = useChatStore(
+    (state) => state.chatRunNotificationsBySession
+  );
   const setActiveSession = useChatStore((state) => state.setActiveSession);
   const pushToast = useUiStore((state) => state.pushToast);
   const activeVault = getActiveVault(settings);
@@ -76,6 +114,7 @@ export function Sidebar({
       : typeof navigator !== "undefined" && navigator.platform.startsWith("Win")
       ? "Open in File Explorer"
       : "Open in Files";
+  const runningSessionIds = new Set(Object.keys(chatRunsBySession));
 
   useEffect(() => {
     if (!vaultMenuOpen) {
@@ -218,22 +257,41 @@ export function Sidebar({
             ? (
                 <>
                   {sessions.slice(0, 5).map((session) => (
-                    <button
-                      key={session.id}
-                      type="button"
-                      title={session.title}
-                      className={cn(
-                        "flex h-9 w-9 items-center justify-center rounded-field border text-[11px] font-medium tracking-[0.08em] transition",
-                        activeSessionId === session.id
-                          ? "trellis-selected-surface border-trellis-accent/25 text-trellis-text"
-                          : "border-transparent bg-transparent text-trellis-muted hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text"
-                      )}
-                      onClick={() => {
-                        void selectSession(session.id, session.vaultId);
-                      }}
-                    >
-                      {buildSessionBadgeLabel(session.title)}
-                    </button>
+                    (() => {
+                      const status = getSessionRunStatus({
+                        sessionId: session.id,
+                        runningSessionIds,
+                        notificationsBySession: chatRunNotificationsBySession
+                      });
+
+                      return (
+                        <button
+                          key={session.id}
+                          type="button"
+                          title={status ? `${session.title} — ${status.title}` : session.title}
+                          className={cn(
+                            "relative flex h-9 w-9 items-center justify-center rounded-field border text-[11px] font-medium tracking-[0.08em] transition",
+                            activeSessionId === session.id
+                              ? "trellis-selected-surface border-trellis-accent/25 text-trellis-text"
+                              : "border-transparent bg-transparent text-trellis-muted hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text"
+                          )}
+                          onClick={() => {
+                            void selectSession(session.id, session.vaultId);
+                          }}
+                        >
+                          {buildSessionBadgeLabel(session.title)}
+                          {status ? (
+                            <span
+                              data-testid={`chat-session-status-${session.id}`}
+                              className={cn(
+                                "absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border bg-trellis-surface",
+                                status.className
+                              )}
+                            />
+                          ) : null}
+                        </button>
+                      );
+                    })()
                   ))}
                   {sessions.length > 5 && (
                     <div
@@ -245,23 +303,47 @@ export function Sidebar({
                   )}
                 </>
               )
-            : sessions.map((session) => (
-                <button
-                  key={session.id}
-                  type="button"
-                  className={`w-full rounded-field border px-3 py-1 text-left transition ${
-                    activeSessionId === session.id
-                      ? "trellis-selected-surface border-trellis-accent/25"
-                      : "border-transparent bg-transparent hover:border-trellis-border hover:bg-trellis-surface"
-                  }`}
-                  onClick={() => {
-                    void selectSession(session.id, session.vaultId);
-                  }}
-                >
-                  <p className="text-[13px] leading-4 text-trellis-text">{truncate(session.title, 28)}</p>
-                  <p className="text-[11px] leading-4 text-trellis-muted">{formatTimestamp(session.updatedAt)}</p>
-                </button>
-              ))}
+            : sessions.map((session) => {
+                const status = getSessionRunStatus({
+                  sessionId: session.id,
+                  runningSessionIds,
+                  notificationsBySession: chatRunNotificationsBySession
+                });
+
+                return (
+                  <button
+                    key={session.id}
+                    type="button"
+                    title={status?.title}
+                    className={`w-full rounded-field border px-3 py-1 text-left transition ${
+                      activeSessionId === session.id
+                        ? "trellis-selected-surface border-trellis-accent/25"
+                        : "border-transparent bg-transparent hover:border-trellis-border hover:bg-trellis-surface"
+                    }`}
+                    onClick={() => {
+                      void selectSession(session.id, session.vaultId);
+                    }}
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <p className="min-w-0 flex-1 text-[13px] leading-4 text-trellis-text">
+                        {truncate(session.title, 28)}
+                      </p>
+                      {status ? (
+                        <span
+                          data-testid={`chat-session-status-${session.id}`}
+                          className={cn(
+                            "shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] leading-3",
+                            status.className
+                          )}
+                        >
+                          {status.label}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="text-[11px] leading-4 text-trellis-muted">{formatTimestamp(session.updatedAt)}</p>
+                  </button>
+                );
+              })}
 
           {sessions.length === 0 && (
             collapsed ? (

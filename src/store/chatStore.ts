@@ -7,6 +7,13 @@ import {
   type ChatSessionSummary,
   type MessageRecord
 } from "@electron/ipc/types";
+import {
+  canStartChatRun,
+  filterChatRunsBySessionIds,
+  getRunningChatRunCount,
+  type ChatRunAttention,
+  type ChatRunState
+} from "@/lib/chatRunState";
 import { readWorkspaceLocalStorage, writeWorkspaceLocalStorage } from "@/lib/workspace";
 
 export interface MessageMeta {
@@ -19,8 +26,8 @@ interface ChatState {
   activeSessionId: string | null;
   messagesBySession: Record<string, MessageRecord[]>;
   messageMetaById: Record<string, MessageMeta>;
-  isStreaming: boolean;
-  awaitingFirstToken: boolean;
+  chatRunsBySession: Record<string, ChatRunState>;
+  chatRunNotificationsBySession: Record<string, ChatRunAttention>;
   activeModel: ChatModel;
   lastExtractedMessageCount: Record<string, number>;
   workspaceId: AppWorkspaceId;
@@ -34,9 +41,18 @@ interface ChatState {
   removeMessage: (sessionId: string, messageId: string) => void;
   setMessageMeta: (messageId: string, meta: MessageMeta) => void;
   clearMessageMeta: (messageId: string) => void;
-  patchAssistantDraft: (sessionId: string, content: string) => void;
-  setStreaming: (value: boolean) => void;
-  setAwaitingFirstToken: (value: boolean) => void;
+  patchAssistantDraft: (sessionId: string, messageId: string, content: string) => void;
+  canStartChatRun: (sessionId: string) => boolean;
+  getRunningChatRunCount: () => number;
+  startChatRun: (run: {
+    sessionId: string;
+    assistantMessageId?: string | null;
+    startedAt?: number;
+  }) => boolean;
+  markChatRunAssistant: (sessionId: string, assistantMessageId: string) => void;
+  markChatRunFirstToken: (sessionId: string) => void;
+  finishChatRun: (sessionId: string, attention?: ChatRunAttention | null) => void;
+  acknowledgeChatRunNotification: (sessionId: string) => void;
   setActiveModel: (model: ChatModel) => void;
   markExtracted: (sessionId: string, messageCount: number) => void;
 }
@@ -68,13 +84,13 @@ function filterMessageMetaByCurrentMessages(
   );
 }
 
-export const useChatStore = create<ChatState>((set) => ({
+export const useChatStore = create<ChatState>((set, get) => ({
   sessions: [],
   activeSessionId: null,
   messagesBySession: {},
   messageMetaById: {},
-  isStreaming: false,
-  awaitingFirstToken: false,
+  chatRunsBySession: {},
+  chatRunNotificationsBySession: {},
   activeModel: storedModel ?? defaultChatModel,
   lastExtractedMessageCount: {},
   workspaceId: "personal",
@@ -88,6 +104,8 @@ export const useChatStore = create<ChatState>((set) => ({
         activeSessionId: sortedSessions[0]?.id ?? null,
         messagesBySession: {},
         messageMetaById: {},
+        chatRunsBySession: {},
+        chatRunNotificationsBySession: {},
         lastExtractedMessageCount: {},
         activeModel: normalizeChatModel(
           readWorkspaceLocalStorage("model", workspaceId) ?? defaultChatModel
@@ -106,16 +124,27 @@ export const useChatStore = create<ChatState>((set) => ({
           allowedSessionIds.has(sessionId)
         )
       );
+      const nextActiveSessionId = activeSessionStillExists
+        ? state.activeSessionId
+        : (sortedSessions[0]?.id ?? null);
 
       return {
         sessions: sortedSessions,
-        activeSessionId: activeSessionStillExists
-          ? state.activeSessionId
-          : (sortedSessions[0]?.id ?? null),
+        activeSessionId: nextActiveSessionId,
         messagesBySession: nextMessagesBySession,
         messageMetaById: filterMessageMetaByCurrentMessages(
           state.messageMetaById,
           nextMessagesBySession
+        ),
+        chatRunsBySession: filterChatRunsBySessionIds(
+          state.chatRunsBySession,
+          allowedSessionIds
+        ),
+        chatRunNotificationsBySession: Object.fromEntries(
+          Object.entries(state.chatRunNotificationsBySession).filter(
+            ([sessionId]) =>
+              allowedSessionIds.has(sessionId) && sessionId !== nextActiveSessionId
+          )
         ),
         lastExtractedMessageCount: Object.fromEntries(
           Object.entries(state.lastExtractedMessageCount).filter(([sessionId]) =>
@@ -124,7 +153,21 @@ export const useChatStore = create<ChatState>((set) => ({
         )
       };
     }),
-  setActiveSession: (sessionId) => set({ activeSessionId: sessionId }),
+  setActiveSession: (sessionId) =>
+    set((state) => {
+      if (!sessionId) {
+        return { activeSessionId: sessionId };
+      }
+
+      return {
+        activeSessionId: sessionId,
+        chatRunNotificationsBySession: Object.fromEntries(
+          Object.entries(state.chatRunNotificationsBySession).filter(
+            ([id]) => id !== sessionId
+          )
+        )
+      };
+    }),
   setSessionMessages: (sessionId, messages) =>
     set((state) => {
       const nextMessagesBySession = {
@@ -197,17 +240,18 @@ export const useChatStore = create<ChatState>((set) => ({
         Object.entries(state.messageMetaById).filter(([id]) => id !== messageId)
       )
     })),
-  patchAssistantDraft: (sessionId, content) =>
+  patchAssistantDraft: (sessionId, messageId, content) =>
     set((state) => {
       const messages = [...(state.messagesBySession[sessionId] ?? [])];
-      const lastMessage = messages.at(-1);
+      const messageIndex = messages.findIndex((message) => message.id === messageId);
+      const message = messageIndex >= 0 ? messages[messageIndex] : undefined;
 
-      if (!lastMessage || lastMessage.role !== "assistant") {
+      if (!message || message.role !== "assistant") {
         return state;
       }
 
-      messages[messages.length - 1] = {
-        ...lastMessage,
+      messages[messageIndex] = {
+        ...message,
         content
       };
 
@@ -218,8 +262,93 @@ export const useChatStore = create<ChatState>((set) => ({
         }
       };
     }),
-  setStreaming: (value) => set({ isStreaming: value }),
-  setAwaitingFirstToken: (value) => set({ awaitingFirstToken: value }),
+  canStartChatRun: (sessionId) => {
+    return canStartChatRun(get().chatRunsBySession, sessionId).allowed;
+  },
+  getRunningChatRunCount: () => getRunningChatRunCount(get().chatRunsBySession),
+  startChatRun: (run) => {
+    const state = get();
+    if (!canStartChatRun(state.chatRunsBySession, run.sessionId).allowed) {
+      return false;
+    }
+
+    set((current) => ({
+      chatRunsBySession: {
+        ...current.chatRunsBySession,
+        [run.sessionId]: {
+          sessionId: run.sessionId,
+          assistantMessageId: run.assistantMessageId ?? null,
+          startedAt: run.startedAt ?? Date.now(),
+          awaitingFirstToken: true
+        }
+      },
+      chatRunNotificationsBySession: Object.fromEntries(
+        Object.entries(current.chatRunNotificationsBySession).filter(
+          ([sessionId]) => sessionId !== run.sessionId
+        )
+      )
+    }));
+    return true;
+  },
+  markChatRunAssistant: (sessionId, assistantMessageId) =>
+    set((state) => {
+      const run = state.chatRunsBySession[sessionId];
+      if (!run) {
+        return state;
+      }
+
+      return {
+        chatRunsBySession: {
+          ...state.chatRunsBySession,
+          [sessionId]: {
+            ...run,
+            assistantMessageId
+          }
+        }
+      };
+    }),
+  markChatRunFirstToken: (sessionId) =>
+    set((state) => {
+      const run = state.chatRunsBySession[sessionId];
+      if (!run || !run.awaitingFirstToken) {
+        return state;
+      }
+
+      return {
+        chatRunsBySession: {
+          ...state.chatRunsBySession,
+          [sessionId]: {
+            ...run,
+            awaitingFirstToken: false
+          }
+        }
+      };
+    }),
+  finishChatRun: (sessionId, attention) =>
+    set((state) => {
+      const { [sessionId]: _finished, ...remainingRuns } = state.chatRunsBySession;
+      const { [sessionId]: _previousNotification, ...remainingNotifications } =
+        state.chatRunNotificationsBySession;
+
+      return {
+        chatRunsBySession: remainingRuns,
+        chatRunNotificationsBySession:
+          attention && state.activeSessionId !== sessionId
+            ? {
+                ...remainingNotifications,
+                [sessionId]: attention
+              }
+            : remainingNotifications
+      };
+    }),
+  acknowledgeChatRunNotification: (sessionId) =>
+    set((state) => ({
+      chatRunNotificationsBySession: Object.fromEntries(
+        Object.entries(state.chatRunNotificationsBySession).filter(
+          ([id]) => id !== sessionId
+        )
+      )
+    })),
   setActiveModel: (model) => {
     set((state) => {
       writeWorkspaceLocalStorage("model", model, state.workspaceId);

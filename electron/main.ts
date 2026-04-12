@@ -16,7 +16,12 @@ import {
   isLocalExtractionFeatureEnabled
 } from "./lib/extraction/rollout";
 import { applyElectronTestPathOverrides } from "./lib/appPaths";
-import { ensurePreviewWorkspaceSeed, readPreviewSeedManifest, resetPreviewWorkspaceSeed } from "./lib/previewSeed";
+import {
+  ensurePreviewWorkspaceSeed,
+  readPreviewSeedManifest,
+  resetPreviewWorkspaceSeed,
+  type PreviewFixtureId
+} from "./lib/previewSeed";
 import {
   getSharedAccountStoragePaths,
   getWorkspaceInfo,
@@ -26,6 +31,7 @@ import {
   readWorkspaceState,
   workspaceIds,
   writeWorkspaceState,
+  type PreviewWorkspaceSeedVersions,
   type WorkspaceState
 } from "./lib/workspaces";
 import {
@@ -86,7 +92,8 @@ const settingsSchema = z.object({
   chat: z
     .object({
       privacyMode: z.enum(["auto", "off", "local"]).optional(),
-      readAloudAutoPlay: z.boolean().optional()
+      readAloudAutoPlay: z.boolean().optional(),
+      scrollWithResponse: z.boolean().optional()
     })
     .optional(),
   extraction: z
@@ -122,7 +129,10 @@ let hasWarnedAboutSessionPersistence = false;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 let extractionOrchestrator: ReturnType<typeof createExtractionOrchestrator> | null = null;
-let previewSeedVersion: string | null = null;
+let previewWorkspaceSeedVersions: PreviewWorkspaceSeedVersions = {
+  preview: null,
+  "preview-heavy": null
+};
 
 function getCurrentWorkspaceId(): AppWorkspaceId {
   return currentWorkspaceState.activeWorkspaceId;
@@ -143,6 +153,10 @@ function getAuthPath(): string {
 function getDefaultVaultPath(workspaceId: AppWorkspaceId): string {
   if (workspaceId === "preview") {
     return path.join(getWorkspacePaths("preview").root, "Preview Vault");
+  }
+
+  if (workspaceId === "preview-heavy") {
+    return path.join(getWorkspacePaths("preview-heavy").root, "Heavy Preview Vault");
   }
 
   return path.join(app.getPath("documents"), "Trellis Vault");
@@ -220,14 +234,19 @@ function createDefaultExtractionSettings(): ExtractionSettings {
 function createDefaultChatSettings(): ChatSettings {
   return {
     privacyMode: "auto",
-    readAloudAutoPlay: false
+    readAloudAutoPlay: false,
+    scrollWithResponse: true
   };
 }
 
 function createDefaultSettings(workspaceId: AppWorkspaceId = getCurrentWorkspaceId()): AppSettings {
   const vault = createVaultDefinition(
     getDefaultVaultPath(workspaceId),
-    workspaceId === "preview" ? "Preview Vault" : "Main Vault"
+    workspaceId === "preview"
+      ? "Preview Vault"
+      : workspaceId === "preview-heavy"
+        ? "Heavy Preview Vault"
+        : "Main Vault"
   );
 
   return {
@@ -277,7 +296,8 @@ function normalizeSettings(rawSettings: unknown): AppSettings {
     rememberSession: parsed.rememberSession ?? true,
     chat: {
       privacyMode: parsed.chat?.privacyMode ?? "auto",
-      readAloudAutoPlay: parsed.chat?.readAloudAutoPlay ?? false
+      readAloudAutoPlay: parsed.chat?.readAloudAutoPlay ?? false,
+      scrollWithResponse: parsed.chat?.scrollWithResponse ?? true
     },
     extraction: {
       mode: "local",
@@ -326,7 +346,8 @@ function createPreviewSettings(vaultPath: string, vaultName: string): AppSetting
 function getSharedRememberSessionDefault(): boolean {
   const settingsCandidates = [
     getWorkspacePaths("personal").settingsPath,
-    getWorkspacePaths("preview").settingsPath
+    getWorkspacePaths("preview").settingsPath,
+    getWorkspacePaths("preview-heavy").settingsPath
   ];
 
   for (const settingsPath of settingsCandidates) {
@@ -487,6 +508,18 @@ function syncRememberSessionAcrossWorkspaces(
   }
 }
 
+function previewFixtureIdForWorkspace(workspaceId: AppWorkspaceId): PreviewFixtureId | null {
+  if (workspaceId === "preview") {
+    return "preview";
+  }
+
+  if (workspaceId === "preview-heavy") {
+    return "preview-heavy";
+  }
+
+  return null;
+}
+
 async function ensureWorkspaceReady(
   workspaceId: AppWorkspaceId,
   options?: { forcePreviewReset?: boolean }
@@ -494,25 +527,21 @@ async function ensureWorkspaceReady(
   const paths = getWorkspacePaths(workspaceId);
   fs.mkdirSync(paths.root, { recursive: true });
 
-  if (workspaceId === "preview") {
-    const settings =
-      options?.forcePreviewReset
-        ? await resetPreviewWorkspaceSeed({
-            workspaceRoot: paths.root,
-            settingsPath: paths.settingsPath,
-            databasePath: paths.databasePath,
-            previewStatePath: paths.previewSeedStatePath,
-            createSettings: createPreviewSettings,
-            normalizeSettings
-          })
-        : await ensurePreviewWorkspaceSeed({
-            workspaceRoot: paths.root,
-            settingsPath: paths.settingsPath,
-            databasePath: paths.databasePath,
-            previewStatePath: paths.previewSeedStatePath,
-            createSettings: createPreviewSettings,
-            normalizeSettings
-          });
+  const previewFixtureId = previewFixtureIdForWorkspace(workspaceId);
+
+  if (previewFixtureId) {
+    const seedOptions = {
+      fixtureId: previewFixtureId,
+      workspaceRoot: paths.root,
+      settingsPath: paths.settingsPath,
+      databasePath: paths.databasePath,
+      previewStatePath: paths.previewSeedStatePath,
+      createSettings: createPreviewSettings,
+      normalizeSettings
+    };
+    const settings = options?.forcePreviewReset
+      ? await resetPreviewWorkspaceSeed(seedOptions)
+      : await ensurePreviewWorkspaceSeed(seedOptions);
 
     currentSettings = normalizeSettings(settings);
     await ensureAllVaultLayouts(currentSettings);
@@ -577,7 +606,7 @@ function getSettings(): AppSettings {
 }
 
 function getWorkspace() {
-  return getWorkspaceInfo(getCurrentWorkspaceId(), previewSeedVersion);
+  return getWorkspaceInfo(getCurrentWorkspaceId(), previewWorkspaceSeedVersions);
 }
 
 function notifyExtractionJobUpdate(notification: unknown): void {
@@ -606,7 +635,7 @@ async function buildBootstrapPayload(): Promise<AppBootstrap> {
     settings: currentSettings,
     features: getAppFeatureFlags(),
     workspace: getWorkspace(),
-    workspaces: listWorkspaceInfos(previewSeedVersion),
+    workspaces: listWorkspaceInfos(previewWorkspaceSeedVersions),
     providerKeys: getProviderKeyStatusSnapshot(getCurrentWorkspaceId()),
     needsWorkspaceChoice: !currentWorkspaceState.hasCompletedSelection,
     authSession: readAuthSession(),
@@ -713,11 +742,11 @@ function registerAppIpc(): void {
     return writeSettings(parsed);
   });
   ipcMain.handle(ipcChannels.workspaceGet, async () => getWorkspace());
-  ipcMain.handle(ipcChannels.workspaceList, async () => listWorkspaceInfos(previewSeedVersion));
+  ipcMain.handle(ipcChannels.workspaceList, async () => listWorkspaceInfos(previewWorkspaceSeedVersions));
   ipcMain.handle(ipcChannels.workspaceSwitch, async (_event, input: unknown) => {
     const parsed = z
       .object({
-        workspaceId: z.enum(["personal", "preview"]),
+        workspaceId: z.enum(["personal", "preview", "preview-heavy"]),
         completeSelection: z.boolean().optional()
       })
       .parse(input) as SwitchWorkspaceInput;
@@ -727,11 +756,13 @@ function registerAppIpc(): void {
     });
   });
   ipcMain.handle(ipcChannels.workspaceResetPreview, async () => {
-    if (getCurrentWorkspaceId() !== "preview") {
-      throw new Error("Switch to the preview workspace before resetting it.");
+    const fixtureId = previewFixtureIdForWorkspace(getCurrentWorkspaceId());
+
+    if (!fixtureId) {
+      throw new Error("Switch to a preview workspace before resetting it.");
     }
 
-    return rebindWorkspace("preview", {
+    return rebindWorkspace(getCurrentWorkspaceId(), {
       forcePreviewReset: true
     });
   });
@@ -806,7 +837,10 @@ function reportMainProcessError(error: unknown, title: string): void {
 }
 
 async function bootstrapApplication(): Promise<void> {
-  previewSeedVersion = readPreviewSeedManifest().version;
+  previewWorkspaceSeedVersions = {
+    preview: readPreviewSeedManifest("preview").version,
+    "preview-heavy": readPreviewSeedManifest("preview-heavy").version
+  };
   migrateLegacyPersonalWorkspace();
   currentWorkspaceState = writeWorkspaceState(readWorkspaceState());
   await ensureWorkspaceReady(currentWorkspaceState.activeWorkspaceId);

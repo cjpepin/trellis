@@ -29,6 +29,15 @@ This repository follows [`mvp.md`](/Users/connorpepin/Cursor/mnemo/mvp.md) as th
 - IPC channel names and payload contracts live only in `electron/ipc/types.ts`.
 - Default on-device extraction uses `node-llama-cpp` in the Electron main process against a single GGUF path under app user data (`embeddedExtractionGgufFilename` / `defaultLocalExtractionModelId` in `shared/extraction/config.ts`); weights are not bundled—first run downloads once (override URL with `TRELLIS_EMBEDDED_EXTRACTION_MODEL_URL`). The local extraction feature flag defaults **on**; set `TRELLIS_FEATURE_LOCAL_EXTRACTION=0` to disable on-device note processing entirely (there is no cloud extraction path). Dev eval against a running HTTP chat API: `npm run eval:extraction:ollama` (optional; override with `TRELLIS_EXTRACTION_MODEL`).
 
+### AI providers (OpenAI and Anthropic)
+
+Chat models from **OpenAI and Anthropic** are both first-class. Ancillary cloud features (speech, transcription, inline images, and similar) may be implemented against one vendor’s HTTP API behind Supabase Edge Functions today, but implementations must stay **easy to extend** and **honest about parity**.
+
+- **Avoid one-sided product and code assumptions.** Do not bake in “always OpenAI” or “always Anthropic” for shared user flows unless the capability is truly exclusive to that API. Prefer capability checks, shared IPC types, and neutral naming at boundaries (`electron/ipc/types.ts`, preload contracts).
+- **Isolate provider-specific HTTP.** Keep vendor request bodies, headers, and parsing in dedicated server-side helpers or branches; keep Electron IPC and renderer types **provider-neutral** (audio bytes and MIME type, not raw OpenAI response shapes).
+- **Call out provider gaps in handoffs.** If a feature only works with a given key, plan, or API today, document that explicitly and what would be needed for the other provider or a second backend.
+- **Routing and prompts** that differ by provider belong alongside the Edge Function chat or media orchestration layer, not scattered through the React tree.
+
 ## UX Standards
 
 - Match the considered-dark design system from `mvp.md`, including the warm amber accent and restrained motion.
@@ -87,4 +96,4 @@ This repository follows [`mvp.md`](/Users/connorpepin/Cursor/mnemo/mvp.md) as th
 - New users can choose a vault, authenticate, and begin a chat quickly.
 - Every major route handles loading, error, and empty states gracefully.
 - Chat, extraction, graph, notes, and ingest flows all degrade cleanly when Supabase or AI providers are unreachable.
-- Code additions keep the repository coherent for the next agent. If a new pattern is introduced, document it here or in `docs/schema.md`.
+- Code additions keep the repository coherent for the next agent. If a new pattern is introduced, document it here or in `docs/schema.md`. Multi-provider behavior and known single-provider limitations belong in this file or in the active agent handoff.

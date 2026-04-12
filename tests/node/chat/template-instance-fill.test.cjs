@@ -38,3 +38,18 @@ test("deterministic template fill uses only user messages in the tail", () => {
   assert.match(body, /First answer/);
   assert.match(body, /Second answer/);
 });
+
+test("deterministic template fill expands Trellis macros in the template body", () => {
+  const body = buildDeterministicTemplateFillBody(
+    {
+      title: "Weekly Template",
+      content: "# Weekly Template\n\n- {{iso_date}}\n- {{title}}\n"
+    },
+    []
+  );
+
+  assert.ok(!body.includes("{{iso_date}}"));
+  assert.ok(!body.includes("{{title}}"));
+  assert.match(body, /\d{4}-\d{2}-\d{2}/);
+  assert.match(body, /Weekly/);
+});

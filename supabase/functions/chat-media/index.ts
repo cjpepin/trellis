@@ -70,7 +70,8 @@ Deno.serve(async (request) => {
   try {
     assertMaxJsonBodyBytes(request);
     const { profile } = await requireUser(request);
-    assertEntitlement(profile, "message");
+    const previewWorkspaceRequest = request.headers.get("x-trellis-preview-workspace") === "1";
+    assertEntitlement(profile, "message", { previewWorkspaceRequest });
 
     const body = (await request.json()) as Record<string, unknown>;
     const action = typeof body.action === "string" ? body.action : "";
@@ -151,6 +152,7 @@ Deno.serve(async (request) => {
 
     if (action === "tts") {
       const text = typeof body.text === "string" ? body.text : "";
+      const wantStream = body.stream === true;
 
       if (text.length < 1) {
         throw new Response(JSON.stringify({ error: "No text to speak." }), {
@@ -158,6 +160,63 @@ Deno.serve(async (request) => {
           headers: {
             ...corsHeaders,
             "Content-Type": "application/json"
+          }
+        });
+      }
+
+      if (wantStream) {
+        const response = await fetch("https://api.openai.com/v1/audio/speech", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: "tts-1",
+            voice: "alloy",
+            input: text.slice(0, 4096),
+            response_format: "pcm",
+            stream_format: "audio"
+          })
+        });
+
+        if (!response.ok) {
+          const msg = await readProviderError(response);
+          throw new Response(
+            JSON.stringify({
+              error: msg ? `Speech synthesis failed: ${msg}` : "Speech synthesis failed."
+            }),
+            {
+              status: response.status,
+              headers: {
+                ...corsHeaders,
+                "Content-Type": "application/json"
+              }
+            }
+          );
+        }
+
+        const outBody = response.body;
+        if (!outBody) {
+          throw new Response(
+            JSON.stringify({ error: "Speech synthesis returned no audio stream." }),
+            {
+              status: 502,
+              headers: {
+                ...corsHeaders,
+                "Content-Type": "application/json"
+              }
+            }
+          );
+        }
+
+        return new Response(outBody, {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/octet-stream",
+            "Cache-Control": "no-store",
+            "X-Trellis-Pcm-Sample-Rate": "24000"
           }
         });
       }

@@ -224,6 +224,76 @@ function normalizeWhitespace(body: string): string {
     .trim();
 }
 
+function appendBeforeConnectedNotes(existingContent: string, nextBody: string): string {
+  const existing = existingContent.trim();
+  const next = nextBody.trim();
+
+  if (existing.length === 0) {
+    return next;
+  }
+
+  if (next.length === 0) {
+    return existing;
+  }
+
+  const lines = existing.split("\n");
+  const connectedNotesIndex = lines.findIndex(
+    (line) => line.trim() === connectedNotesHeading
+  );
+
+  if (connectedNotesIndex === -1) {
+    return [existing, next].join("\n\n");
+  }
+
+  const nextLines = next.split("\n");
+  const nextConnectedNotesIndex = nextLines.findIndex(
+    (line) => line.trim() === connectedNotesHeading
+  );
+  const nextBeforeConnectedNotes =
+    nextConnectedNotesIndex === -1
+      ? next
+      : nextLines.slice(0, nextConnectedNotesIndex).join("\n").trim();
+  const nextConnectedNoteLines =
+    nextConnectedNotesIndex === -1
+      ? []
+      : nextLines
+          .slice(nextConnectedNotesIndex + 1)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0);
+  const before = lines.slice(0, connectedNotesIndex).join("\n").trim();
+  const afterLines = lines.slice(connectedNotesIndex);
+  const connectedLinkKeys = new Set(
+    extractWikiLinkTitles(afterLines.join("\n")).map((title) => normalizeTitleKey(title))
+  );
+  const connectedRawLines = new Set(afterLines.map((line) => line.trim()).filter(Boolean));
+
+  for (const line of nextConnectedNoteLines) {
+    const [linkedTitle] = extractWikiLinkTitles(line);
+    const linkedKey = linkedTitle ? normalizeTitleKey(linkedTitle) : "";
+
+    if (linkedKey && connectedLinkKeys.has(linkedKey)) {
+      continue;
+    }
+
+    if (!linkedKey && connectedRawLines.has(line)) {
+      continue;
+    }
+
+    afterLines.push(line);
+    connectedRawLines.add(line);
+
+    if (linkedKey) {
+      connectedLinkKeys.add(linkedKey);
+    }
+  }
+
+  const after = afterLines.join("\n").trim();
+
+  return [before, nextBeforeConnectedNotes, after]
+    .filter((section) => section.length > 0)
+    .join("\n\n");
+}
+
 function hasEnoughDurableContent(body: string): boolean {
   const normalized = body
     .replace(new RegExp(`${connectedNotesHeading}[\\s\\S]*$`), "")
@@ -303,7 +373,7 @@ export function prepareExtractionWrite(
 
   const nextContent =
     input.update.operation === "append" && input.existingNote
-      ? [input.existingNote.content.trim(), preparedBody.nextBody].filter(Boolean).join("\n\n")
+      ? appendBeforeConnectedNotes(input.existingNote.content, preparedBody.nextBody)
       : preparedBody.nextBody;
   const nextTitle =
     input.update.operation === "append" && input.existingNote

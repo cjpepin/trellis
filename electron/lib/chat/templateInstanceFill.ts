@@ -1,5 +1,9 @@
 import { templateInstanceFillSystemPrompt } from "../../../supabase/functions/_shared/prompts";
-import { templateBodyWithoutLeadingTitle } from "../../../shared/chat/templateInstance";
+import {
+  buildTemplateInstanceTitle,
+  templateBodyWithoutLeadingTitle
+} from "../../../shared/chat/templateInstance";
+import { expandTemplateMacros, type TemplateMacroContext } from "../../../shared/chat/templateMacros";
 import { runEmbeddedChatPrompt } from "./embeddedCompletion";
 import { isEmbeddedModelAvailable } from "./embeddedModelPath";
 import { stripLeadingMarkdownFence } from "./noteInsertionMarkdown";
@@ -16,18 +20,38 @@ function truncate(input: string, max: number): string {
   return `${input.slice(0, max)}\n\n…`;
 }
 
+function templateMacroContext(templateTitle: string, now: Date): TemplateMacroContext {
+  return {
+    instanceTitle: buildTemplateInstanceTitle(templateTitle, now),
+    templateTitle,
+    now
+  };
+}
+
+/** Applies Trellis `{{token}}` substitution so the model sees concrete dates and titles. */
+function expandTemplateBodyForInstance(templateTitle: string, bodyMarkdown: string, now: Date): string {
+  return expandTemplateMacros(bodyMarkdown, templateMacroContext(templateTitle, now));
+}
+
 /**
- * Internal transcript formatting for the model (not shown to the user). Numbered blocks avoid
- * "User:" / "Assistant:" line prefixes that models sometimes echo into the final note.
+ * User messages only — assistant turns are omitted so the model cannot treat generic assistant
+ * suggestions as user-provided facts when filling the template.
  */
-function formatTranscriptForPrompt(
+function formatUserAnswersForPrompt(
   transcript: Array<{ role: "user" | "assistant"; content: string }>
 ): string {
-  return transcript
-    .map((message, index) => {
-      const role = message.role === "user" ? "user" : "assistant";
-      const text = truncate(message.content.trim(), maxMessageChars);
-      return `### ${index + 1} (${role})\n\n${text}`;
+  const blocks = transcript
+    .filter((message) => message.role === "user")
+    .map((message) => truncate(message.content.trim(), maxMessageChars))
+    .filter((text) => text.length > 0);
+
+  if (blocks.length === 0) {
+    return "(no user answers)";
+  }
+
+  return blocks
+    .map((text, index) => {
+      return `### User answer ${index + 1}\n\n${text}`;
     })
     .join("\n\n---\n\n");
 }
@@ -40,7 +64,12 @@ export function buildDeterministicTemplateFillBody(
   templateCtx: { title: string; content: string },
   transcript: Array<{ role: "user" | "assistant"; content: string }>
 ): string {
-  const base = templateBodyWithoutLeadingTitle(templateCtx.content);
+  const now = new Date();
+  const base = expandTemplateBodyForInstance(
+    templateCtx.title,
+    templateBodyWithoutLeadingTitle(templateCtx.content),
+    now
+  );
   const userParts = transcript
     .filter((message) => message.role === "user")
     .map((message) => message.content.trim())
@@ -64,23 +93,28 @@ export async function trySynthesizeTemplateInstanceMarkdown(input: {
     return null;
   }
 
+  const now = new Date();
   const base = truncate(
-    templateBodyWithoutLeadingTitle(input.templateContent),
+    expandTemplateBodyForInstance(
+      input.templateTitle,
+      templateBodyWithoutLeadingTitle(input.templateContent),
+      now
+    ),
     maxTemplateChars
   );
-  const transcriptBlock = formatTranscriptForPrompt(input.transcript);
+  const userAnswersBlock = formatUserAnswersForPrompt(input.transcript);
 
   const userPrompt = [
     "## Template title",
     input.templateTitle.trim(),
     "",
-    "## Template structure (fill with the user’s answers)",
+    "## Template structure (place the user’s answers here; keep labels/headings)",
     base.trim().length > 0 ? base.trim() : "(empty template body)",
     "",
-    "## Messages while using this template (interpret; do not copy as dialogue)",
-    transcriptBlock,
+    "## User answers (source of truth — use this text faithfully; do not invent details)",
+    userAnswersBlock,
     "",
-    "Write ONLY the completed markdown note body."
+    "Write ONLY the completed markdown note body. Every substantive line should come from the user answers above or from resolved template macros."
   ].join("\n");
 
   try {
@@ -88,7 +122,7 @@ export async function trySynthesizeTemplateInstanceMarkdown(input: {
       systemPrompt: templateInstanceFillSystemPrompt,
       userPrompt,
       maxTokens: 4096,
-      temperature: 0.35
+      temperature: 0.12
     });
 
     const stripped = stripLeadingMarkdownFence(raw);

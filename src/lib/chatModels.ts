@@ -151,9 +151,11 @@ function hasProviderKey(
   return providerKeys?.some((status) => status.provider === provider && status.configured) ?? false;
 }
 
-/** When set, every model in the catalog is selectable (preview sandbox). */
+/** When set, every model in the catalog is selectable (preview sandbox for admins). */
 export interface ChatModelAccessOptions {
   previewWorkspace?: boolean;
+  /** Matches server `profiles.is_admin`: full catalog regardless of tier. */
+  isAdmin?: boolean;
 }
 
 export function getChatModelAccess(
@@ -166,6 +168,13 @@ export function getChatModelAccess(
   reason: string | null;
 } {
   if (options?.previewWorkspace) {
+    return {
+      allowed: true,
+      reason: null
+    };
+  }
+
+  if (options?.isAdmin) {
     return {
       allowed: true,
       reason: null

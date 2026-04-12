@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as d3 from "d3";
-import type { GraphData } from "@electron/ipc/types";
+import type { GraphData, GraphEdge } from "@electron/ipc/types";
 
 interface Props {
   graph: GraphData;
@@ -14,13 +14,97 @@ type SimNode = d3.SimulationNodeDatum & {
   slug: string;
   title: string;
   size: number;
+  /** Inbound wiki links; drives size and fill emphasis in the graph view. */
+  inboundCount?: number;
   cluster?: string;
   isPlaceholder?: boolean;
 };
 
-type SimLink = d3.SimulationLinkDatum<SimNode> & {
-  id: string;
-};
+type SimLink = d3.SimulationLinkDatum<SimNode> &
+  Pick<GraphEdge, "association"> & {
+    id: string;
+  };
+
+const LABEL_ZOOM_THRESHOLD = 0.42;
+
+function defaultAssociation(edge: GraphEdge): number {
+  return typeof edge.association === "number" ? edge.association : 0.35;
+}
+
+function linkDistance(association: number): number {
+  const minD = 38;
+  const maxD = 210;
+  const a = Math.max(0, Math.min(1, association));
+  return minD + (1 - a) * (maxD - minD);
+}
+
+function linkStrength(association: number): number {
+  const a = Math.max(0, Math.min(1, association));
+  /** Slightly softer links so initial layout spreads without over-tight figure-eight folds on dense graphs. */
+  return 0.04 + a * 0.28;
+}
+
+const UNCLUSTERED = "__unclustered__";
+
+function clusterKey(node: Pick<SimNode, "cluster">): string {
+  const c = node.cluster?.trim();
+  return c && c.length > 0 ? c : UNCLUSTERED;
+}
+
+/**
+ * When several tag clusters exist, seed nodes on a ring and return targets for cluster forces.
+ * Single- or no-cluster graphs keep the legacy spiral so small vaults behave as before.
+ */
+function seedNodesForLayout(
+  nodes: SimNode[],
+  width: number,
+  height: number
+): {
+  clusterTarget: Map<string, { x: number; y: number }>;
+  useClusterForces: boolean;
+} {
+  const cx = width / 2;
+  const cy = height / 2;
+  const keys = [...new Set(nodes.map((n) => clusterKey(n)))].sort((a, b) => a.localeCompare(b));
+  const useClusterForces = keys.length >= 2 && keys.length <= 48;
+
+  const clusterTarget = new Map<string, { x: number; y: number }>();
+  const k = keys.length;
+  const ringR = Math.min(width, height) * (k > 14 ? 0.38 : 0.32);
+
+  keys.forEach((key, i) => {
+    const angle = (i / k) * Math.PI * 2 - Math.PI / 2;
+    clusterTarget.set(key, {
+      x: cx + Math.cos(angle) * ringR,
+      y: cy + Math.sin(angle) * ringR
+    });
+  });
+
+  const spread = Math.min(width, height) * 0.48;
+
+  if (!useClusterForces) {
+    nodes.forEach((node, index) => {
+      const t = index / Math.max(nodes.length, 1);
+      const angle = t * Math.PI * 2 * 11;
+      const r = 16 + spread * Math.sqrt(t);
+      node.x = cx + Math.cos(angle) * r;
+      node.y = cy + Math.sin(angle) * r;
+    });
+    return { clusterTarget, useClusterForces: false };
+  }
+
+  const jitter = Math.min(width, height) * 0.052;
+  nodes.forEach((node, index) => {
+    const key = clusterKey(node);
+    const target = clusterTarget.get(key) ?? { x: cx, y: cy };
+    const phase = (index * 12.9898) % (Math.PI * 2);
+    const jr = jitter * (0.32 + (index % 7) * 0.1);
+    node.x = target.x + Math.cos(phase) * jr;
+    node.y = target.y + Math.sin(phase) * jr;
+  });
+
+  return { clusterTarget, useClusterForces: true };
+}
 
 export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverNode }: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -29,22 +113,11 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
   const focusedNodeIdRef = useRef<string | null>(focusedNodeId);
   const refreshVisualStateRef = useRef<(() => void) | null>(null);
   const focusNodeInViewRef = useRef<((nodeId: string | null) => void) | null>(null);
+  const zoomScaleRef = useRef(1);
 
   onSelectNodeRef.current = onSelectNode;
   onHoverNodeRef.current = onHoverNode;
   focusedNodeIdRef.current = focusedNodeId;
-
-  function getNodeFill(node: SimNode): string {
-    return node.isPlaceholder
-      ? "color-mix(in srgb, var(--trellis-node) 28%, var(--trellis-surface-2))"
-      : "var(--trellis-node)";
-  }
-
-  function getNodeStroke(node: SimNode): string {
-    return node.isPlaceholder
-      ? "color-mix(in srgb, var(--trellis-accent) 50%, var(--trellis-surface-2))"
-      : "var(--trellis-surface-2)";
-  }
 
   function getLinkNodeId(node: string | number | SimNode): string {
     if (typeof node === "string") {
@@ -67,6 +140,12 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
     const svg = d3.select(svgElement);
     const width = svgRef.current.clientWidth || 960;
     const height = svgRef.current.clientHeight || 640;
+
+    /** Map pointer to graph coordinates (matches node x/y under svg zoom). */
+    function graphPointerXY(event: MouseEvent): [number, number] {
+      return d3.zoomTransform(svgElement).invert(d3.pointer(event, svgElement));
+    }
+
     svg.selectAll("*").remove();
 
     if (graph.nodes.length === 0) {
@@ -92,48 +171,139 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
       return;
     }
 
+    const nodeCount = graph.nodes.length;
+    const largeGraph = nodeCount > 140;
     const nodes: SimNode[] = graph.nodes.map((node) => ({ ...node }));
-    const links: SimLink[] = graph.edges.map((edge) => ({ ...edge }));
-    const clusterKeys = [...new Set(nodes.map((node) => node.cluster || "untagged"))];
-    const clusterCenters = new Map<string, { x: number; y: number }>();
-    const ringRadius = Math.min(width, height) * 0.6;
 
-    clusterKeys.forEach((clusterKey, index) => {
-      const angle = (Math.PI * 2 * index) / Math.max(clusterKeys.length, 1);
-      clusterCenters.set(clusterKey, {
-        x: width / 2 + Math.cos(angle) * ringRadius,
-        y: height / 2 + Math.sin(angle) * ringRadius
-      });
-    });
+    const outboundById = new Map<string, number>();
+    for (const edge of graph.edges) {
+      outboundById.set(edge.source, (outboundById.get(edge.source) ?? 0) + 1);
+    }
 
-    nodes.forEach((node, index) => {
-      const center = clusterCenters.get(node.cluster || "untagged") ?? {
-        x: width / 2,
-        y: height / 2
-      };
+    const realNodes = nodes.filter((n) => !n.isPlaceholder);
 
-      if (typeof node.x !== "number" || typeof node.y !== "number") {
-        const spread = 60 + (index % 7) * 20;
-        const angle = ((index % 17) / 17) * Math.PI * 2;
-        node.x = center.x + Math.cos(angle) * spread;
-        node.y = center.y + Math.sin(angle) * spread;
+    function totalDegree(n: SimNode): number {
+      return (n.inboundCount ?? 0) + (outboundById.get(n.id) ?? 0);
+    }
+
+    const activities = realNodes.map((n) => totalDegree(n));
+    /** One shade step per distinct connection total (in+out), evenly spaced — not just min vs max. */
+    const distinctDegrees = [...new Set(activities)].sort((a, b) => a - b);
+
+    /**
+     * 0–1: which step this node sits on among distinct degree values in this graph.
+     * Stays within the warm accent family; combined with a narrow mix range for subtle per-step shades.
+     */
+    function connectionHighlight(node: SimNode): number {
+      if (node.isPlaceholder) {
+        return 0;
       }
+      const a = totalDegree(node);
+      if (distinctDegrees.length <= 1) {
+        return 0.5;
+      }
+      const step = distinctDegrees.indexOf(a);
+      return step / (distinctDegrees.length - 1);
+    }
+
+    function getNodeFill(node: SimNode): string {
+      if (node.isPlaceholder) {
+        return "color-mix(in srgb, var(--trellis-node) 28%, var(--trellis-surface-2))";
+      }
+      const t = connectionHighlight(node);
+      /**
+       * Theme ambers only: deeper dim-forward base at low degree, much more accent-hover at high.
+       * Hover band ~5–72% so adjacent degree steps are easy to tell apart.
+       */
+      const warmBase = "color-mix(in srgb, var(--trellis-node) 22%, var(--trellis-accent-dim))";
+      return `color-mix(in srgb, var(--trellis-accent-hover) ${5 + 67 * t}%, ${warmBase})`;
+    }
+
+    function getNodeStroke(node: SimNode): string {
+      if (node.isPlaceholder) {
+        return "color-mix(in srgb, var(--trellis-accent) 50%, var(--trellis-surface-2))";
+      }
+      const t = connectionHighlight(node);
+      /** Match fill: dim-heavy rings for low degree, brighter node-forward rings for high. */
+      return `color-mix(in srgb, var(--trellis-node) ${4 + 62 * t}%, var(--trellis-accent-dim))`;
+    }
+
+    const { clusterTarget, useClusterForces } = seedNodesForLayout(nodes, width, height);
+
+    const clusterById = new Map(nodes.map((n) => [n.id, clusterKey(n)]));
+    const links: SimLink[] = graph.edges.map((edge) => {
+      let association = defaultAssociation(edge);
+      const ca = clusterById.get(edge.source);
+      const cb = clusterById.get(edge.target);
+      if (ca !== undefined && cb !== undefined && ca !== cb) {
+        /** Weaker association stretches cross-cluster edges so communities stay visually distinct. */
+        association = Math.max(0.06, association * 0.58);
+      }
+      return { ...edge, association };
     });
+
+    const chargeStrength = -Math.min(460, 48 + Math.sqrt(nodeCount) * (useClusterForces ? 17 : 15));
+    /** With cluster forces, keep global center very soft so groups stay separated on the ring. */
+    const centerStrength = useClusterForces
+      ? largeGraph
+        ? 0.006
+        : 0.022
+      : largeGraph
+        ? 0.018
+        : 0.06;
+
+    const clusterPull = useClusterForces ? (largeGraph ? 0.13 : 0.17) : 0;
+
+    const simulation = d3.forceSimulation(nodes).force(
+      "charge",
+      d3.forceManyBody().strength(chargeStrength)
+    );
+
+    if (useClusterForces) {
+      simulation
+        .force(
+          "clusterX",
+          d3
+            .forceX<SimNode>((d) => clusterTarget.get(clusterKey(d))?.x ?? width / 2)
+            .strength(clusterPull)
+        )
+        .force(
+          "clusterY",
+          d3
+            .forceY<SimNode>((d) => clusterTarget.get(clusterKey(d))?.y ?? height / 2)
+            .strength(clusterPull)
+        );
+    }
+
+    simulation
+      .force("center", d3.forceCenter(width / 2, height / 2).strength(centerStrength))
+      .force(
+        "link",
+        d3
+          .forceLink<SimNode, SimLink>(links)
+          .id((item) => item.id)
+          .distance((item) => linkDistance(item.association ?? 0.35))
+          .strength((item) => linkStrength(item.association ?? 0.35))
+      )
+      .force(
+        "collision",
+        d3.forceCollide<SimNode>().radius((item) => item.size + (largeGraph ? 18 : 26))
+      )
+      .alphaDecay(largeGraph ? 0.28 : 0.06)
+      .alphaMin(0.001)
+      .velocityDecay(largeGraph ? 0.42 : 0.32);
+
+    let coldTicks = 0;
+    const maxColdTicks = largeGraph ? (useClusterForces ? 620 : 520) : 240;
+    while (simulation.alpha() > (largeGraph ? 0.035 : 0.02) && coldTicks < maxColdTicks) {
+      simulation.tick();
+      coldTicks += 1;
+    }
+    simulation.stop();
 
     const container = svg.append("g");
-    const zoom = d3
-      .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.5, 2.2])
-      .on("zoom", (event) => {
-        container.attr("transform", event.transform.toString());
-      });
 
-    svg.call(zoom);
-    svg.on("dblclick", () => {
-      svg.transition().duration(160).call(zoom.transform, d3.zoomIdentity);
-    });
-
-    const link = container
+    const linkSelection = container
       .append("g")
       .selectAll<SVGLineElement, SimLink>("line")
       .data(links)
@@ -143,7 +313,6 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
       .attr("stroke-width", 1)
       .style("transition", "stroke 0.15s ease, stroke-opacity 0.15s ease, stroke-width 0.15s ease");
 
-    let simulation: d3.Simulation<SimNode, SimLink>;
     /** True after pointer moved during drag; pure clicks do not run the drag handler. */
     let didDrag = false;
     let hoveredNodeId: string | null = null;
@@ -172,8 +341,19 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
       return hoveredNodeId === item.id;
     }
 
+    function tickPositions(): void {
+      linkSelection
+        .attr("x1", (item) => (item.source as SimNode).x ?? 0)
+        .attr("y1", (item) => (item.source as SimNode).y ?? 0)
+        .attr("x2", (item) => (item.target as SimNode).x ?? 0)
+        .attr("y2", (item) => (item.target as SimNode).y ?? 0);
+
+      nodeSelection.attr("cx", (item) => item.x ?? 0).attr("cy", (item) => item.y ?? 0);
+      labelSelection.attr("x", (item) => item.x ?? 0).attr("y", (item) => item.y ?? 0);
+    }
+
     function refreshVisualState(): void {
-      link
+      linkSelection
         .attr("stroke", (item) =>
           isConnectedToActiveNode(item) ? "var(--trellis-accent)" : "var(--trellis-edge)"
         )
@@ -186,7 +366,7 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
         })
         .attr("stroke-width", (item) => (isConnectedToActiveNode(item) ? 2.25 : 1));
 
-      node
+      nodeSelection
         .attr("fill", (item) =>
           isHoveredNode(item) || isFocusedNode(item) ? "var(--trellis-accent)" : getNodeFill(item)
         )
@@ -202,11 +382,11 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
         });
 
       if (getActiveNodeId() != null) {
-        link.filter(isConnectedToActiveNode).raise();
+        linkSelection.filter(isConnectedToActiveNode).raise();
       }
 
-      node.filter((item) => isHoveredNode(item) || isFocusedNode(item)).raise();
-      label.filter((item) => isHoveredNode(item) || isFocusedNode(item)).raise();
+      nodeSelection.filter((item) => isHoveredNode(item) || isFocusedNode(item)).raise();
+      labelSelection.filter((item) => isHoveredNode(item) || isFocusedNode(item)).raise();
     }
 
     function focusNodeInView(nodeId: string | null): void {
@@ -231,12 +411,14 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
       svg.transition().duration(220).call(zoom.transform, nextTransform);
     }
 
-    const node = container
+    const nodeSelection = container
       .append("g")
       .selectAll<SVGCircleElement, SimNode>("circle")
       .data(nodes)
       .join("circle")
       .attr("r", (item) => item.size)
+      .attr("cx", (item) => item.x ?? 0)
+      .attr("cy", (item) => item.y ?? 0)
       .attr("fill", (item) => getNodeFill(item))
       .attr("stroke", (item) => getNodeStroke(item))
       .attr("stroke-width", 1.5)
@@ -245,29 +427,27 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
       .call(
         d3
           .drag<SVGCircleElement, SimNode>()
-          .on("start", (event, item) => {
+          .on("start", () => {
             didDrag = false;
-            if (!event.active) {
-              simulation.alphaTarget(0.2).restart();
-            }
-            item.fx = item.x;
-            item.fy = item.y;
           })
-          .on("drag", (_event, item) => {
+          .on("drag", (event, item) => {
             didDrag = true;
-            item.fx = _event.x;
-            item.fy = _event.y;
+            const source = event.sourceEvent as MouseEvent | undefined;
+            const [x, y] = graphPointerXY(source ?? (event as unknown as MouseEvent));
+            item.x = x;
+            item.y = y;
+            tickPositions();
           })
           .on("end", (event, item) => {
-            if (!event.active) {
-              simulation.alphaTarget(0);
-            }
-            item.fx = event.x;
-            item.fy = event.y;
+            const source = event.sourceEvent as MouseEvent | undefined;
+            const [x, y] = graphPointerXY(source ?? (event as unknown as MouseEvent));
+            item.x = x;
+            item.y = y;
+            tickPositions();
           })
       );
 
-    const label = container
+    const labelSelection = container
       .append("g")
       .selectAll<SVGTextElement, SimNode>("text")
       .data(nodes)
@@ -277,63 +457,45 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
       .attr("font-size", 11)
       .attr("text-anchor", "middle")
       .attr("dy", (item) => item.size + 14)
-      .style("pointer-events", "none");
+      .style("pointer-events", "none")
+      .style("opacity", zoomScaleRef.current >= LABEL_ZOOM_THRESHOLD ? 1 : 0);
 
-    simulation = d3
-      .forceSimulation(nodes)
-      .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("charge", d3.forceManyBody().strength(-165))
-      .force(
-        "link",
-        d3
-          .forceLink<SimNode, SimLink>(links)
-          .id((item) => item.id)
-          .distance((item) => {
-            const source = item.source as SimNode;
-            const target = item.target as SimNode;
-            return source.cluster && source.cluster === target.cluster ? 118 : 188;
-          })
-          .strength((item) => {
-            const source = item.source as SimNode;
-            const target = item.target as SimNode;
-            return source.cluster && source.cluster === target.cluster ? 0.2 : 0.08;
-          })
-      )
-      .force(
-        "cluster-x",
-        d3
-          .forceX<SimNode>((item) => clusterCenters.get(item.cluster || "untagged")?.x ?? width / 2)
-          .strength((item) => (item.fx == null ? 0.11 : 0))
-      )
-      .force(
-        "cluster-y",
-        d3
-          .forceY<SimNode>((item) => clusterCenters.get(item.cluster || "untagged")?.y ?? height / 2)
-          .strength((item) => (item.fy == null ? 0.12 : 0))
-      )
-      .force("collision", d3.forceCollide<SimNode>().radius((item) => item.size + 26))
-      .alphaDecay(0.05)
-      .velocityDecay(0.32)
-      .on("tick", () => {
-        link
-          .attr("x1", (item) => (item.source as SimNode).x ?? 0)
-          .attr("y1", (item) => (item.source as SimNode).y ?? 0)
-          .attr("x2", (item) => (item.target as SimNode).x ?? 0)
-          .attr("y2", (item) => (item.target as SimNode).y ?? 0);
-
-        node.attr("cx", (item) => item.x ?? 0).attr("cy", (item) => item.y ?? 0);
-        label.attr("x", (item) => item.x ?? 0).attr("y", (item) => item.y ?? 0);
+    const zoom = d3
+      .zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.03, 5])
+      .on("zoom", (event) => {
+        container.attr("transform", event.transform.toString());
+        const k = event.transform.k;
+        zoomScaleRef.current = k;
+        labelSelection.style("opacity", k >= LABEL_ZOOM_THRESHOLD ? 1 : 0);
       });
 
-    refreshVisualStateRef.current = refreshVisualState;
-    focusNodeInViewRef.current = focusNodeInView;
-    refreshVisualState();
+    svg.call(zoom);
+    svg.on("dblclick", (event) => {
+      event.preventDefault();
+      svg.transition().duration(180).call(zoom.transform, d3.zoomIdentity);
+      zoomScaleRef.current = 1;
+      labelSelection.style("opacity", 1);
+    });
 
-    if (focusedNodeIdRef.current != null) {
-      focusNodeInView(focusedNodeIdRef.current);
+    let polishTicks = 0;
+    const maxPolishTicks = largeGraph ? 22 : 48;
+
+    function polishTick(): void {
+      tickPositions();
+      polishTicks += 1;
+      if (polishTicks >= maxPolishTicks || simulation.alpha() < 0.006) {
+        simulation.stop();
+        simulation.on("tick", null);
+      }
     }
 
-    node
+    simulation.on("tick", polishTick);
+    simulation.alpha(largeGraph ? 0.11 : 0.24).restart();
+
+    svg.attr("shape-rendering", largeGraph ? "optimizeSpeed" : "auto");
+
+    nodeSelection
       .on("mouseenter", function (event: MouseEvent, item: SimNode) {
         hoveredNodeId = item.id;
         refreshVisualState();
@@ -357,11 +519,8 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
 
         onHoverNodeRef.current(null);
       })
-      .on("dblclick", (event: MouseEvent, item: SimNode) => {
+      .on("dblclick", (event: MouseEvent) => {
         event.stopPropagation();
-        item.fx = null;
-        item.fy = null;
-        simulation.alpha(0.2).restart();
       })
       .on("click", (_event: MouseEvent, item: SimNode) => {
         if (didDrag) {
@@ -370,8 +529,17 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
         onSelectNodeRef.current(item.slug);
       });
 
+    refreshVisualStateRef.current = refreshVisualState;
+    focusNodeInViewRef.current = focusNodeInView;
+    refreshVisualState();
+
+    if (focusedNodeIdRef.current != null) {
+      focusNodeInView(focusedNodeIdRef.current);
+    }
+
     return () => {
       simulation.stop();
+      simulation.on("tick", null);
       refreshVisualStateRef.current = null;
       focusNodeInViewRef.current = null;
       onHoverNodeRef.current(null);

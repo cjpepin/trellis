@@ -30,6 +30,7 @@ interface StreamChatInput {
   sessionId: string;
   messages: Array<Pick<MessageRecord, "role" | "content">>;
   references?: ChatNoteReference[];
+  previewWorkspace?: boolean;
   onToken: (token: string) => void;
   onStatus: (message: string) => void | Promise<void>;
   onTitle: (title: string) => void | Promise<void>;
@@ -115,6 +116,7 @@ export async function streamChat(input: StreamChatInput): Promise<void> {
     sessionId: input.sessionId,
     messages: input.messages,
     references: input.references ?? [],
+    ...(input.previewWorkspace ? { previewWorkspace: true } : {}),
     onToken: input.onToken,
     onStatus: input.onStatus,
     onTitle: input.onTitle

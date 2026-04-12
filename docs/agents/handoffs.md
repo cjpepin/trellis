@@ -9,6 +9,10 @@
 
 ## Constraints
 
+## Provider and platform notes (OpenAI / Anthropic, IPC neutrality)
+
+Document when this work assumes a single vendor API, BYOK-only behavior, or a gap versus the other chat provider.
+
 ## Affected areas
 
 ## Acceptance criteria

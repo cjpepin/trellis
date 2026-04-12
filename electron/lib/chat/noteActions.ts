@@ -16,6 +16,7 @@ import {
   resolveVault
 } from "../../ipc/vault";
 import { slugifyExtractionTitle } from "../../../shared/extraction/wikiLinks";
+import { stripAssistantTemplateDraftMarkdown } from "../../../shared/chat/templateDraftCleanup";
 
 const templateTag = "template";
 
@@ -287,9 +288,10 @@ async function proposeTemplateSave(input: {
     return null;
   }
 
+  const cleanedDraft = stripAssistantTemplateDraftMarkdown(input.draftAssistant.content);
   const rawTitle =
     inferQuotedTitle(input.latestUser.content) ??
-    titleFromAssistantMarkdown(input.draftAssistant.content) ??
+    titleFromAssistantMarkdown(cleanedDraft) ??
     "Reusable Template";
   const targetTitle = normalizeTemplateTitle(rawTitle);
   const targetSlug = slugifyNoteTitle(targetTitle);
@@ -297,7 +299,7 @@ async function proposeTemplateSave(input: {
     input.vault,
     input.notes.find((note) => note.slug === targetSlug)
   );
-  const afterMarkdown = summarizeForBody(input.draftAssistant.content);
+  const afterMarkdown = summarizeForBody(cleanedDraft);
 
   return buildAction({
     kind: existing ? "update_template" : "create_template",
@@ -427,7 +429,10 @@ export async function proposeChatNoteActions(
     notes
   });
 
-  if (templateSave && templateSave.kind === "create_template") {
+  if (
+    templateSave &&
+    (templateSave.kind === "create_template" || templateSave.kind === "update_template")
+  ) {
     return {
       actions: [templateSave],
       clarification: null

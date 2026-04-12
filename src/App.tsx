@@ -17,6 +17,7 @@ import { Toast } from "@/components/shared/Toast";
 import { getProfileSnapshot, hydrateStoredSession, persistSession } from "@/lib/auth";
 import { applyTheme } from "@/lib/settings";
 import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
+import { parallelChatLimitMessage } from "@/lib/chatRunState";
 import {
   readWorkspaceLocalStorage,
   setActiveWorkspaceId,
@@ -265,6 +266,7 @@ export default function App() {
   const setError = useAuthStore((state) => state.setError);
   const setCommandPaletteOpen = useUiStore((state) => state.setCommandPaletteOpen);
   const pushToast = useUiStore((state) => state.pushToast);
+  const runningChatCount = useChatStore((state) => Object.keys(state.chatRunsBySession).length);
 
   const loadVaultSnapshot = useCallback(async (vaultId?: string): Promise<void> => {
     const snapshot = await window.trellis.vault.listIndex(vaultId);
@@ -345,7 +347,8 @@ export default function App() {
           isAdmin: false,
           usage: {
             messagesUsed: 0,
-            messageLimit: 50,
+            messageLimit: 8,
+            trialMessageWindowResetsAt: null,
             ingestsUsed: 0,
             ingestLimit: 5
           }
@@ -399,6 +402,14 @@ export default function App() {
 
   const handleWorkspaceSwitch = useCallback(
     async (workspaceId: AppWorkspaceId, options?: { completeSelection?: boolean }) => {
+      if (runningChatCount > 0) {
+        pushToast({
+          title: `Wait for running chats to finish before switching workspaces. ${parallelChatLimitMessage}`,
+          tone: "warning"
+        });
+        return;
+      }
+
       setIsBootstrapping(true);
 
       try {
@@ -417,10 +428,18 @@ export default function App() {
         setIsBootstrapping(false);
       }
     },
-    [applyBootstrapPayload, pushToast, refreshAuthForWorkspace]
+    [applyBootstrapPayload, pushToast, refreshAuthForWorkspace, runningChatCount]
   );
 
   const handleResetPreview = useCallback(async () => {
+    if (runningChatCount > 0) {
+      pushToast({
+        title: `Wait for running chats to finish before resetting the preview workspace. ${parallelChatLimitMessage}`,
+        tone: "warning"
+      });
+      return;
+    }
+
     setIsBootstrapping(true);
 
     try {
@@ -435,7 +454,7 @@ export default function App() {
     } finally {
       setIsBootstrapping(false);
     }
-  }, [applyBootstrapPayload, pushToast, refreshAuthForWorkspace]);
+  }, [applyBootstrapPayload, pushToast, refreshAuthForWorkspace, runningChatCount]);
 
   useEffect(() => {
     let cancelled = false;

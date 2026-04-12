@@ -14,6 +14,7 @@
     "rebuild:native": "electron-builder install-app-deps",
     "reset": "node scripts/reset.mjs",
     "preview:seed:generate": "node scripts/generate-preview-seed.mjs",
+    "preview:seed:generate:heavy": "node scripts/generate-preview-seed.mjs heavy",
     "test": "npm run check && npm run test:node",
     "test:node": "node scripts/run-node-tests.mjs",
     "test:config": "node scripts/run-node-tests.mjs tests/node/extraction/config.test.cjs",

@@ -8,6 +8,7 @@ import {
   type WorkspaceInfo,
   type ChatAttachment,
   type ChatMediaArtifact,
+  type ChatModel,
   type ChatNoteActionProposal,
   type MessageRecord,
   type QueueSessionExtractionResult
@@ -24,7 +25,13 @@ import {
   type PendingChatAttachment,
   type PendingImageAttachment
 } from "@/lib/chatAttachments";
-import { useStream } from "@/hooks/useStream";
+import { useChatScrollFollow } from "@/hooks/useChatScrollFollow";
+import { getChatStreamToastCopy, useStream } from "@/hooks/useStream";
+import {
+  maxParallelChatRuns,
+  parallelChatLimitMessage,
+  type ChatRunAttention
+} from "@/lib/chatRunState";
 import {
   getActiveVault,
   getVaultById,
@@ -35,8 +42,13 @@ import { useChatStore } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
 import { notesRoutePath } from "@/lib/noteRoutes";
 import { cn } from "@/lib/utils";
-import { defaultNewTemplateMarkdown, templateTag } from "@/lib/chatTemplates";
+import {
+  defaultNewTemplateMarkdown,
+  stripAssistantTemplateDraftMarkdown,
+  templateTag
+} from "@/lib/chatTemplates";
 import { useWikiStore } from "@/store/wikiStore";
+import { PcmStreamPlayback } from "@/lib/pcmStreamPlayback";
 
 interface Props {
   settings: AppSettings;
@@ -60,6 +72,7 @@ export function Chat({
   const [pendingImageAttachments, setPendingImageAttachments] = useState<PendingImageAttachment[]>([]);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [readAloudLoadingMessageId, setReadAloudLoadingMessageId] = useState<string | null>(null);
+  const readAloudPlaybackRef = useRef<PcmStreamPlayback | null>(null);
   const [busyNoteActionId, setBusyNoteActionId] = useState<string | null>(null);
   /** True while queuing manual save or until that extraction job finishes. */
   const [manualNoteCaptureActive, setManualNoteCaptureActive] = useState(false);
@@ -82,8 +95,9 @@ export function Chat({
   const setSessionMessages = useChatStore((state) => state.setSessionMessages);
   const activeModel = useChatStore((state) => state.activeModel);
   const setActiveModel = useChatStore((state) => state.setActiveModel);
-  const isStreaming = useChatStore((state) => state.isStreaming);
-  const awaitingFirstToken = useChatStore((state) => state.awaitingFirstToken);
+  const chatRunsBySession = useChatStore((state) => state.chatRunsBySession);
+  const startChatRun = useChatStore((state) => state.startChatRun);
+  const finishChatRun = useChatStore((state) => state.finishChatRun);
   const upsertSession = useChatStore((state) => state.upsertSession);
   const messageMetaById = useChatStore((state) => state.messageMetaById);
   const replaceSessionMessages = useChatStore((state) => state.replaceSessionMessages);
@@ -95,9 +109,11 @@ export function Chat({
     accessToken,
     model: activeModel,
     privacyMode: settings.chat.privacyMode,
-    subscriptionTier
+    subscriptionTier,
+    previewWorkspace: workspace.isPreview
   });
   const previousSessionId = useRef<string | null>(activeSessionId);
+  const chatScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const noteActionDraftDbTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const activeVault = getActiveVault(settings);
   const isPreviewWorkspace = workspace.isPreview;
@@ -111,6 +127,25 @@ export function Chat({
     () => (activeSessionId ? messagesBySession[activeSessionId] ?? [] : []),
     [activeSessionId, messagesBySession]
   );
+  const activeSessionChatRun = activeSessionId ? chatRunsBySession[activeSessionId] ?? null : null;
+  const activeSessionRunning = Boolean(activeSessionChatRun);
+  const awaitingFirstToken = Boolean(activeSessionChatRun?.awaitingFirstToken);
+  const runningChatCount = Object.keys(chatRunsBySession).length;
+  const parallelChatLimitReached = runningChatCount >= maxParallelChatRuns;
+  const composerBusyForLimit = parallelChatLimitReached && !activeSessionRunning;
+  const composerBusyReason = composerBusyForLimit ? parallelChatLimitMessage : undefined;
+  const newChatDisabled = parallelChatLimitReached;
+  const chatScrollContentSignature = useMemo(() => {
+    const lastMessage = currentMessages.at(-1);
+
+    return `${lastMessage?.id ?? "none"}:${lastMessage?.content.length ?? 0}:${awaitingFirstToken ? "1" : "0"}`;
+  }, [currentMessages, awaitingFirstToken]);
+  const { onScroll: onChatScrollContainerScroll } = useChatScrollFollow({
+    scrollRef: chatScrollContainerRef,
+    contentSignature: chatScrollContentSignature,
+    followResponsesEnabled: settings.chat.scrollWithResponse ?? true,
+    sessionKey: activeSessionId
+  });
   const editingMessage = useMemo(
     () => currentMessages.find((message) => message.id === editingMessageId) ?? null,
     [currentMessages, editingMessageId]
@@ -141,14 +176,17 @@ export function Chat({
     setPendingImageAttachments([]);
   }, [activeSessionId]);
 
-  const previewModelAccess = useMemo(
-    () => ({ previewWorkspace: workspace.isPreview && isAdmin }),
+  const chatModelAccessOptions = useMemo(
+    () => ({
+      previewWorkspace: workspace.isPreview && isAdmin,
+      isAdmin
+    }),
     [isAdmin, workspace.isPreview]
   );
 
   useEffect(() => {
     if (
-      canUseChatModel(activeModel, subscriptionTier, providerKeys.statuses, previewModelAccess)
+      canUseChatModel(activeModel, subscriptionTier, providerKeys.statuses, chatModelAccessOptions)
     ) {
       return;
     }
@@ -156,7 +194,7 @@ export function Chat({
     const fallbackModel = getFirstAccessibleChatModel(
       subscriptionTier,
       providerKeys.statuses,
-      previewModelAccess
+      chatModelAccessOptions
     );
 
     if (fallbackModel !== activeModel) {
@@ -164,7 +202,7 @@ export function Chat({
     }
   }, [
     activeModel,
-    previewModelAccess,
+    chatModelAccessOptions,
     providerKeys.statuses,
     setActiveModel,
     subscriptionTier
@@ -234,8 +272,12 @@ export function Chat({
   );
 
   const canSaveChatToNote = useMemo(
-    () => Boolean(activeSessionId) && currentMessages.length >= 2 && !chatDisabled,
-    [activeSessionId, chatDisabled, currentMessages.length]
+    () =>
+      Boolean(activeSessionId) &&
+      currentMessages.length >= 2 &&
+      !chatDisabled &&
+      !activeSessionRunning,
+    [activeSessionId, activeSessionRunning, chatDisabled, currentMessages.length]
   );
 
   const handleSaveChatToNote = useCallback(async () => {
@@ -370,7 +412,11 @@ export function Chat({
   }, [activeSessionId, removeToast]);
 
   useEffect(() => {
-    if (previousSessionId.current && previousSessionId.current !== activeSessionId) {
+    if (
+      previousSessionId.current &&
+      previousSessionId.current !== activeSessionId &&
+      !useChatStore.getState().chatRunsBySession[previousSessionId.current]
+    ) {
       void maybeQueueSessionExtraction(previousSessionId.current, "session-switch");
     }
 
@@ -518,12 +564,23 @@ export function Chat({
   ): Promise<void> {
     let optimisticUserMessage: MessageRecord | null = null;
     let sessionId = activeSessionId;
+    let runStarted = false;
+    let finishAttention: ChatRunAttention | null = null;
+    const runModel: ChatModel = activeModel;
     const sessionVaultId = activeSession?.vaultId || activeVault.id;
 
     try {
+      if (!sessionId && useChatStore.getState().getRunningChatRunCount() >= maxParallelChatRuns) {
+        pushToast({
+          title: parallelChatLimitMessage,
+          tone: "warning"
+        });
+        return;
+      }
+
       if (!sessionId) {
         const session = await window.trellis.db.createSession({
-          model: activeModel,
+          model: runModel,
           vaultId: activeVault.id
         });
         sessionId = session.id;
@@ -538,6 +595,32 @@ export function Chat({
         attachmentPayload,
         mediaPayload
       );
+      const existingRuns = useChatStore.getState().chatRunsBySession;
+      if (existingRuns[sessionId]) {
+        pushToast({
+          title: "Wait for this chat to finish before sending another message.",
+          tone: "warning"
+        });
+        return;
+      }
+
+      if (Object.keys(existingRuns).length >= maxParallelChatRuns) {
+        pushToast({
+          title: parallelChatLimitMessage,
+          tone: "warning"
+        });
+        return;
+      }
+
+      runStarted = startChatRun({ sessionId });
+      if (!runStarted) {
+        pushToast({
+          title: parallelChatLimitMessage,
+          tone: "warning"
+        });
+        return;
+      }
+
       optimisticUserMessage = userMessage;
       replaceSessionMessages(sessionId, baseMessages);
       clearMessageMeta(userMessage.id);
@@ -560,11 +643,14 @@ export function Chat({
             }))
           });
 
-          const isTemplateCreateReview =
+          const isTemplateNoteActionReview =
             proposal.actions.length > 0 &&
-            proposal.actions.every((action) => action.kind === "create_template");
+            proposal.actions.every(
+              (action) =>
+                action.kind === "create_template" || action.kind === "update_template"
+            );
 
-          if (isTemplateCreateReview || proposal.clarification) {
+          if (isTemplateNoteActionReview || proposal.clarification) {
             const assistantMessage: MessageRecord = {
               id: crypto.randomUUID(),
               sessionId,
@@ -585,12 +671,13 @@ export function Chat({
             });
             const updatedSession = await window.trellis.db.updateSession({
               id: sessionId,
-              model: activeModel
+              model: runModel
             });
             upsertSession(updatedSession);
             setPendingAttachments([]);
             setPendingImageAttachments([]);
             queueIdleExtractionWithToast(sessionId);
+            finishAttention = "ready";
             return;
           }
         } catch (error) {
@@ -640,28 +727,48 @@ export function Chat({
           status: "failed",
           errorMessage: streamResult.failureMessage ?? "Not sent"
         });
+        finishAttention = "needs_attention";
         return;
       }
 
-      clearMessageMeta(userMessage.id);
+      if (streamResult.failureMessage) {
+        setMessageMeta(userMessage.id, {
+          status: "failed",
+          errorMessage: streamResult.failureMessage
+        });
+      } else {
+        clearMessageMeta(userMessage.id);
+      }
       const nextMessages = [...baseMessages, streamResult.assistantMessage];
       replaceSessionMessages(sessionId, nextMessages);
       if (
         settings.chat.readAloudAutoPlay &&
         streamResult.assistantMessage.content.trim().length > 0 &&
         settings.chat.privacyMode !== "local" &&
-        accessToken
+        accessToken &&
+        useChatStore.getState().activeSessionId === sessionId
       ) {
         try {
-          const spoken = await window.trellis.media.synthesizeSpeech({
-            accessToken,
-            subscriptionTier,
-            text: streamResult.assistantMessage.content.slice(0, 4096)
-          });
-          const audio = new Audio(
-            `data:${spoken.mimeType};base64,${spoken.audioBase64}`
+          const previousPlayback = readAloudPlaybackRef.current;
+          readAloudPlaybackRef.current = null;
+          if (previousPlayback) {
+            await previousPlayback.stop();
+          }
+          const playback = new PcmStreamPlayback();
+          readAloudPlaybackRef.current = playback;
+          await playback.ensureRunning();
+          const text = streamResult.assistantMessage.content.slice(0, 4096);
+          await window.trellis.media.synthesizeSpeechStream(
+            {
+              accessToken,
+              subscriptionTier,
+              text
+            },
+            (chunk) => {
+              playback.append(chunk);
+            }
           );
-          void audio.play();
+          playback.finish();
         } catch {
           // Optional: ignore auto read-aloud failures
         }
@@ -694,7 +801,7 @@ export function Chat({
       setPendingImageAttachments([]);
       const updatedSession = await window.trellis.db.updateSession({
         id: sessionId,
-        model: activeModel
+        model: runModel
       });
       upsertSession(updatedSession);
       queueIdleExtractionWithToast(sessionId);
@@ -735,17 +842,44 @@ export function Chat({
         .catch(() => {
           // Heuristic organizer failures should not block chat.
         });
+      finishAttention = streamResult.failureMessage ? "needs_attention" : "ready";
     } catch (error) {
+      finishAttention = "needs_attention";
       if (optimisticUserMessage && sessionId) {
         setMessageMeta(optimisticUserMessage.id, {
           status: "failed",
-          errorMessage: "Not sent"
+          errorMessage: error instanceof Error ? error.message : "Not sent"
         });
       }
-      pushToast({
-        title: error instanceof Error ? error.message : "Could not send that message.",
-        tone: "error"
-      });
+      if (!optimisticUserMessage || !sessionId) {
+        pushToast({
+          title: error instanceof Error ? error.message : "Could not send that message.",
+          tone: "error"
+        });
+      }
+    } finally {
+      if (runStarted && sessionId) {
+        const finishedInBackground =
+          finishAttention !== null && useChatStore.getState().activeSessionId !== sessionId;
+        finishChatRun(sessionId, finishAttention);
+
+        if (finishedInBackground) {
+          pushToast({
+            title:
+              finishAttention === "ready"
+                ? "A background chat is ready."
+                : `A background chat needs attention. ${
+                    getChatStreamToastCopy(
+                      optimisticUserMessage
+                        ? useChatStore.getState().messageMetaById[optimisticUserMessage.id]
+                            ?.errorMessage ?? ""
+                        : ""
+                    )
+                  }`.trim(),
+            tone: finishAttention === "ready" ? "success" : "warning"
+          });
+        }
+      }
     }
   }
 
@@ -760,6 +894,14 @@ export function Chat({
     }));
 
     if (!trimmed && payload.length === 0 && mediaFromImages.length === 0) {
+      return;
+    }
+
+    if (composerBusyForLimit) {
+      pushToast({
+        title: parallelChatLimitMessage,
+        tone: "warning"
+      });
       return;
     }
 
@@ -914,6 +1056,14 @@ export function Chat({
   }
 
   function handleStartNewChat(): void {
+    if (useChatStore.getState().getRunningChatRunCount() >= maxParallelChatRuns) {
+      pushToast({
+        title: parallelChatLimitMessage,
+        tone: "warning"
+      });
+      return;
+    }
+
     setEditingMessageId(null);
     setDraft("");
     setPendingAttachments([]);
@@ -1139,7 +1289,11 @@ export function Chat({
     }
 
     const vaultId = activeSession?.vaultId || activeVault.id;
-    const content = input.content.trim() || defaultNewTemplateMarkdown(title);
+    const trimmedBody = input.content.trim();
+    const cleanedBody =
+      trimmedBody.length > 0 ? stripAssistantTemplateDraftMarkdown(trimmedBody).trim() : "";
+    const content =
+      cleanedBody.length > 0 ? cleanedBody : defaultNewTemplateMarkdown(title);
 
     try {
       const result = await window.trellis.vault.writeNote({
@@ -1460,7 +1614,11 @@ export function Chat({
             : "Sign in from Settings to start chatting with Trellis and grow what you know."}
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div
+        ref={chatScrollContainerRef}
+        className="min-h-0 flex-1 overflow-y-auto"
+        onScroll={onChatScrollContainerScroll}
+      >
         <MessageList
           messages={currentMessages}
           columnClassName={chatColumnClassName}
@@ -1469,7 +1627,7 @@ export function Chat({
           notes={notes}
           messageMetaById={messageMetaById}
           awaitingFirstToken={awaitingFirstToken}
-          isStreaming={isStreaming}
+          isStreaming={activeSessionRunning}
           onEditMessage={handleEditMessage}
           onOpenNote={(slug) => {
             void openReferencedNote(slug);
@@ -1485,15 +1643,30 @@ export function Chat({
             setReadAloudLoadingMessageId(messageId);
 
             try {
-              const spoken = await window.trellis.media.synthesizeSpeech({
-                accessToken,
-                subscriptionTier,
-                text: text.slice(0, 4096)
-              });
-              const audio = new Audio(
-                `data:${spoken.mimeType};base64,${spoken.audioBase64}`
+              const previousPlayback = readAloudPlaybackRef.current;
+              readAloudPlaybackRef.current = null;
+              if (previousPlayback) {
+                await previousPlayback.stop();
+              }
+              const playback = new PcmStreamPlayback();
+              readAloudPlaybackRef.current = playback;
+              await playback.ensureRunning();
+              let firstChunk = true;
+              await window.trellis.media.synthesizeSpeechStream(
+                {
+                  accessToken,
+                  subscriptionTier,
+                  text: text.slice(0, 4096)
+                },
+                (chunk) => {
+                  if (firstChunk) {
+                    firstChunk = false;
+                    setReadAloudLoadingMessageId(null);
+                  }
+                  playback.append(chunk);
+                }
               );
-              void audio.play();
+              playback.finish();
             } catch (error) {
               pushToast({
                 title: error instanceof Error ? error.message : "Could not play audio.",
@@ -1525,7 +1698,8 @@ export function Chat({
           <div className="min-w-0 w-full flex-1 sm:min-w-0">
             <InputBar
               disabled={chatDisabled}
-              isStreaming={isStreaming}
+              isStreaming={activeSessionRunning || composerBusyForLimit}
+              busyReason={composerBusyReason}
               model={activeModel}
               subscriptionTier={subscriptionTier}
               providerKeys={providerKeys.statuses}
@@ -1587,6 +1761,7 @@ export function Chat({
               imageGenAllowed={getChatModelMediaCapabilities(activeModel).imageGeneration}
               accessToken={accessToken}
               previewWorkspace={workspace.isPreview && isAdmin}
+              isAdmin={isAdmin}
             />
           </div>
           <div className="flex w-full max-w-[200px] shrink-0 flex-col gap-2 self-end sm:w-auto">
@@ -1646,8 +1821,21 @@ export function Chat({
             ) : null}
             <button
               type="button"
-              className="w-full shrink-0 rounded-full border border-trellis-border bg-trellis-surface px-3 py-2 text-center text-sm text-trellis-text transition hover:border-trellis-accent/35 hover:text-trellis-accent"
-              onClick={handleStartNewChat}
+              disabled={newChatDisabled}
+              title={newChatDisabled ? parallelChatLimitMessage : "Start a new chat"}
+              data-testid="chat-new-chat"
+              className={cn(
+                "w-full shrink-0 rounded-full border border-trellis-border bg-trellis-surface px-3 py-2 text-center text-sm transition",
+                newChatDisabled
+                  ? "cursor-not-allowed text-trellis-faint"
+                  : "text-trellis-text hover:border-trellis-accent/35 hover:text-trellis-accent"
+              )}
+              onClick={() => {
+                if (newChatDisabled) {
+                  return;
+                }
+                handleStartNewChat();
+              }}
             >
               New chat
             </button>

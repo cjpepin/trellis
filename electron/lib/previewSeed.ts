@@ -64,12 +64,20 @@ export interface PreviewSeedManifest {
   databaseFile: string;
 }
 
+export type PreviewFixtureId = "preview" | "preview-heavy";
+
+const PREVIEW_FIXTURE_SUBDIRS: Record<PreviewFixtureId, string> = {
+  preview: "preview-seed",
+  "preview-heavy": "preview-heavy-seed"
+};
+
 interface PreviewSeedPaths {
   root: string;
   manifestPath: string;
 }
 
 interface EnsurePreviewSeedOptions {
+  fixtureId: PreviewFixtureId;
   workspaceRoot: string;
   settingsPath: string;
   databasePath: string;
@@ -78,8 +86,8 @@ interface EnsurePreviewSeedOptions {
   normalizeSettings: (rawSettings: unknown) => AppSettings;
 }
 
-function getPreviewSeedPaths(): PreviewSeedPaths {
-  const root = path.join(app.getAppPath(), "fixtures", "preview-seed");
+function getPreviewSeedPaths(fixtureId: PreviewFixtureId): PreviewSeedPaths {
+  const root = path.join(app.getAppPath(), "fixtures", PREVIEW_FIXTURE_SUBDIRS[fixtureId]);
 
   return {
     root,
@@ -87,14 +95,17 @@ function getPreviewSeedPaths(): PreviewSeedPaths {
   };
 }
 
-export function readPreviewSeedManifest(): PreviewSeedManifest {
-  const seedPaths = getPreviewSeedPaths();
+export function readPreviewSeedManifest(fixtureId: PreviewFixtureId): PreviewSeedManifest {
+  const seedPaths = getPreviewSeedPaths(fixtureId);
   const raw = JSON.parse(fs.readFileSync(seedPaths.manifestPath, "utf8"));
   return previewSeedManifestSchema.parse(raw);
 }
 
-function readPreviewSeedFixture(manifest: PreviewSeedManifest): SeedDatabaseFixture {
-  const seedPaths = getPreviewSeedPaths();
+function readPreviewSeedFixture(
+  fixtureId: PreviewFixtureId,
+  manifest: PreviewSeedManifest
+): SeedDatabaseFixture {
+  const seedPaths = getPreviewSeedPaths(fixtureId);
   const raw = JSON.parse(
     fs.readFileSync(path.join(seedPaths.root, manifest.databaseFile), "utf8")
   );
@@ -122,8 +133,12 @@ function readPreviewSeedVersion(previewStatePath: string): string | null {
   }
 }
 
-function copySeedVault(manifest: PreviewSeedManifest, workspaceRoot: string): string {
-  const seedPaths = getPreviewSeedPaths();
+function copySeedVault(
+  fixtureId: PreviewFixtureId,
+  manifest: PreviewSeedManifest,
+  workspaceRoot: string
+): string {
+  const seedPaths = getPreviewSeedPaths(fixtureId);
   const sourceVaultPath = path.join(seedPaths.root, manifest.vaultFolder);
   const targetVaultPath = path.join(workspaceRoot, manifest.vaultName);
 
@@ -133,16 +148,16 @@ function copySeedVault(manifest: PreviewSeedManifest, workspaceRoot: string): st
 }
 
 async function reseedPreviewWorkspace(options: EnsurePreviewSeedOptions): Promise<AppSettings> {
-  const manifest = readPreviewSeedManifest();
+  const manifest = readPreviewSeedManifest(options.fixtureId);
   fs.rmSync(options.workspaceRoot, { recursive: true, force: true });
   fs.mkdirSync(options.workspaceRoot, { recursive: true });
-  const vaultPath = copySeedVault(manifest, options.workspaceRoot);
+  const vaultPath = copySeedVault(options.fixtureId, manifest, options.workspaceRoot);
   const settings = options.normalizeSettings(
     options.createSettings(vaultPath, manifest.vaultName)
   );
   fs.writeFileSync(options.settingsPath, JSON.stringify(settings, null, 2), "utf8");
   await initializeDatabase(options.databasePath);
-  const fixture = readPreviewSeedFixture(manifest);
+  const fixture = readPreviewSeedFixture(options.fixtureId, manifest);
   const vaultId = settings.vaults[0]?.id ?? "preview-main-vault";
   await seedDatabase({
     sessions: fixture.sessions.map((session) => ({
@@ -162,7 +177,7 @@ async function reseedPreviewWorkspace(options: EnsurePreviewSeedOptions): Promis
 export async function ensurePreviewWorkspaceSeed(
   options: EnsurePreviewSeedOptions
 ): Promise<AppSettings> {
-  const manifest = readPreviewSeedManifest();
+  const manifest = readPreviewSeedManifest(options.fixtureId);
   const cachedVersion = readPreviewSeedVersion(options.previewStatePath);
   const expectedVaultPath = path.join(options.workspaceRoot, manifest.vaultName);
 

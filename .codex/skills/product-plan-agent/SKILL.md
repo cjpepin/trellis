@@ -36,4 +36,5 @@ Use these sections in order:
 - Do not implement code.
 - Do not skip repo exploration in favor of assumptions.
 - Call out local-first, offline, vault-safety, auth, and degraded-state implications whenever relevant.
+- Treat OpenAI and Anthropic as peer chat providers: note when a proposal assumes a single vendor for media, keys, or APIs, and spell out parity or fallback expectations.
 - Keep plans concrete enough for the senior developer agent to execute directly.

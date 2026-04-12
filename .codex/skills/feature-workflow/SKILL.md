@@ -16,7 +16,7 @@ Use this skill to orchestrate work, not to replace the role-specific skills.
 
 ## Rules
 
-- Keep the product handoff as the contract for the downstream agents.
+- Keep the product handoff as the contract for the downstream agents. Plans and implementations should respect Trellis’s OpenAI-and-Anthropic chat story; single-provider assumptions belong in the handoff with explicit scope.
 - If scope changes materially during development, route back through product planning before continuing.
 - Use `repo-refactor-agent` only as a separate hygiene pass or when the request explicitly includes cleanup/security work.
 

@@ -1,4 +1,3 @@
-import { useEffect, useMemo, useRef } from "react";
 import type { MessageRecord, NoteSummary } from "@electron/ipc/types";
 import type { MessageMeta } from "@/store/chatStore";
 import { MessageBubble } from "./MessageBubble";
@@ -48,25 +47,6 @@ export function MessageList({
   onNoteActionDraftChange,
   busyNoteActionId
 }: Props) {
-  const endRef = useRef<HTMLDivElement | null>(null);
-  const lastMessageSignature = useMemo(() => {
-    const lastMessage = messages.at(-1);
-
-    return `${lastMessage?.id ?? "none"}:${lastMessage?.content.length ?? 0}`;
-  }, [messages]);
-
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      endRef.current?.scrollIntoView({
-        block: "end"
-      });
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [awaitingFirstToken, lastMessageSignature]);
-
   if (messages.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center px-8 text-center">
@@ -106,7 +86,6 @@ export function MessageList({
           busyNoteActionId={busyNoteActionId}
         />
       ))}
-      <div ref={endRef} />
     </div>
   );
 }

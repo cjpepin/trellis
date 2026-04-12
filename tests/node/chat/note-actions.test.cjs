@@ -225,7 +225,7 @@ test("proposeChatNoteActions does not propose vault diffs for ordinary note upda
   }
 });
 
-test("proposeChatNoteActions does not propose when overwriting an existing template file", async () => {
+test("proposeChatNoteActions proposes update_template when a matching template file already exists", async () => {
   const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-update-template-"));
 
   try {
@@ -264,7 +264,10 @@ test("proposeChatNoteActions does not propose when overwriting an existing templ
     );
 
     assert.equal(result.clarification, null);
-    assert.equal(result.actions.length, 0);
+    assert.equal(result.actions.length, 1);
+    assert.equal(result.actions[0].kind, "update_template");
+    assert.equal(result.actions[0].targetSlug, "daily-reflection-template");
+    assert.match(result.actions[0].afterMarkdown, /## Mood/);
   } finally {
     fs.rmSync(vaultPath, { recursive: true, force: true });
   }

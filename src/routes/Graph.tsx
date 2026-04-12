@@ -4,6 +4,8 @@ import { useNavigate } from "react-router-dom";
 import { ForceGraph } from "@/components/graph/ForceGraph";
 import { NodeTooltip } from "@/components/graph/NodeTooltip";
 import { isPaidSubscriptionTier } from "@/lib/chatModels";
+import type { GraphData, GraphNode } from "@electron/ipc/types";
+import { isAppPreviewWorkspace } from "@electron/ipc/types";
 import { useGraph } from "@/hooks/useGraph";
 import { getActiveWorkspaceId } from "@/lib/workspace";
 import { useAuthStore } from "@/store/authStore";
@@ -11,7 +13,7 @@ import { useUiStore } from "@/store/uiStore";
 import { notesRoutePath } from "@/lib/noteRoutes";
 import { useWikiStore } from "@/store/wikiStore";
 
-function buildPreviewGraph(graph: ReturnType<typeof useGraph>["graph"]) {
+function buildPreviewGraph(graph: GraphData) {
   const previewNodes = [...graph.nodes]
     .sort((left, right) => right.inboundCount - left.inboundCount || right.size - left.size)
     .slice(0, 18);
@@ -36,10 +38,7 @@ function normalizeSearchValue(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function getSearchRank(
-  node: ReturnType<typeof useGraph>["graph"]["nodes"][number],
-  query: string
-): number {
+function getSearchRank(node: GraphNode, query: string): number {
   const title = node.title.toLowerCase();
   const tags = node.tags.map((tag) => tag.toLowerCase());
 
@@ -68,7 +67,7 @@ function getSearchRank(
 
 export function Graph() {
   const navigate = useNavigate();
-  const { mode, graph } = useGraph();
+  const graph = useGraph();
   const [tooltip, setTooltip] = useState<{ title: string; x: number; y: number } | null>(null);
   const [query, setQuery] = useState("");
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
@@ -79,7 +78,7 @@ export function Graph() {
   const replaceIndex = useWikiStore((state) => state.replaceIndex);
   const pushToast = useUiStore((state) => state.pushToast);
   const isPreviewMode =
-    getActiveWorkspaceId() !== "preview" && !isPaidSubscriptionTier(subscriptionTier);
+    !isAppPreviewWorkspace(getActiveWorkspaceId()) && !isPaidSubscriptionTier(subscriptionTier);
   const visibleGraph = useMemo(
     () => (isPreviewMode ? buildPreviewGraph(graph) : graph),
     [graph, isPreviewMode]
@@ -168,8 +167,6 @@ export function Graph() {
             <p className="mt-1 text-xs text-trellis-muted">
               {isPreviewMode
                 ? `Previewing ${visibleGraph.nodes.length} connected notes from this vault.`
-                : mode === "clustered"
-                ? "Large vault detected. Showing clusters by primary tag."
                 : "Notes become nodes. [[Links]] between notes become edges."}
             </p>
             <p className="mt-2 text-xs text-trellis-faint">

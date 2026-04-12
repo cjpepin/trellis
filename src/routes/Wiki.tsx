@@ -709,7 +709,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
           ? await window.trellis.vault.writeNote({
               title: value,
               folderPath: parentPath,
-              content: buildNoteContentFromTemplate(template),
+              content: buildNoteContentFromTemplate(template, { instanceTitle: value }),
               frontmatter: {
                 tags: template.tags.filter((tag) => tag.trim().toLowerCase() !== templateTag),
                 type: template.type,
@@ -740,7 +740,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
               const r = await window.trellis.vault.writeNote({
                 title: value,
                 folderPath: parentPath,
-                content: buildNoteContentFromTemplate(tpl),
+                content: buildNoteContentFromTemplate(tpl, { instanceTitle: value }),
                 frontmatter: {
                   tags: tpl.tags.filter((tag) => tag.trim().toLowerCase() !== templateTag),
                   type: tpl.type,

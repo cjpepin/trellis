@@ -7,6 +7,7 @@ import type {
 export interface UsageSnapshot {
   messagesUsed: number;
   messageLimit: number;
+  trialMessageWindowResetsAt: string | null;
   ingestsUsed: number;
   ingestLimit: number;
 }
@@ -42,7 +43,8 @@ interface AuthState {
 
 const defaultUsage: UsageSnapshot = {
   messagesUsed: 0,
-  messageLimit: 50,
+  messageLimit: 8,
+  trialMessageWindowResetsAt: null,
   ingestsUsed: 0,
   ingestLimit: 5
 };

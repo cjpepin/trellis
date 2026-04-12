@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import {
   defaultNewTemplateMarkdown,
   isTemplateNote,
+  templateMacroReference,
   templateTag
 } from "@/lib/chatTemplates";
 import { notesRoutePath } from "@/lib/noteRoutes";
@@ -119,6 +120,29 @@ export function Templates() {
               </code>
               . They appear when you start a note from the wiki or use a template in chat.
             </p>
+            <details className="mt-4 rounded-field border border-trellis-border bg-trellis-surface/80 px-4 py-3 text-sm text-trellis-muted">
+              <summary className="cursor-pointer select-none font-medium text-trellis-text">
+                Placeholder macros for new notes
+              </summary>
+              <p className="mt-3 text-xs leading-5 text-trellis-faint">
+                Use double curly braces in the template body. When you create a note from the template,
+                Trellis substitutes the values below (local date and time).
+              </p>
+              <ul className="mt-3 space-y-2 border-t border-trellis-border pt-3 font-mono text-[11px] leading-5 text-trellis-muted">
+                {templateMacroReference.map((row) => (
+                  <li key={row.macro}>
+                    <span className="text-trellis-accent">{row.macro}</span>
+                    {row.aliases && row.aliases.length > 0 ? (
+                      <span className="text-trellis-faint">
+                        {" "}
+                        ({row.aliases.join(", ")})
+                      </span>
+                    ) : null}
+                    <span className="block font-sans text-[11px] text-trellis-faint">{row.description}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
           </div>
           <div
             className="flex w-full flex-col gap-3 rounded-panel border border-trellis-border bg-trellis-surface p-4 sm:max-w-md lg:w-[min(100%,380px)]"

@@ -74,6 +74,8 @@ export const ipcChannels = {
   mediaPickImage: "media:pick:image",
   mediaTranscribe: "media:transcribe",
   mediaSynthesizeSpeech: "media:synthesize-speech",
+  mediaSynthesizeSpeechStream: "media:synthesize-speech-stream",
+  mediaSpeechStreamChunk: "media:speech-stream:chunk",
   mediaGenerateImage: "media:generate-image"
 } as const;
 
@@ -110,7 +112,11 @@ export type ExtractionJobStatus = "pending" | "running" | "completed" | "failed"
 export type ExtractionJobTrigger = "idle" | "session-switch" | "manual" | "startup";
 export type ExtractionDebugStatus = "queued" | "running" | "completed" | "failed" | "skipped";
 export type ExtractionDebugScope = "job" | "direct";
-export type AppWorkspaceId = "personal" | "preview";
+export type AppWorkspaceId = "personal" | "preview" | "preview-heavy";
+
+export function isAppPreviewWorkspace(workspaceId: AppWorkspaceId): boolean {
+  return workspaceId === "preview" || workspaceId === "preview-heavy";
+}
 
 const legacyChatModelMap = {
   "claude-sonnet-4": "claude-sonnet-4-20250514",
@@ -303,6 +309,8 @@ export interface GraphEdge {
   id: string;
   source: string;
   target: string;
+  /** 0–1: tag overlap and mutual links; drives link distance/strength in the graph view. */
+  association?: number;
 }
 
 export interface GraphData {
@@ -670,6 +678,11 @@ export interface ChatSettings {
   privacyMode: ChatPrivacyMode;
   /** When true, assistant replies are read aloud automatically after streaming. Default false. */
   readAloudAutoPlay?: boolean;
+  /**
+   * When true (default), the chat view scrolls with streaming replies while you stay near the bottom;
+   * scrolling up pauses following until you scroll back down.
+   */
+  scrollWithResponse?: boolean;
 }
 
 export interface AppFeatureFlags {
@@ -751,6 +764,8 @@ export interface ChatStreamRequest {
   sessionId: string;
   messages: ChatStreamPayloadMessage[];
   references?: ChatReference[];
+  /** When true, main process also treats the request as preview (redundant with workspace id). */
+  previewWorkspace?: boolean;
 }
 
 export interface ChatStreamEvent {
@@ -766,6 +781,8 @@ export interface ChatStreamInput {
   sessionId: string;
   messages: ChatStreamPayloadMessage[];
   references?: ChatReference[];
+  /** Seeded preview workspace: must not consume trial message allowance. */
+  previewWorkspace?: boolean;
   onToken: (token: string) => void;
   onStatus: (message: string) => void | Promise<void>;
   onTitle: (title: string) => void | Promise<void>;
@@ -904,6 +921,14 @@ export interface MediaBridge {
   pickImage: () => Promise<MediaPickImageResult | null>;
   transcribe: (input: MediaTranscribeInput) => Promise<MediaTranscribeResult>;
   synthesizeSpeech: (input: MediaSpeechInput) => Promise<MediaSpeechResult>;
+  /**
+   * Streams PCM chunks from the edge TTS proxy (24 kHz mono s16le). Same input billing as
+   * `synthesizeSpeech`; resolves when the stream completes.
+   */
+  synthesizeSpeechStream: (
+    input: MediaSpeechInput,
+    onChunk: (chunk: Uint8Array) => void
+  ) => Promise<void>;
   generateImage: (input: MediaImageGenerateInput) => Promise<MediaImageGenerateResult>;
 }
 

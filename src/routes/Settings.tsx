@@ -922,6 +922,23 @@ export function Settings({
     }
   }
 
+  async function updateScrollWithResponse(enabled: boolean): Promise<void> {
+    try {
+      await onUpdateSettings({
+        ...settings,
+        chat: {
+          ...settings.chat,
+          scrollWithResponse: enabled
+        }
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not update chat scroll setting.",
+        tone: "error"
+      });
+    }
+  }
+
   async function updatePreferredLocalModel(modelId: string | null): Promise<void> {
     try {
       await onUpdateSettings({
@@ -1328,6 +1345,23 @@ export function Settings({
                 <span className="block text-sm text-trellis-text">Read assistant replies aloud automatically</span>
                 <span className="mt-0.5 block text-[11px] leading-snug text-trellis-muted">
                   Off by default. When enabled, new assistant messages are spoken after they finish streaming.
+                </span>
+              </span>
+            </label>
+            <label className="mt-4 flex cursor-pointer items-start gap-2.5 text-left">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-trellis-border text-trellis-accent"
+                checked={settings.chat.scrollWithResponse ?? true}
+                onChange={(event) => {
+                  void updateScrollWithResponse(event.target.checked);
+                }}
+              />
+              <span>
+                <span className="block text-sm text-trellis-text">Scroll with assistant replies</span>
+                <span className="mt-0.5 block text-[11px] leading-snug text-trellis-muted">
+                  On by default. While you stay near the bottom of the thread, the view follows the stream.
+                  Scroll up to read without being pulled down; scroll back to the bottom to resume following.
                 </span>
               </span>
             </label>
@@ -2098,7 +2132,7 @@ export function Settings({
           <p className="text-lg text-trellis-text">Plan & usage</p>
           <p className="mt-1 text-[11px] leading-snug text-trellis-muted">
             {workspace.isPreview
-              ? "Preview uses your live account limits against seeded local data."
+              ? "Preview uses seeded local data. Chat and related cloud use from this workspace do not count toward your message or ingest limits. Tier and status reflect your account."
               : authState.subscriptionTier === "byok"
                 ? "BYOK chat runs on your own provider account while Trellis still manages the app, local history, and billing tier."
                 : "Your subscription tier and limits. View plans to compare tiers or upgrade."}
@@ -2125,17 +2159,35 @@ export function Settings({
               <p className="mt-1">
                 {workspace.isPreview
                   ? authState.subscriptionTier === "byok"
-                    ? "Billed by your provider"
-                    : `${authState.usage.messagesUsed} / ${authState.usage.messageLimit}`
+                    ? "Billed by your provider (preview does not use trial message allowance)"
+                    : "Not counted in preview"
                   : authState.subscriptionTier === "byok"
                     ? "Billed by your provider"
-                    : `${authState.usage.messagesUsed} / ${authState.usage.messageLimit}`}
+                    : authState.subscriptionTier === "pro"
+                      ? "Unlimited on the Trellis hosted plan"
+                      : `${authState.usage.messagesUsed} / ${authState.usage.messageLimit} free messages per 24 hours`}
               </p>
+              {workspace.isPreview || authState.subscriptionTier !== "trial" ? null : (
+                <p className="mt-1 text-[11px] leading-snug text-trellis-muted">
+                  {authState.usage.trialMessageWindowResetsAt
+                    ? `Allowance refreshes around ${new Date(
+                        authState.usage.trialMessageWindowResetsAt
+                      ).toLocaleString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit"
+                      })}.`
+                    : "Allowance refreshes on a rolling 24-hour window."}
+                </p>
+              )}
             </div>
             <div>
               <p className="text-trellis-muted">Ingests</p>
               <p className="mt-1">
-                {`${authState.usage.ingestsUsed} / ${authState.usage.ingestLimit}`}
+                {workspace.isPreview
+                  ? "Not counted in preview"
+                  : `${authState.usage.ingestsUsed} / ${authState.usage.ingestLimit}`}
               </p>
             </div>
             <div>

@@ -568,9 +568,11 @@ export function MessageBubble({
           >
             {isPending && <span className="text-trellis-muted">Sending…</span>}
             {isFailed && (
-              <span className="flex items-center gap-1.5 text-trellis-error">
-                <TriangleAlert className="h-3.5 w-3.5" />
-                {meta?.errorMessage ?? "Not sent"}
+              <span className="flex max-w-[min(100%,24rem)] items-start gap-1.5 text-left text-trellis-error">
+                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="min-w-0 whitespace-normal leading-snug">
+                  {meta?.errorMessage ?? "Not sent"}
+                </span>
               </span>
             )}
             {canEdit && onEdit && (

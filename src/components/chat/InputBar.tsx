@@ -85,6 +85,7 @@ function ComposerIconButton({
 interface Props {
   disabled?: boolean;
   isStreaming?: boolean;
+  busyReason?: string;
   model: ChatModel;
   subscriptionTier: SubscriptionTier;
   providerKeys: ProviderKeyStatus[];
@@ -112,13 +113,16 @@ interface Props {
   speechAllowed: boolean;
   imageGenAllowed: boolean;
   accessToken: string | null;
-  /** Unlocks every catalog model in the picker (preview workspace). */
+  /** Unlocks every catalog model in the picker (preview workspace for admins). */
   previewWorkspace?: boolean;
+  /** Full catalog in the picker; matches server admin entitlements. */
+  isAdmin?: boolean;
 }
 
 export function InputBar({
   disabled = false,
   isStreaming = false,
+  busyReason,
   model,
   subscriptionTier,
   providerKeys,
@@ -146,7 +150,8 @@ export function InputBar({
   speechAllowed,
   imageGenAllowed,
   accessToken,
-  previewWorkspace = false
+  previewWorkspace = false,
+  isAdmin = false
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
@@ -172,9 +177,10 @@ export function InputBar({
   const selectedModelAccess = useMemo(
     () =>
       getChatModelAccess(model, subscriptionTier, providerKeys, {
-        previewWorkspace
+        previewWorkspace,
+        isAdmin
       }),
-    [model, previewWorkspace, providerKeys, subscriptionTier]
+    [isAdmin, model, previewWorkspace, providerKeys, subscriptionTier]
   );
 
   useEffect(() => {
@@ -799,7 +805,12 @@ export function InputBar({
           const sendHardDisabled =
             disabled || !canSend || isStreaming || !selectedModelAccess.allowed;
           const sendTitle = sendHardDisabled
-            ? "Add a message or attachment to send"
+            ? busyReason ??
+              (isStreaming
+                ? "Wait for this chat to finish before sending another message."
+                : !selectedModelAccess.allowed
+                  ? selectedModelAccess.reason ?? "Choose an available model to send."
+                  : "Add a message or attachment to send")
             : "Send message (Enter)";
 
           return (
@@ -1014,11 +1025,13 @@ export function InputBar({
               <div className="trellis-elevated absolute bottom-full right-0 z-30 mb-3 w-[340px] overflow-hidden">
                 <div className="border-b border-trellis-border px-3 py-2">
                   <p className="text-xs leading-5 text-trellis-muted">
-                    {subscriptionTier === "pro"
-                      ? "All models on this account."
-                      : subscriptionTier === "byok"
-                        ? "BYOK unlocks providers you’ve configured locally."
-                      : "Trial includes fast models; upgrade for premium."}
+                    {isAdmin
+                      ? "Admin: full catalog on this account."
+                      : subscriptionTier === "pro"
+                        ? "All models on this account."
+                        : subscriptionTier === "byok"
+                          ? "BYOK unlocks providers you’ve configured locally."
+                          : "Trial includes fast models; upgrade for premium."}
                   </p>
                 </div>
                 <div className="max-h-[360px] overflow-y-auto px-2 py-2">
@@ -1026,7 +1039,8 @@ export function InputBar({
                     {chatModelOptions.map((option) => {
                       const isSelected = option.id === model;
                       const access = getChatModelAccess(option.id, subscriptionTier, providerKeys, {
-                        previewWorkspace
+                        previewWorkspace,
+                        isAdmin
                       });
                       const isAccessible = access.allowed;
 

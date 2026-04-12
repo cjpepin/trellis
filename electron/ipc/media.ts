@@ -2,8 +2,14 @@ import { BrowserWindow, dialog, ipcMain } from "electron";
 import { z } from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AppWorkspaceId, MediaImageGenerateInput, MediaSpeechInput, MediaTranscribeInput } from "./types";
-import { ipcChannels } from "./types";
+import {
+  ipcChannels,
+  isAppPreviewWorkspace,
+  type AppWorkspaceId,
+  type MediaImageGenerateInput,
+  type MediaSpeechInput,
+  type MediaTranscribeInput
+} from "./types";
 import {
   readMediaCacheDataUrl,
   writeMediaCacheFile,
@@ -104,6 +110,10 @@ function buildMediaHeaders(
     headers["x-trellis-provider-key"] = openAiKey;
   }
 
+  if (isAppPreviewWorkspace(workspaceId)) {
+    headers["x-trellis-preview-workspace"] = "1";
+  }
+
   return headers;
 }
 
@@ -179,6 +189,44 @@ export function registerMediaIpc(options: { getWorkspaceId: () => AppWorkspaceId
     }
 
     return { text: payload.text };
+  });
+
+  ipcMain.handle(ipcChannels.mediaSynthesizeSpeechStream, async (event, input: unknown) => {
+    const parsed = mediaSpeechSchema.parse(input) as MediaSpeechInput;
+    const headers = buildMediaHeaders(parsed, options.getWorkspaceId());
+
+    const response = await fetch(`${getFunctionsBaseUrl()}/chat-media`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        action: "tts",
+        text: parsed.text,
+        stream: true
+      })
+    });
+
+    if (!response.ok) {
+      throw await readFunctionError(response, "Speech synthesis failed.");
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error("Speech synthesis returned no stream.");
+    }
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        if (value.length > 0) {
+          event.sender.send(ipcChannels.mediaSpeechStreamChunk, value);
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   });
 
   ipcMain.handle(ipcChannels.mediaSynthesizeSpeech, async (_event, input: unknown) => {

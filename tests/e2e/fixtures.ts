@@ -95,7 +95,10 @@ export async function dismissLocalNoteProcessorFirstRun(page: Page): Promise<voi
   }
 }
 
-export async function selectWorkspace(page: Page, workspaceId: "personal" | "preview"): Promise<void> {
+export async function selectWorkspace(
+  page: Page,
+  workspaceId: "personal" | "preview" | "preview-heavy"
+): Promise<void> {
   await expect(page.getByTestId("workspace-chooser")).toBeVisible();
   await page.getByTestId(`workspace-option-${workspaceId}`).click();
   await expect(page.getByTestId("app-frame")).toBeVisible();

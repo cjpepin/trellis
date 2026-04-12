@@ -28,6 +28,10 @@ export interface ExtractionExecutionStrategy {
   reason?: string;
 }
 
+interface PlanSessionExtractionOptions {
+  fullTranscriptWhenChanged?: boolean;
+}
+
 export function buildFormattedTranscript(
   messages: MessageRecord[]
 ): Array<{ role: "user" | "assistant"; content: string }> {
@@ -90,7 +94,8 @@ export function buildTranscriptDigest(
 export function planSessionExtraction(
   messages: MessageRecord[],
   latestCompletedJob: ExtractionJobSnapshot | null,
-  force = false
+  force = false,
+  options: PlanSessionExtractionOptions = {}
 ): PlannedSessionExtraction | null {
   const fullTranscript = buildFormattedTranscript(messages);
 
@@ -106,7 +111,7 @@ export function planSessionExtraction(
 
   let transcriptStartIndex = 0;
 
-  if (!force && latestCompletedJob) {
+  if (!force && latestCompletedJob && !options.fullTranscriptWhenChanged) {
     if (messages.length <= latestCompletedJob.transcriptEndIndex) {
       transcriptStartIndex = 0;
     } else {

@@ -108,6 +108,33 @@ test("planSessionExtraction reprocesses the full transcript when messages were r
   assert.equal(plan.transcriptEndIndex, 4);
 });
 
+test("planSessionExtraction can reprocess the full changed transcript for background capture", () => {
+  const messages = [
+    createMessage("1", "user", "We should focus on durable notes."),
+    createMessage("2", "assistant", "Let’s keep the note count low."),
+    createMessage("3", "user", "Also make automatic capture more decisive."),
+    createMessage("4", "assistant", "We should refresh the note instead of piling fragments at the end.")
+  ];
+  const initialPlan = planSessionExtraction(messages.slice(0, 2), null);
+
+  assert.ok(initialPlan);
+
+  const plan = planSessionExtraction(
+    messages,
+    createCompletedJob({
+      transcriptEndIndex: initialPlan.transcriptEndIndex,
+      transcriptDigest: initialPlan.transcriptDigest
+    }),
+    false,
+    { fullTranscriptWhenChanged: true }
+  );
+
+  assert.ok(plan);
+  assert.equal(plan.transcriptStartIndex, 0);
+  assert.equal(plan.transcriptEndIndex, 4);
+  assert.equal(plan.transcript.length, 4);
+});
+
 test("planSessionExtraction excludes messages covered by direct note actions", () => {
   const draft = createMessage("11111111-1111-4111-8111-111111111111", "assistant", "Template draft");
   const saveRequest = createMessage(

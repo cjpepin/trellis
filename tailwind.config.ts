@@ -46,6 +46,7 @@ const config: Config = {
       },
       animation: {
         "fade-rise": "fade-rise 160ms ease-out",
+        "toast-exit": "toast-exit 200ms ease-in forwards",
         pulseDots: "pulse-dots 1000ms infinite",
         thinkingEllipsis: "thinking-ellipsis 1.2s ease-in-out infinite"
       },
@@ -53,6 +54,10 @@ const config: Config = {
         "fade-rise": {
           "0%": { opacity: "0", transform: "translateY(4px)" },
           "100%": { opacity: "1", transform: "translateY(0)" }
+        },
+        "toast-exit": {
+          "0%": { opacity: "1", transform: "translateY(0)" },
+          "100%": { opacity: "0", transform: "translateY(10px)" }
         },
         "pulse-dots": {
           "0%, 80%, 100%": { opacity: "0.25" },

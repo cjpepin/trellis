@@ -192,7 +192,8 @@ const trellis: TrellisBridge = {
           model: input.model,
           sessionId: input.sessionId,
           messages: input.messages,
-          references: input.references ?? []
+          references: input.references ?? [],
+          ...(input.previewWorkspace ? { previewWorkspace: true } : {})
         })
           .then(() => {
             ipcRenderer.removeListener(channel, handler);
@@ -217,6 +218,23 @@ const trellis: TrellisBridge = {
     pickImage: () => ipcRenderer.invoke(ipcChannels.mediaPickImage),
     transcribe: (input) => ipcRenderer.invoke(ipcChannels.mediaTranscribe, input),
     synthesizeSpeech: (input) => ipcRenderer.invoke(ipcChannels.mediaSynthesizeSpeech, input),
+    synthesizeSpeechStream: (input, onChunk) =>
+      new Promise((resolve, reject) => {
+        const onData = (_evt: unknown, chunk: Uint8Array) => {
+          onChunk(chunk);
+        };
+        ipcRenderer.on(ipcChannels.mediaSpeechStreamChunk, onData);
+        ipcRenderer
+          .invoke(ipcChannels.mediaSynthesizeSpeechStream, input)
+          .then(() => {
+            ipcRenderer.removeListener(ipcChannels.mediaSpeechStreamChunk, onData);
+            resolve();
+          })
+          .catch((error: unknown) => {
+            ipcRenderer.removeListener(ipcChannels.mediaSpeechStreamChunk, onData);
+            reject(error);
+          });
+      }),
     generateImage: (input) => ipcRenderer.invoke(ipcChannels.mediaGenerateImage, input)
   },
   shell: {

@@ -30,6 +30,7 @@ function parseBody(body: unknown): {
   sessionId: string;
   model: ChatModel;
   references: ChatReference[];
+  previewWorkspace: boolean;
 } {
   if (!body || typeof body !== "object") {
     throw new Response("Invalid request body", {
@@ -38,10 +39,12 @@ function parseBody(body: unknown): {
     });
   }
 
-  const messages = (body as Record<string, unknown>).messages;
-  const sessionId = (body as Record<string, unknown>).sessionId;
-  const model = (body as Record<string, unknown>).model;
-  const references = (body as Record<string, unknown>).references;
+  const record = body as Record<string, unknown>;
+  const messages = record.messages;
+  const sessionId = record.sessionId;
+  const model = record.model;
+  const references = record.references;
+  const previewWorkspace = record.previewWorkspace === true;
   const normalizedModel = typeof model === "string" ? normalizeChatModel(model) : null;
 
   if (
@@ -144,7 +147,8 @@ function parseBody(body: unknown): {
     messages: parsedMessages,
     sessionId,
     model: normalizedModel,
-    references: parsedReferences
+    references: parsedReferences,
+    previewWorkspace
   };
 }
 
@@ -182,10 +186,11 @@ Deno.serve(async (request) => {
   try {
     assertMaxJsonBodyBytes(request);
     const { user, profile, admin } = await requireUser(request);
-    assertEntitlement(profile, "message");
     const parsed = parseBody(await request.json());
-    const previewWorkspaceRequest = request.headers.get("x-trellis-preview-workspace") === "1";
-    assertChatModelAccess(profile, parsed.model, { previewWorkspaceRequest });
+    const previewWorkspaceRequest =
+      request.headers.get("x-trellis-preview-workspace") === "1" || parsed.previewWorkspace;
+    assertEntitlement(profile, "message", { previewWorkspaceRequest });
+    assertChatModelAccess(profile, parsed.model);
 
     const mediaCaps = getChatModelMediaCapabilities(parsed.model);
     const hasVisionImages = parsed.messages.some(
@@ -296,9 +301,10 @@ Deno.serve(async (request) => {
           tokenCount: reply.tokenCount,
           billing_mode: byok.billingMode,
           provider: modelProvider,
-          model: parsed.model
+          model: parsed.model,
+          ...(previewWorkspaceRequest ? { preview_workspace: true } : {})
         }, {
-          skipCounterUpdate: byok.billingMode === "byok"
+          skipCounterUpdate: byok.billingMode === "byok" || previewWorkspaceRequest
         });
         controller.enqueue(sseEvent("done", "ok"));
         controller.close();

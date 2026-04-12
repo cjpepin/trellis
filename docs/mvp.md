@@ -407,7 +407,7 @@ CREATE TABLE IF NOT EXISTS ingested_sources (
 
 | Tier | Price | Limits |
 |---|---|---|
-| Free trial | $0 | 50 messages, 5 ingests, no graph |
+| Free trial | $0 | 8 messages per rolling 24h window, 5 ingests, no graph |
 | Trellis Pro | $15/month | Unlimited messages + ingests, full graph, both models |
 
 **Flow:**
@@ -415,7 +415,7 @@ CREATE TABLE IF NOT EXISTS ingested_sources (
 2. JWT stored in Electron `safeStorage` (encrypted on disk)
 3. Every API request includes `Authorization: Bearer <jwt>`
 4. Backend verifies JWT with Clerk SDK, then checks `subscription_status` in Stripe
-5. On free trial expiry, API returns `{ error: "trial_expired" }` → app shows upgrade modal
+5. On inactive subscription, API returns `{ error: "subscription_expired" }`; on free-tier quota, `{ error: "message_quota_exceeded", reset_at }` → app shows clear copy in chat and Settings
 
 **Never store raw API keys on the user's machine.** All model calls go through the backend. The user never sees Anthropic or OpenAI credentials.
 

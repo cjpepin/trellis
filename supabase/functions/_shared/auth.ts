@@ -1,4 +1,8 @@
 import { createClient, type SupabaseClient, type User } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import {
+  effectiveTrialMessagesUsed,
+  trialMessageWindowResetAtIso
+} from "../../../shared/billing/trialMessageWindow.ts";
 import { corsHeaders } from "./http.ts";
 
 export interface ProfileRow {
@@ -11,6 +15,8 @@ export interface ProfileRow {
   ingests_used: number;
   ingest_limit: number;
   stripe_customer_id: string | null;
+  /** Start of the current 24h window for trial `messages_used` (trial tier only). */
+  trial_message_window_started_at?: string | null;
   /** Set in DB only via service role / SQL; enables preview sandbox entitlements. */
   is_admin: boolean;
 }
@@ -160,9 +166,21 @@ export async function requireUser(
   };
 }
 
-export function assertEntitlement(profile: ProfileRow, kind: "message" | "ingest"): void {
+export function assertEntitlement(
+  profile: ProfileRow,
+  kind: "message" | "ingest",
+  options?: { previewWorkspaceRequest?: boolean }
+): void {
+  if (options?.previewWorkspaceRequest) {
+    return;
+  }
+
+  if (profile.is_admin === true) {
+    return;
+  }
+
   if (profile.subscription_status === "expired") {
-    throw new Response(JSON.stringify({ error: "trial_expired" }), {
+    throw new Response(JSON.stringify({ error: "subscription_expired" }), {
       status: 402,
       headers: {
         ...corsHeaders,
@@ -179,17 +197,33 @@ export function assertEntitlement(profile: ProfileRow, kind: "message" | "ingest
     return;
   }
 
-  const used = kind === "message" ? profile.messages_used : profile.ingests_used;
+  const used =
+    kind === "message"
+      ? effectiveTrialMessagesUsed(
+          profile.messages_used,
+          profile.trial_message_window_started_at ?? null
+        )
+      : profile.ingests_used;
   const limit = kind === "message" ? profile.message_limit : profile.ingest_limit;
 
   if (used >= limit) {
-    throw new Response(JSON.stringify({ error: "trial_expired" }), {
-      status: 402,
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "application/json"
+    const resetAt =
+      kind === "message"
+        ? trialMessageWindowResetAtIso(profile.trial_message_window_started_at ?? null)
+        : null;
+    throw new Response(
+      JSON.stringify({
+        error: "message_quota_exceeded",
+        reset_at: resetAt
+      }),
+      {
+        status: 402,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json"
+        }
       }
-    });
+    );
   }
 }
 

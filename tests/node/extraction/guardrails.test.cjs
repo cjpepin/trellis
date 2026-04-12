@@ -78,8 +78,27 @@ test("prepareExtractionWrite demotes duplicate headings and normalizes links", (
   assert.match(prepared.content, /\*\*Decisions\*\*/);
   assert.ok(!prepared.content.includes("\n## Decisions\n\nRetention matters more than breadth."));
   assert.match(prepared.content, /\[\[Habit Loop\]\]/);
+  assert.equal(prepared.content.match(/## Connected Notes/g)?.length, 1);
   assert.deepEqual(prepared.tags, ["product", "strategy"]);
   assert.equal(prepared.folderPath, "");
+});
+
+test("prepareExtractionWrite inserts appends before connected notes metadata", () => {
+  const prepared = prepareExtractionWrite({
+    update: createUpdate({
+      body: "## New Direction\n\nAutomatic extraction should refresh dense notes instead of piling updates onto the bottom."
+    }),
+    existingNote: createExistingNote(),
+    index
+  });
+
+  assert.ok(prepared);
+  const addedIndex = prepared.content.indexOf("## New Direction");
+  const connectedIndex = prepared.content.indexOf("## Connected Notes");
+
+  assert.ok(addedIndex > -1);
+  assert.ok(connectedIndex > -1);
+  assert.ok(addedIndex < connectedIndex);
 });
 
 test("prepareExtractionWrite strips transcript-like lines", () => {

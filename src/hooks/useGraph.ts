@@ -1,55 +1,10 @@
-import { useMemo } from "react";
+import type { GraphData } from "@electron/ipc/types";
 import { useWikiStore } from "@/store/wikiStore";
 
-export function useGraph() {
-  const graph = useWikiStore((state) => state.graph);
-
-  return useMemo(() => {
-    if (graph.nodes.length <= 500) {
-      return {
-        mode: "full" as const,
-        graph
-      };
-    }
-
-    const clusters = new Map<
-      string,
-      {
-        id: string;
-        count: number;
-      }
-    >();
-
-    for (const node of graph.nodes) {
-      const key = node.cluster || "untagged";
-      const existing = clusters.get(key);
-
-      if (existing) {
-        existing.count += 1;
-      } else {
-        clusters.set(key, {
-          id: key,
-          count: 1
-        });
-      }
-    }
-
-    return {
-      mode: "clustered" as const,
-      graph: {
-        nodes: [...clusters.entries()].map(([cluster, data]) => ({
-          id: cluster,
-          slug: cluster,
-          title: cluster,
-          tags: [cluster],
-          type: "synthesis" as const,
-          size: 18 + Math.min(data.count, 30),
-          inboundCount: data.count,
-          cluster
-        })),
-        edges: []
-      }
-    };
-  }, [graph]);
+/**
+ * Wiki graph for the active vault: one node per note, edges from [[wiki links]].
+ * Large vaults render fully so the graph stays legible; pan/zoom handles density.
+ */
+export function useGraph(): GraphData {
+  return useWikiStore((state) => state.graph);
 }
-

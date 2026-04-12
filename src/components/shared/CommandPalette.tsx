@@ -5,6 +5,7 @@ import type { WorkspaceInfo } from "@electron/ipc/types";
 import { useUiStore } from "@/store/uiStore";
 import { useWikiStore } from "@/store/wikiStore";
 import { useChatStore } from "@/store/chatStore";
+import { maxParallelChatRuns, parallelChatLimitMessage } from "@/lib/chatRunState";
 
 interface Props {
   workspace: WorkspaceInfo;
@@ -28,9 +29,13 @@ export function CommandPalette({
   const noteCache = useWikiStore((state) => state.noteCache);
   const setActiveNote = useWikiStore((state) => state.setActiveNote);
   const setActiveSession = useChatStore((state) => state.setActiveSession);
+  const runningChatCount = useChatStore(
+    (state) => Object.keys(state.chatRunsBySession).length
+  );
 
   const currentNote = activeNoteSlug ? noteCache[activeNoteSlug] : null;
   const noteCommands = useMemo(() => notes.slice(0, 12), [notes]);
+  const newChatDisabled = runningChatCount >= maxParallelChatRuns;
 
   if (!open) {
     return null;
@@ -52,8 +57,13 @@ export function CommandPalette({
 
             <Command.Group heading="Navigate" className="px-2 py-1 text-xs text-trellis-faint">
               <Command.Item
-                className="rounded-field px-3 py-2 text-sm text-trellis-text aria-selected:bg-trellis-surface"
+                disabled={newChatDisabled}
+                title={newChatDisabled ? parallelChatLimitMessage : undefined}
+                className="rounded-field px-3 py-2 text-sm text-trellis-text aria-selected:bg-trellis-surface data-[disabled=true]:text-trellis-faint"
                 onSelect={() => {
+                  if (newChatDisabled) {
+                    return;
+                  }
                   setActiveSession(null);
                   setOpen(false);
                   navigate("/chat");
@@ -125,7 +135,7 @@ export function CommandPalette({
                     setOpen(false);
                   }}
                 >
-                  Switch to {item.isPreview ? "preview" : "personal"}
+                  Switch to {item.label}
                 </Command.Item>
               ))}
               {workspace.canReset && onResetPreview && (

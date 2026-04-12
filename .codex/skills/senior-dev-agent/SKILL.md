@@ -33,3 +33,4 @@ Use these sections in order:
 - Prefer small helpers near the feature instead of generic abstractions.
 - Remove stale code in touched areas.
 - If a requirement is unclear or conflicts with the repo rules, stop and surface the blocker.
+- Follow `AGENTS.md` on multi-provider work: keep IPC and UI contracts vendor-neutral where possible; confine OpenAI- or Anthropic-specific calls to Edge Functions or narrow helpers; document single-provider limitations in the handoff.

@@ -512,7 +512,7 @@ function generateSessions() {
   });
 }
 
-function main() {
+function generateStandardPreviewSeed() {
   fs.rmSync(seedDir, { recursive: true, force: true });
   fs.mkdirSync(wikiDir, { recursive: true });
   fs.mkdirSync(rawDir, { recursive: true });
@@ -555,4 +555,304 @@ function main() {
   console.log(`Sessions: ${generatedSessions.length}`);
 }
 
-main();
+const heavyPreviewVaultId = "preview-heavy-main-vault";
+const heavyLedgerFolders = ["bulk", "research", "playbooks", "writing", "operations", "synthesis"];
+
+/** Modulus for `cluster-*` tags and link topology (must match tag suffix in `generateHeavyNotes`). */
+const HEAVY_CLUSTER_MOD = 18;
+
+function ledgerNoteTitle(oneBasedIndex) {
+  return `Ledger Note ${String(oneBasedIndex).padStart(4, "0")}`;
+}
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function next() {
+    a += 0x6d2b79f5;
+    let t = Math.imul(a ^ (a >>> 15), a | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function buildHeavyClusterPools(total) {
+  const pools = Array.from({ length: HEAVY_CLUSTER_MOD }, () => []);
+  for (let j = 1; j <= total; j += 1) {
+    pools[j % HEAVY_CLUSTER_MOD].push(j);
+  }
+  return pools;
+}
+
+/**
+ * Prefer links inside the same tag cluster (indices ≡ i (mod HEAVY_CLUSTER_MOD)) so the graph
+ * forms topic-local clumps, plus one deterministic bridge into another cluster so components stay connected.
+ * Replaces fixed long-step offsets that produced a uniform "one cloud" circulant graph.
+ */
+function linkTitlesForLedger(oneBasedIndex, total, pools) {
+  const c = oneBasedIndex % HEAVY_CLUSTER_MOD;
+  const pool = pools[c].filter((j) => j !== oneBasedIndex);
+  const rng = mulberry32(0x9e47 + oneBasedIndex * 16_661);
+
+  const indices = [];
+  if (oneBasedIndex > HEAVY_CLUSTER_MOD) {
+    indices.push(oneBasedIndex - HEAVY_CLUSTER_MOD);
+  }
+  if (oneBasedIndex + HEAVY_CLUSTER_MOD <= total) {
+    indices.push(oneBasedIndex + HEAVY_CLUSTER_MOD);
+  }
+
+  const extras = pool.filter((j) => !indices.includes(j));
+  while (indices.length < 3 && extras.length > 0) {
+    const pick = Math.floor(rng() * extras.length);
+    indices.push(extras[pick]);
+    extras.splice(pick, 1);
+  }
+
+  const bridgeCluster = (c + 7) % HEAVY_CLUSTER_MOD;
+  const bridgePool = pools[bridgeCluster];
+  if (bridgePool.length > 0) {
+    indices.push(bridgePool[oneBasedIndex % bridgePool.length]);
+  }
+
+  while (indices.length < 4 && extras.length > 0) {
+    const pick = Math.floor(rng() * extras.length);
+    indices.push(extras[pick]);
+    extras.splice(pick, 1);
+  }
+
+  const unique = [...new Set(indices)].slice(0, 4);
+  return unique.map((j) => ledgerNoteTitle(j));
+}
+
+function buildHeavyLedgerContent(title, links, oneBasedIndex) {
+  const related = links.map((t) => `- [[${t}]]`).join("\n");
+  const bridge = links[0] ?? title;
+
+  return [
+    `Working memo ${oneBasedIndex} in a long-running vault. The graph stays navigable when each note stays small but points to a few stable neighbors like [[${bridge}]].`,
+    "## Context",
+    "This entry simulates months of steady capture: meetings, research clippings, and half-finished decisions that still need a home.",
+    "## Decisions",
+    "- Keep the note short enough to scan in under a minute.",
+    "- Prefer linking forward to the next related memo rather than duplicating paragraphs.",
+    "- When in doubt, connect back to one anchor concept so the graph does not sprawl without backbone.",
+    "## Related",
+    related
+  ].join("\n\n");
+}
+
+function buildHeavyFrontmatter(note) {
+  const lines = [
+    "---",
+    `title: ${note.title}`,
+    `created: "${note.created}"`,
+    `updated: "${note.updated}"`,
+    `sources: ${2 + (note.oneBasedIndex % 4)}`,
+    `tags: [${note.tags.join(", ")}]`,
+    `type: ${note.type}`,
+    "---",
+    ""
+  ];
+  return lines.join("\n");
+}
+
+function generateHeavyNotes(count) {
+  const clusterPools = buildHeavyClusterPools(count);
+  const notes = [];
+  for (let i = 1; i <= count; i += 1) {
+    const createdDaysAgo = Math.max(8, 520 - (i % 160) * 3);
+    const updatedDaysAgo = Math.max(1, createdDaysAgo - (12 + (i % 9) * 5));
+    const folder = heavyLedgerFolders[i % heavyLedgerFolders.length];
+    const links = linkTitlesForLedger(i, count, clusterPools);
+    const title = ledgerNoteTitle(i);
+    const type = i % 23 === 0 ? "synthesis" : "concept";
+    // Topic cluster first so graph node coloring and tag-overlap edge weights reflect real groupings.
+    const tags = [`cluster-${i % HEAVY_CLUSTER_MOD}`, "ledger", `wave-${i % 7}`];
+
+    notes.push({
+      title,
+      slug: slugify(title),
+      folderPath: folder,
+      type,
+      tags,
+      created: formatDate(createdDaysAgo),
+      updated: formatDate(updatedDaysAgo),
+      oneBasedIndex: i,
+      content: buildHeavyLedgerContent(title, links, i)
+    });
+  }
+  return notes;
+}
+
+const heavySessionTitleTemplates = [
+  "Quarterly planning deep dive",
+  "Support theme retro",
+  "Design partner synthesis",
+  "Graph performance review",
+  "Onboarding narrative workshop",
+  "Vault IA critique",
+  "Retention metrics debate",
+  "Local-first messaging pass",
+  "Office hours roundup",
+  "Hiring loop retro",
+  "Roadmap trimming session",
+  "Customer advisory readout",
+  "Weekly review extended",
+  "Incident response dry run",
+  "Pricing copy critique",
+  "Research queue triage",
+  "Meeting capture standards",
+  "Trust copy audit",
+  "Assistant tone review",
+  "Extraction quality pass",
+  "Cross-team sync",
+  "Field notes consolidation",
+  "Launch checklist walkthrough",
+  "Usage limits language",
+  "BYOK onboarding notes",
+  "Graph clustering experiment",
+  "Note density check-in",
+  "Search relevance review",
+  "Citation hygiene working group",
+  "Ambient capture patterns",
+  "Weekly customer quotes",
+  "Product council prep",
+  "Ship room retrospective",
+  "Retention interview synthesis",
+  "Privacy boundary review",
+  "Raw capture cleanup",
+  "Synthesis backlog grooming",
+  "Executive summary draft",
+  "Investor narrative polish",
+  "Internal demo feedback",
+  "Beta feedback triage",
+  "Long-horizon roadmap stress test",
+  "Multi-vault navigation review",
+  "Performance profiling notes",
+  "Heavy preview validation chat"
+];
+
+const heavyModels = [
+  "gpt-4.1-mini",
+  "claude-3-5-haiku-latest",
+  "claude-3-7-sonnet-latest",
+  "claude-sonnet-4-20250514"
+];
+
+function generateHeavySessions(ledgerCount) {
+  let messageCounter = 3_000_000;
+  const rng = mulberry32(0x4b1d);
+
+  return heavySessionTitleTemplates.map((title, sessionIndex) => {
+    const daysAgo = 640 - sessionIndex * 14;
+    const sessionId = uuidFromNumber(12_000 + sessionIndex);
+    const createdAt = formatTimestamp(daysAgo);
+    const model = heavyModels[sessionIndex % heavyModels.length];
+    const turnCount = 14 + (sessionIndex % 11) * 2;
+
+    const messages = [];
+    for (let t = 0; t < turnCount; t += 1) {
+      const isUser = t % 2 === 0;
+      const linkA = ledgerNoteTitle(1 + Math.floor(rng() * ledgerCount));
+      const linkB = ledgerNoteTitle(1 + Math.floor(rng() * ledgerCount));
+
+      let content;
+      if (isUser) {
+        content = [
+          `Session ${sessionIndex + 1} turn ${t + 1}: I am trying to keep long-running context manageable.`,
+          `Can we relate this back to ${linkA} and ${linkB} without duplicating the whole history in every reply?`
+        ].join("\n\n");
+      } else {
+        const block = [
+          `Yes. Treat the vault as the canonical memory and keep chat turns short enough to scan.`,
+          `The pattern that scales is: name the decision, point to [[${linkA}]] for precedent, and use [[${linkB}]] as the next follow-up.`,
+          `If the user has hundreds of notes, interlinking matters more than length. Prefer four solid links over twenty paragraphs.`,
+          `When the graph is dense, retrieval should feel like moving between rooms, not rereading a novel.`,
+          `For stress testing, repeat the same navigation pattern until the UI stays calm: open list, search, open note, follow link, return.`,
+          `If something feels slow, it is usually because the UI is doing too much work per keystroke, not because markdown is inherently heavy.`
+        ];
+        const repeat = 2 + (sessionIndex % 4);
+        content = Array.from({ length: repeat }, (_, k) => `${block[k % block.length]} (Pass ${k + 1})`).join(
+          "\n\n"
+        );
+      }
+
+      messages.push({
+        id: uuidFromNumber(messageCounter++),
+        sessionId,
+        role: isUser ? "user" : "assistant",
+        content,
+        createdAt: createdAt + t * 95_000,
+        tokens: isUser ? null : 900 + t * 40 + sessionIndex * 6
+      });
+    }
+
+    return {
+      session: {
+        id: sessionId,
+        title,
+        createdAt,
+        updatedAt: messages.at(-1).createdAt,
+        model,
+        vaultId: heavyPreviewVaultId
+      },
+      messages
+    };
+  });
+}
+
+function generateHeavyPreviewSeed() {
+  const heavySeedDir = fromRepoRoot("fixtures", "preview-heavy-seed");
+  const heavyVaultDir = path.join(heavySeedDir, "vault");
+  const heavyWikiDir = path.join(heavyVaultDir, "wiki");
+  const heavyRawDir = path.join(heavyVaultDir, "raw");
+
+  fs.rmSync(heavySeedDir, { recursive: true, force: true });
+  fs.mkdirSync(heavyWikiDir, { recursive: true });
+  fs.mkdirSync(heavyRawDir, { recursive: true });
+
+  const ledgerCount = 750;
+  const heavyNotes = generateHeavyNotes(ledgerCount);
+  for (const note of heavyNotes) {
+    const file = `${buildHeavyFrontmatter(note)}${note.content.trim()}\n`;
+    writeFile(path.join(heavyWikiDir, note.folderPath, `${note.slug}.md`), file);
+  }
+
+  for (const [fileName, heading, body] of rawSources) {
+    writeFile(path.join(heavyRawDir, fileName), `# ${heading}\n\n${body.trim()}\n`);
+  }
+
+  const heavySessions = generateHeavySessions(ledgerCount);
+  const dbFixture = {
+    sessions: heavySessions.map((item) => item.session),
+    messages: heavySessions.flatMap((item) => item.messages)
+  };
+
+  writeFile(
+    path.join(heavySeedDir, "manifest.json"),
+    `${JSON.stringify(
+      {
+        version: "preview-heavy-v1",
+        vaultName: "Heavy Preview Vault",
+        vaultFolder: "vault",
+        databaseFile: "db.json"
+      },
+      null,
+      2
+    )}\n`
+  );
+  writeFile(path.join(heavySeedDir, "db.json"), `${JSON.stringify(dbFixture, null, 2)}\n`);
+
+  console.log(`Generated heavy preview seed in ${heavySeedDir}`);
+  console.log(`Notes: ${heavyNotes.length}`);
+  console.log(`Raw sources: ${rawSources.length}`);
+  console.log(`Sessions: ${heavySessions.length}`);
+  console.log(`Messages: ${dbFixture.messages.length}`);
+}
+
+const mode = process.argv[2];
+if (mode === "heavy") {
+  generateHeavyPreviewSeed();
+} else {
+  generateStandardPreviewSeed();
+}

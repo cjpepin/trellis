@@ -113,3 +113,61 @@ test("preview seed fixture is complete and internally consistent", () => {
     assert.ok(typeof message.content === "string" && message.content.trim().length > 0);
   }
 });
+
+const heavySeedDir = fromRepoRoot("fixtures", "preview-heavy-seed");
+const heavyManifestPath = path.join(heavySeedDir, "manifest.json");
+const heavyDatabasePath = path.join(heavySeedDir, "db.json");
+const heavyWikiDir = path.join(heavySeedDir, "vault", "wiki");
+const heavyRawDir = path.join(heavySeedDir, "vault", "raw");
+
+test("heavy preview seed fixture is complete and internally consistent", () => {
+  const manifest = JSON.parse(fs.readFileSync(heavyManifestPath, "utf8"));
+  const database = JSON.parse(fs.readFileSync(heavyDatabasePath, "utf8"));
+  const wikiFiles = listMarkdownFilesRecursive(heavyWikiDir);
+  const rawFiles = fs.readdirSync(heavyRawDir).sort();
+
+  assert.equal(manifest.version, "preview-heavy-v1");
+  assert.equal(manifest.vaultName, "Heavy Preview Vault");
+  assert.equal(wikiFiles.length, 750);
+  assert.equal(rawFiles.length, 10);
+  assert.ok(database.sessions.length >= 40);
+  assert.ok(database.messages.length >= 1000);
+
+  const noteTitles = new Set();
+  const sessionIds = new Set(database.sessions.map((session) => session.id));
+
+  for (const filePath of wikiFiles) {
+    const relativePath = path.relative(heavyWikiDir, filePath);
+    assert.match(relativePath, /^(?:[a-z0-9-]+\/)*[a-z0-9]+(?:-[a-z0-9]+)*\.md$/);
+    const parsed = matter(fs.readFileSync(filePath, "utf8"));
+    const frontmatter = parsed.data;
+    const fileName = path.basename(filePath);
+
+    assert.equal(typeof frontmatter.title, "string");
+    assert.equal(slugify(frontmatter.title), fileName.replace(/\.md$/, ""));
+    assert.ok(["concept", "synthesis"].includes(frontmatter.type));
+    noteTitles.add(frontmatter.title);
+  }
+
+  for (const filePath of wikiFiles) {
+    const parsed = matter(fs.readFileSync(filePath, "utf8"));
+    const links = [...parsed.content.matchAll(/\[\[([^\]]+)\]\]/g)].map((match) => match[1]);
+
+    for (const linkTitle of links) {
+      assert.ok(noteTitles.has(linkTitle), `Missing linked note for ${linkTitle}`);
+    }
+  }
+
+  for (const session of database.sessions) {
+    assert.match(session.id, /^[0-9a-f-]{36}$/);
+    assert.ok(session.updatedAt >= session.createdAt);
+    assert.ok(typeof session.title === "string" && session.title.trim().length > 0);
+    assert.ok(session.title.trim().split(/\s+/).length <= 6, `Session title too long: ${session.title}`);
+  }
+
+  for (const message of database.messages) {
+    assert.match(message.id, /^[0-9a-f-]{36}$/);
+    assert.ok(sessionIds.has(message.sessionId), `Message points at unknown session ${message.sessionId}`);
+    assert.ok(typeof message.content === "string" && message.content.trim().length > 0);
+  }
+});

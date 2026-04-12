@@ -700,7 +700,9 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
 
       const messages = await getMessagesBySession(session.id);
       const latestCompletedJob = await getLatestCompletedExtractionJob(session.id);
-      const plan = planSessionExtraction(messages, latestCompletedJob, input.force ?? false);
+      const plan = planSessionExtraction(messages, latestCompletedJob, input.force ?? false, {
+        fullTranscriptWhenChanged: input.trigger === "idle" || input.trigger === "session-switch"
+      });
 
       if (!plan) {
         return {
