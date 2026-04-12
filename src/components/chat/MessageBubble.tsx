@@ -39,6 +39,9 @@ interface Props {
   onRetry?: () => void;
   waitingForTokens?: boolean;
   onReadAloud?: (messageId: string, text: string) => void | Promise<void>;
+  /** True while this message is in a read-aloud session (loading or playing). */
+  readAloudActive?: boolean;
+  /** True until the first audio chunk arrives for this message’s read-aloud session. */
   readAloudLoading?: boolean;
   readAloudDisabled?: boolean;
   onApproveNoteAction?: (messageId: string, actionId: string) => void | Promise<void>;
@@ -81,6 +84,7 @@ export function MessageBubble({
   onRetry,
   waitingForTokens = false,
   onReadAloud,
+  readAloudActive = false,
   readAloudLoading = false,
   readAloudDisabled = false,
   onApproveNoteAction,
@@ -517,15 +521,32 @@ export function MessageBubble({
               {!isUser && onReadAloud ? (
                 <button
                   type="button"
-                  disabled={readAloudDisabled || readAloudLoading}
-                  className="rounded-full border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-accent disabled:cursor-not-allowed disabled:opacity-40"
-                  title={readAloudLoading ? "Preparing audio…" : "Read this reply aloud with text-to-speech"}
-                  aria-label={readAloudLoading ? "Preparing read aloud" : "Read aloud"}
+                  disabled={!readAloudActive && readAloudDisabled}
+                  className={cn(
+                    "rounded-full border border-transparent p-1.5 transition hover:border-trellis-border hover:bg-trellis-surface disabled:cursor-not-allowed disabled:opacity-40",
+                    readAloudActive && !readAloudLoading
+                      ? "text-trellis-accent hover:text-trellis-accent"
+                      : "text-trellis-muted hover:text-trellis-accent"
+                  )}
+                  title={
+                    readAloudActive
+                      ? readAloudLoading
+                        ? "Preparing audio…"
+                        : "Stop read aloud"
+                      : "Read this reply aloud with text-to-speech"
+                  }
+                  aria-label={
+                    readAloudActive
+                      ? readAloudLoading
+                        ? "Preparing read aloud"
+                        : "Stop read aloud"
+                      : "Read aloud"
+                  }
                   onClick={() => {
                     void onReadAloud(message.id, message.content);
                   }}
                 >
-                  {readAloudLoading ? (
+                  {readAloudActive && readAloudLoading ? (
                     <LoaderCircle className="h-4 w-4 animate-spin text-trellis-accent" aria-hidden />
                   ) : (
                     <Volume2 className="h-4 w-4" aria-hidden />

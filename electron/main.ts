@@ -42,6 +42,7 @@ import {
 import { getProviderKeyStatusSnapshot } from "./lib/providerKeys";
 import { defaultLocalExtractionModelId } from "../shared/extraction/config";
 import { normalizeExternalHttpsUrl } from "@shared/shell/externalHttpsUrl";
+import { normalizeReadAloudSpeedTier } from "@shared/media/readAloudSpeed";
 import {
   ipcChannels,
   type AppBootstrap,
@@ -93,6 +94,15 @@ const settingsSchema = z.object({
     .object({
       privacyMode: z.enum(["auto", "off", "local"]).optional(),
       readAloudAutoPlay: z.boolean().optional(),
+      readAloudSpeed: z
+        .union([
+          z.literal(1),
+          z.literal(2),
+          z.literal(3),
+          z.literal(4),
+          z.literal(5)
+        ])
+        .optional(),
       scrollWithResponse: z.boolean().optional()
     })
     .optional(),
@@ -235,6 +245,7 @@ function createDefaultChatSettings(): ChatSettings {
   return {
     privacyMode: "auto",
     readAloudAutoPlay: false,
+    readAloudSpeed: 3,
     scrollWithResponse: true
   };
 }
@@ -297,6 +308,7 @@ function normalizeSettings(rawSettings: unknown): AppSettings {
     chat: {
       privacyMode: parsed.chat?.privacyMode ?? "auto",
       readAloudAutoPlay: parsed.chat?.readAloudAutoPlay ?? false,
+      readAloudSpeed: normalizeReadAloudSpeedTier(parsed.chat?.readAloudSpeed),
       scrollWithResponse: parsed.chat?.scrollWithResponse ?? true
     },
     extraction: {

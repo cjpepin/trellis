@@ -15,7 +15,9 @@ interface Props {
   onOpenNote: (slug: string) => void;
   onRetryMessage: (messageId: string) => void;
   onReadAloud?: (messageId: string, text: string) => void | Promise<void>;
-  readAloudLoadingMessageId?: string | null;
+  readAloudActiveMessageId?: string | null;
+  /** True while waiting for the first audio chunk for the active read-aloud message. */
+  readAloudAwaitingFirstChunk?: boolean;
   readAloudDisabled?: boolean;
   onApproveNoteAction?: (messageId: string, actionId: string) => void | Promise<void>;
   onRejectNoteAction?: (messageId: string, actionId: string) => void | Promise<void>;
@@ -40,7 +42,8 @@ export function MessageList({
   onOpenNote,
   onRetryMessage,
   onReadAloud,
-  readAloudLoadingMessageId,
+  readAloudActiveMessageId,
+  readAloudAwaitingFirstChunk = false,
   readAloudDisabled,
   onApproveNoteAction,
   onRejectNoteAction,
@@ -78,7 +81,10 @@ export function MessageList({
           onRetry={() => onRetryMessage(message.id)}
           waitingForTokens={awaitingFirstToken && index === messages.length - 1}
           onReadAloud={onReadAloud}
-          readAloudLoading={readAloudLoadingMessageId === message.id}
+          readAloudActive={readAloudActiveMessageId === message.id}
+          readAloudLoading={
+            readAloudActiveMessageId === message.id && readAloudAwaitingFirstChunk
+          }
           readAloudDisabled={readAloudDisabled}
           onApproveNoteAction={onApproveNoteAction}
           onRejectNoteAction={onRejectNoteAction}

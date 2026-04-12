@@ -153,6 +153,12 @@ Deno.serve(async (request) => {
     if (action === "tts") {
       const text = typeof body.text === "string" ? body.text : "";
       const wantStream = body.stream === true;
+      const speedRaw = body.speed;
+      /** Default matches tier 3 ("Medium", OpenAI speed 1.0) when the client omits `speed`. */
+      const ttsSpeed =
+        typeof speedRaw === "number" && Number.isFinite(speedRaw)
+          ? Math.min(4, Math.max(0.25, speedRaw))
+          : 1;
 
       if (text.length < 1) {
         throw new Response(JSON.stringify({ error: "No text to speak." }), {
@@ -176,7 +182,8 @@ Deno.serve(async (request) => {
             voice: "alloy",
             input: text.slice(0, 4096),
             response_format: "pcm",
-            stream_format: "audio"
+            stream_format: "audio",
+            speed: ttsSpeed
           })
         });
 
@@ -230,7 +237,8 @@ Deno.serve(async (request) => {
         body: JSON.stringify({
           model: "tts-1",
           voice: "alloy",
-          input: text.slice(0, 4096)
+          input: text.slice(0, 4096),
+          speed: ttsSpeed
         })
       });
 

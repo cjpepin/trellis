@@ -14,6 +14,7 @@ import {
   type QueueSessionExtractionResult
 } from "@electron/ipc/types";
 import { getChatModelMediaCapabilities } from "@shared/chat/capabilities";
+import { normalizeReadAloudSpeedTier } from "@shared/media/readAloudSpeed";
 import { ChatVaultSelect } from "@/components/chat/ChatVaultSelect";
 import { InputBar } from "@/components/chat/InputBar";
 import { MessageList } from "@/components/chat/MessageList";
@@ -50,6 +51,28 @@ import {
 import { useWikiStore } from "@/store/wikiStore";
 import { PcmStreamPlayback } from "@/lib/pcmStreamPlayback";
 
+/** IPC may deserialize errors without preserving `instanceof Error` / `.name`. */
+function isReadAloudUserCancelError(error: unknown): boolean {
+  if (error instanceof Error) {
+    if (error.name === "AbortError") {
+      return true;
+    }
+    if (error.message.includes("Read aloud was stopped")) {
+      return true;
+    }
+  }
+  if (typeof error === "object" && error !== null) {
+    const rec = error as { name?: unknown; message?: unknown };
+    if (rec.name === "AbortError") {
+      return true;
+    }
+    if (typeof rec.message === "string" && rec.message.includes("Read aloud was stopped")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 interface Props {
   settings: AppSettings;
   features: AppFeatureFlags;
@@ -71,8 +94,11 @@ export function Chat({
   const [pendingAttachments, setPendingAttachments] = useState<PendingChatAttachment[]>([]);
   const [pendingImageAttachments, setPendingImageAttachments] = useState<PendingImageAttachment[]>([]);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [readAloudLoadingMessageId, setReadAloudLoadingMessageId] = useState<string | null>(null);
+  const [readAloudActiveMessageId, setReadAloudActiveMessageId] = useState<string | null>(null);
+  /** True until the first PCM chunk arrives for the current read-aloud session (loading state). */
+  const [readAloudAwaitingFirstChunk, setReadAloudAwaitingFirstChunk] = useState(false);
   const readAloudPlaybackRef = useRef<PcmStreamPlayback | null>(null);
+  const readAloudStreamGenRef = useRef(0);
   const [busyNoteActionId, setBusyNoteActionId] = useState<string | null>(null);
   /** True while queuing manual save or until that extraction job finishes. */
   const [manualNoteCaptureActive, setManualNoteCaptureActive] = useState(false);
@@ -105,6 +131,17 @@ export function Chat({
   const clearMessageMeta = useChatStore((state) => state.clearMessageMeta);
   const pushToast = useUiStore((state) => state.pushToast);
   const removeToast = useUiStore((state) => state.removeToast);
+  const stopReadAloud = useCallback(async () => {
+    readAloudStreamGenRef.current += 1;
+    await window.trellis.media.cancelSynthesizeSpeechStream();
+    const playback = readAloudPlaybackRef.current;
+    readAloudPlaybackRef.current = null;
+    if (playback) {
+      await playback.stop();
+    }
+    setReadAloudActiveMessageId(null);
+    setReadAloudAwaitingFirstChunk(false);
+  }, []);
   const streamAssistant = useStream({
     accessToken,
     model: activeModel,
@@ -748,29 +785,48 @@ export function Chat({
         accessToken &&
         useChatStore.getState().activeSessionId === sessionId
       ) {
+        const assistantId = streamResult.assistantMessage.id;
+        const myGen = ++readAloudStreamGenRef.current;
         try {
           const previousPlayback = readAloudPlaybackRef.current;
           readAloudPlaybackRef.current = null;
           if (previousPlayback) {
             await previousPlayback.stop();
           }
+          setReadAloudActiveMessageId(assistantId);
+          setReadAloudAwaitingFirstChunk(true);
           const playback = new PcmStreamPlayback();
           readAloudPlaybackRef.current = playback;
           await playback.ensureRunning();
           const text = streamResult.assistantMessage.content.slice(0, 4096);
+          let heardFirstChunk = false;
           await window.trellis.media.synthesizeSpeechStream(
             {
               accessToken,
               subscriptionTier,
-              text
+              text,
+              readAloudSpeed: normalizeReadAloudSpeedTier(settings.chat.readAloudSpeed)
             },
             (chunk) => {
+              if (myGen !== readAloudStreamGenRef.current) {
+                return;
+              }
+              if (!heardFirstChunk) {
+                heardFirstChunk = true;
+                setReadAloudAwaitingFirstChunk(false);
+              }
               playback.append(chunk);
             }
           );
           playback.finish();
-        } catch {
-          // Optional: ignore auto read-aloud failures
+        } catch (error: unknown) {
+          if (isReadAloudUserCancelError(error)) {
+            return;
+          }
+          // Optional: ignore other auto read-aloud failures
+        } finally {
+          setReadAloudActiveMessageId((id) => (id === assistantId ? null : id));
+          setReadAloudAwaitingFirstChunk(false);
         }
       }
       await window.trellis.db.replaceMessages({
@@ -1640,7 +1696,14 @@ export function Chat({
               return;
             }
 
-            setReadAloudLoadingMessageId(messageId);
+            if (readAloudActiveMessageId === messageId) {
+              await stopReadAloud();
+              return;
+            }
+
+            const myGen = ++readAloudStreamGenRef.current;
+            setReadAloudActiveMessageId(messageId);
+            setReadAloudAwaitingFirstChunk(true);
 
             try {
               const previousPlayback = readAloudPlaybackRef.current;
@@ -1651,32 +1714,41 @@ export function Chat({
               const playback = new PcmStreamPlayback();
               readAloudPlaybackRef.current = playback;
               await playback.ensureRunning();
-              let firstChunk = true;
+              let heardFirstChunk = false;
               await window.trellis.media.synthesizeSpeechStream(
                 {
                   accessToken,
                   subscriptionTier,
-                  text: text.slice(0, 4096)
+                  text: text.slice(0, 4096),
+                  readAloudSpeed: normalizeReadAloudSpeedTier(settings.chat.readAloudSpeed)
                 },
                 (chunk) => {
-                  if (firstChunk) {
-                    firstChunk = false;
-                    setReadAloudLoadingMessageId(null);
+                  if (myGen !== readAloudStreamGenRef.current) {
+                    return;
+                  }
+                  if (!heardFirstChunk) {
+                    heardFirstChunk = true;
+                    setReadAloudAwaitingFirstChunk(false);
                   }
                   playback.append(chunk);
                 }
               );
               playback.finish();
-            } catch (error) {
+            } catch (error: unknown) {
+              if (isReadAloudUserCancelError(error)) {
+                return;
+              }
               pushToast({
                 title: error instanceof Error ? error.message : "Could not play audio.",
                 tone: "warning"
               });
             } finally {
-              setReadAloudLoadingMessageId(null);
+              setReadAloudActiveMessageId((id) => (id === messageId ? null : id));
+              setReadAloudAwaitingFirstChunk(false);
             }
           }}
-          readAloudLoadingMessageId={readAloudLoadingMessageId}
+          readAloudActiveMessageId={readAloudActiveMessageId}
+          readAloudAwaitingFirstChunk={readAloudAwaitingFirstChunk}
           readAloudDisabled={
             chatDisabled || settings.chat.privacyMode === "local" || !accessToken
           }

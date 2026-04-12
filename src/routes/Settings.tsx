@@ -30,6 +30,12 @@ import {
   defaultLocalExtractionModelApproxDownload,
   defaultLocalExtractionModelId
 } from "@shared/extraction/config";
+import {
+  READ_ALOUD_SPEED_LISTBOX_OPTIONS,
+  type ReadAloudSpeedTier,
+  readAloudListIdToTier,
+  readAloudSpeedTierToListId
+} from "@shared/media/readAloudSpeed";
 import { normalizeExternalHttpsUrl } from "@shared/shell/externalHttpsUrl";
 import {
   chatPrivacyModeOptions,
@@ -922,6 +928,23 @@ export function Settings({
     }
   }
 
+  async function updateReadAloudSpeed(tier: ReadAloudSpeedTier): Promise<void> {
+    try {
+      await onUpdateSettings({
+        ...settings,
+        chat: {
+          ...settings.chat,
+          readAloudSpeed: tier
+        }
+      });
+    } catch (error) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not update read-aloud speed.",
+        tone: "error"
+      });
+    }
+  }
+
   async function updateScrollWithResponse(enabled: boolean): Promise<void> {
     try {
       await onUpdateSettings({
@@ -1347,6 +1370,22 @@ export function Settings({
                   Off by default. When enabled, new assistant messages are spoken after they finish streaming.
                 </span>
               </span>
+            </label>
+            <label className="mt-4 block text-left" htmlFor="settings-read-aloud-speed">
+              <span className="block text-sm text-trellis-text">Read-aloud speed</span>
+              <span className="mt-0.5 block text-[11px] leading-snug text-trellis-muted">
+                OpenAI text-to-speech pacing for the read-aloud button and auto read-aloud.
+              </span>
+              <ListboxSelect
+                id="settings-read-aloud-speed"
+                className="mt-2"
+                options={READ_ALOUD_SPEED_LISTBOX_OPTIONS}
+                value={readAloudSpeedTierToListId(settings.chat.readAloudSpeed ?? 3)}
+                listboxAriaLabel="Read-aloud speech speed"
+                onSelect={(id) => {
+                  void updateReadAloudSpeed(readAloudListIdToTier(id));
+                }}
+              />
             </label>
             <label className="mt-4 flex cursor-pointer items-start gap-2.5 text-left">
               <input

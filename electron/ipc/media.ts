@@ -11,11 +11,22 @@ import {
   type MediaTranscribeInput
 } from "./types";
 import {
+  normalizeReadAloudSpeedTier,
+  readAloudSpeedTierToOpenAiSpeed
+} from "@shared/media/readAloudSpeed";
+import {
   readMediaCacheDataUrl,
   writeMediaCacheFile,
   writeMediaCacheFromBase64
 } from "../lib/chatMediaCache";
 import { getProviderKey } from "../lib/providerKeys";
+
+let activeSpeechStreamAbort: AbortController | null = null;
+
+function abortPriorSpeechStream(): void {
+  activeSpeechStreamAbort?.abort();
+  activeSpeechStreamAbort = null;
+}
 
 function getFunctionsBaseUrl(): string {
   const supabaseUrl = process.env.VITE_SUPABASE_URL?.trim();
@@ -72,7 +83,14 @@ const mediaTranscribeSchema = z.object({
 const mediaSpeechSchema = z.object({
   accessToken: z.string().min(1),
   subscriptionTier: z.enum(["trial", "byok", "pro"]),
-  text: z.string().min(1).max(500_000)
+  text: z.string().min(1).max(500_000),
+  readAloudSpeed: z.union([
+    z.literal(1),
+    z.literal(2),
+    z.literal(3),
+    z.literal(4),
+    z.literal(5)
+  ])
 });
 
 const mediaImageSchema = z.object({
@@ -191,9 +209,77 @@ export function registerMediaIpc(options: { getWorkspaceId: () => AppWorkspaceId
     return { text: payload.text };
   });
 
+  ipcMain.handle(ipcChannels.mediaSynthesizeSpeechStreamCancel, () => {
+    activeSpeechStreamAbort?.abort();
+  });
+
   ipcMain.handle(ipcChannels.mediaSynthesizeSpeechStream, async (event, input: unknown) => {
+    abortPriorSpeechStream();
+    const ac = new AbortController();
+    activeSpeechStreamAbort = ac;
+
     const parsed = mediaSpeechSchema.parse(input) as MediaSpeechInput;
     const headers = buildMediaHeaders(parsed, options.getWorkspaceId());
+    const speed = readAloudSpeedTierToOpenAiSpeed(normalizeReadAloudSpeedTier(parsed.readAloudSpeed));
+
+    try {
+      const response = await fetch(`${getFunctionsBaseUrl()}/chat-media`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          action: "tts",
+          text: parsed.text,
+          stream: true,
+          speed
+        }),
+        signal: ac.signal
+      });
+
+      if (!response.ok) {
+        throw await readFunctionError(response, "Speech synthesis failed.");
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Speech synthesis returned no stream.");
+      }
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          if (value.length > 0) {
+            event.sender.send(ipcChannels.mediaSpeechStreamChunk, value);
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    } catch (error: unknown) {
+      const isAbort =
+        error instanceof Error &&
+        (error.name === "AbortError" ||
+          error.message === "This operation was aborted" ||
+          error.message.includes("aborted"));
+      if (isAbort) {
+        // User stopped read-aloud: resolve so the renderer does not treat this as a failure
+        // (avoids toasts and Electron's "Error occurred in handler" log for intentional cancel).
+        return;
+      }
+      throw error;
+    } finally {
+      if (activeSpeechStreamAbort === ac) {
+        activeSpeechStreamAbort = null;
+      }
+    }
+  });
+
+  ipcMain.handle(ipcChannels.mediaSynthesizeSpeech, async (_event, input: unknown) => {
+    const parsed = mediaSpeechSchema.parse(input) as MediaSpeechInput;
+    const headers = buildMediaHeaders(parsed, options.getWorkspaceId());
+    const speed = readAloudSpeedTierToOpenAiSpeed(normalizeReadAloudSpeedTier(parsed.readAloudSpeed));
 
     const response = await fetch(`${getFunctionsBaseUrl()}/chat-media`, {
       method: "POST",
@@ -201,44 +287,7 @@ export function registerMediaIpc(options: { getWorkspaceId: () => AppWorkspaceId
       body: JSON.stringify({
         action: "tts",
         text: parsed.text,
-        stream: true
-      })
-    });
-
-    if (!response.ok) {
-      throw await readFunctionError(response, "Speech synthesis failed.");
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error("Speech synthesis returned no stream.");
-    }
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        if (value.length > 0) {
-          event.sender.send(ipcChannels.mediaSpeechStreamChunk, value);
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
-  });
-
-  ipcMain.handle(ipcChannels.mediaSynthesizeSpeech, async (_event, input: unknown) => {
-    const parsed = mediaSpeechSchema.parse(input) as MediaSpeechInput;
-    const headers = buildMediaHeaders(parsed, options.getWorkspaceId());
-
-    const response = await fetch(`${getFunctionsBaseUrl()}/chat-media`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        action: "tts",
-        text: parsed.text
+        speed
       })
     });
 

@@ -7,6 +7,7 @@ import type {
   ExtractionSourceType
 } from "@shared/extraction/contracts";
 import type { ExtractionInstallProgressEvent } from "@shared/extraction/localModelInstall";
+import type { ReadAloudSpeedTier } from "@shared/media/readAloudSpeed";
 
 export type { ExtractionInstallProgressEvent };
 
@@ -75,6 +76,7 @@ export const ipcChannels = {
   mediaTranscribe: "media:transcribe",
   mediaSynthesizeSpeech: "media:synthesize-speech",
   mediaSynthesizeSpeechStream: "media:synthesize-speech-stream",
+  mediaSynthesizeSpeechStreamCancel: "media:synthesize-speech-stream:cancel",
   mediaSpeechStreamChunk: "media:speech-stream:chunk",
   mediaGenerateImage: "media:generate-image"
 } as const;
@@ -679,6 +681,10 @@ export interface ChatSettings {
   /** When true, assistant replies are read aloud automatically after streaming. Default false. */
   readAloudAutoPlay?: boolean;
   /**
+   * OpenAI TTS speed tier for read-aloud (1–5: slowest … fastest; default tier 3 Medium).
+   */
+  readAloudSpeed?: ReadAloudSpeedTier;
+  /**
    * When true (default), the chat view scrolls with streaming replies while you stay near the bottom;
    * scrolling up pauses following until you scroll back down.
    */
@@ -897,6 +903,7 @@ export interface MediaSpeechInput {
   accessToken: string;
   subscriptionTier: SubscriptionTier;
   text: string;
+  readAloudSpeed: ReadAloudSpeedTier;
 }
 
 export interface MediaSpeechResult {
@@ -929,6 +936,8 @@ export interface MediaBridge {
     input: MediaSpeechInput,
     onChunk: (chunk: Uint8Array) => void
   ) => Promise<void>;
+  /** Aborts the in-flight speech stream fetch (no-op if none). */
+  cancelSynthesizeSpeechStream: () => Promise<void>;
   generateImage: (input: MediaImageGenerateInput) => Promise<MediaImageGenerateResult>;
 }
 

@@ -235,6 +235,8 @@ const trellis: TrellisBridge = {
             reject(error);
           });
       }),
+    cancelSynthesizeSpeechStream: () =>
+      ipcRenderer.invoke(ipcChannels.mediaSynthesizeSpeechStreamCancel) as Promise<void>,
     generateImage: (input) => ipcRenderer.invoke(ipcChannels.mediaGenerateImage, input)
   },
   shell: {
