@@ -131,6 +131,15 @@ function sortNotesByTitle<T extends { title: string; updated: string }>(left: T,
   return left.title.localeCompare(right.title) || right.updated.localeCompare(left.updated);
 }
 
+/** Hash-router notes shell; used to avoid stealing navigation after async saves when another route is active. */
+function isHashNotesRoute(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const hash = window.location.hash;
+  return hash === "#/notes" || hash.startsWith("#/notes?");
+}
+
 type DragPayload =
   | {
       kind: "note";
@@ -878,7 +887,18 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       return next;
     });
     const snapshot = await window.trellis.vault.listIndex();
-    applySnapshot(snapshot, result.note.slug);
+    replaceIndex({
+      notes: snapshot.notes,
+      folders: snapshot.folders,
+      graph: snapshot.graph
+    });
+
+    if (result.note.slug !== note.slug) {
+      setActiveNote(result.note.slug);
+      if (isHashNotesRoute()) {
+        navigate(notesRoutePath(result.note.slug), { replace: true });
+      }
+    }
 
     if (
       !options?.skipExplorerUndo &&
@@ -2055,6 +2075,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
         {activeNote ? (
           <div className="flex h-full flex-col">
             <div
+              data-trellis-wiki-note-scroll
               className={cn(
                 "trellis-scrollbar min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-0 md:px-6 md:pb-5 md:pt-0",
                 listCollapsed && "pt-12"
@@ -2066,6 +2087,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
                 wikiNotes={notes.map((note) => ({ slug: note.slug, title: note.title }))}
                 allTags={allTags}
                 editable
+                workspaceId={workspaceId}
                 variant="page"
                 onOpenLink={(slug, options) => {
                   void handleOpenWikiLink(slug, options);

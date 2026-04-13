@@ -25,6 +25,7 @@ import type {
   ExtractionResponse as ExtractionPayload,
   ExtractionUpdate
 } from "../../../shared/extraction/contracts.ts";
+import { deriveSessionTitle } from "../../../shared/chat/deriveSessionTitle.ts";
 
 export interface ChatImagePart {
   mimeType: string;
@@ -236,58 +237,6 @@ function shouldExtractKnowledge(corpus: string, sourceType?: "pdf" | "web" | "te
 function isTemplateCreationRequest(corpus: string): boolean {
   return /\b(?:reusable\s+)?(?:trellis\s+)?template\b/i.test(corpus) &&
     /\b(create|make|draft|build|design|save)\b/i.test(corpus);
-}
-
-const CHAT_ATTACHMENT_CONTEXT_MARKER = "\n\n---\n\n## Attached context";
-
-function stripAttachmentContextForTitle(content: string): string {
-  const idx = content.indexOf(CHAT_ATTACHMENT_CONTEXT_MARKER);
-
-  if (idx === -1) {
-    return content;
-  }
-
-  return content.slice(0, idx).trim();
-}
-
-function userMessageBodyForTitle(message: ChatMessage | undefined): string {
-  if (!message || message.role !== "user") {
-    return "";
-  }
-
-  const trimmed = message.content.trim();
-
-  if (trimmed.length > 0) {
-    return stripAttachmentContextForTitle(trimmed);
-  }
-
-  if (message.imageParts && message.imageParts.length > 0) {
-    return "Image message";
-  }
-
-  return "";
-}
-
-function deriveSessionTitle(messages: ChatMessage[]): string {
-  const lastUserMessage = [...messages].reverse().find((message) => message.role === "user");
-  const lastUserBody = userMessageBodyForTitle(lastUserMessage);
-
-  if (!lastUserBody) {
-    return "New Conversation";
-  }
-
-  const body =
-    lastUserBody.length === 0 || lastUserBody === "(No message text.)"
-      ? "Attached context"
-      : lastUserBody;
-
-  const keywords = extractKeywords(body);
-
-  if (keywords.length === 0) {
-    return titleCase(body.split(/\s+/).slice(0, 6).join(" "));
-  }
-
-  return titleCase(keywords.slice(0, 3).join(" "));
 }
 
 function toOpenAiApiMessage(message: ChatMessage): Record<string, unknown> {
@@ -537,7 +486,7 @@ export async function generateChatReply(
 
   return {
     text,
-    sessionTitle: deriveSessionTitle(messages),
+    sessionTitle: deriveSessionTitle(messages, { assistantReply: text }),
     tokenCount: Math.ceil(text.length / 4)
   };
 }

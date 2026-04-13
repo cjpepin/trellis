@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import { CircleHelp, Link2, Plus, Trash2, X } from "lucide-react";
-import type { WikiNote } from "@electron/ipc/types";
+import type { AppWorkspaceId, WikiNote } from "@electron/ipc/types";
 import { RichTextRenderer } from "@/components/shared/RichTextRenderer";
 import { EditableNoteTitle } from "@/components/wiki/EditableNoteTitle";
 import { WikiRichTextEditor } from "@/components/wiki/WikiRichTextEditor";
@@ -51,9 +51,11 @@ interface Props {
   wikiNotes?: Array<{ slug: string; title: string }>;
   allTags?: string[];
   editable?: boolean;
+  /** Persists note editor preview vs markdown preference for this workspace */
+  workspaceId?: AppWorkspaceId;
   variant?: "page" | "preview";
   onOpenLink: (slug: string, options?: { linkText?: string }) => void;
-  onSave?: (content: string, slug: string) => void;
+  onSave?: (content: string, slug: string) => void | Promise<void>;
   onSaveTitle?: (title: string, slug: string) => void | Promise<void>;
   onSelectTag?: (tag: string) => void;
   onAddTag?: (tag: string) => void | Promise<void>;
@@ -67,6 +69,7 @@ export function NoteViewer({
   wikiNotes,
   allTags = [],
   editable = false,
+  workspaceId,
   variant = "page",
   onOpenLink,
   onSave,
@@ -246,6 +249,7 @@ export function NoteViewer({
       {editable && onSave ? (
         <WikiRichTextEditor
           key={note.slug}
+          workspaceId={workspaceId}
           noteSlug={note.slug}
           markdown={note.content}
           existingSlugs={existingSlugs}

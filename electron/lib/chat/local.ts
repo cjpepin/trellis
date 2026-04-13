@@ -1,4 +1,5 @@
 import { buildChatSystemPrompt } from "../../../supabase/functions/_shared/prompts";
+import { deriveSessionTitle } from "../../../shared/chat/deriveSessionTitle";
 import { defaultLocalExtractionModelId } from "../../../shared/extraction/config";
 import type { LocalChatRunInput, LocalChatRunResult } from "../../ipc/types";
 import { runEmbeddedChatPrompt } from "./embeddedCompletion";
@@ -24,29 +25,11 @@ async function runE2eLocalReplyStub(
 
   return {
     text,
-    sessionTitle: deriveSessionTitle(input.messages),
+    sessionTitle: deriveSessionTitle(input.messages, { assistantReply: text }),
     tokenCount: Math.ceil(text.length / 4),
     provider: "embedded",
     model: "e2e-stub"
   };
-}
-
-function deriveSessionTitle(messages: LocalChatRunInput["messages"]): string {
-  const latestUserMessage = [...messages].reverse().find((message) => message.role === "user")?.content ?? "";
-  const words = latestUserMessage
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 6)
-    .map((part) => part.replace(/[^a-z0-9-]/gi, ""))
-    .filter(Boolean);
-
-  if (words.length === 0) {
-    return "New Conversation";
-  }
-
-  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
 }
 
 function buildLocalPrompt(messages: LocalChatRunInput["messages"]): string {
@@ -77,7 +60,7 @@ export async function runLocalChatReply(input: LocalChatRunInput): Promise<Local
 
   return {
     text,
-    sessionTitle: deriveSessionTitle(input.messages),
+    sessionTitle: deriveSessionTitle(input.messages, { assistantReply: text }),
     tokenCount: Math.ceil(text.length / 4),
     provider: "embedded",
     model: defaultLocalExtractionModelId
