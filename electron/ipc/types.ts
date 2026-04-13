@@ -60,6 +60,7 @@ export const ipcChannels = {
   chatBuildContext: "chat:build:context",
   chatStoreMemory: "chat:store:memory",
   chatProposeNoteActions: "chat:propose-note-actions",
+  chatApplyTemplateInstance: "chat:apply-template-instance",
   chatApplyVaultOrganize: "chat:apply-vault-organize",
   chatRunLocalReply: "chat:run:local-reply",
   chatStream: "chat:stream",
@@ -224,6 +225,22 @@ export interface ChatNoteActionProposal {
   errorMessage?: string;
 }
 
+export type ChatTemplateInstanceStatus = "active" | "completed" | "failed";
+
+export interface ChatTemplateInstanceState {
+  templateSlug: string;
+  templateTitle: string;
+  instanceSlug: string;
+  instanceTitle: string;
+  status: ChatTemplateInstanceStatus;
+  sourceUserMessageIds: string[];
+  answerUserMessageIds: string[];
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  errorMessage?: string;
+}
+
 export interface MessageRecord {
   id: string;
   sessionId: string;
@@ -234,6 +251,7 @@ export interface MessageRecord {
   attachments?: ChatAttachment[];
   mediaArtifacts?: ChatMediaArtifact[];
   noteActions?: ChatNoteActionProposal[];
+  templateInstance?: ChatTemplateInstanceState;
 }
 
 export interface ChatAttachmentPickResult {
@@ -484,6 +502,7 @@ export interface StoreChatMemoryInput {
 
 export interface ProposeChatNoteActionsInput {
   mode: ChatPrivacyMode;
+  phase?: "pre_response" | "post_response";
   vaultId?: string;
   activeNoteSlug?: string | null;
   messages: Array<Pick<MessageRecord, "id" | "role" | "content" | "attachments" | "mediaArtifacts" | "noteActions">>;
@@ -492,6 +511,24 @@ export interface ProposeChatNoteActionsInput {
 export interface ProposeChatNoteActionsResult {
   actions: ChatNoteActionProposal[];
   clarification: string | null;
+}
+
+export interface ApplyChatTemplateInstanceInput {
+  vaultId?: string;
+  sessionId: string;
+  userMessageId: string;
+  messages: Array<Pick<MessageRecord, "id" | "role" | "content" | "templateInstance">>;
+}
+
+export interface ApplyChatTemplateInstanceResult {
+  applied: boolean;
+  action: "created" | "updated" | "completed" | "none";
+  state: ChatTemplateInstanceState | null;
+  note?: {
+    slug: string;
+    title: string;
+  };
+  message: string | null;
 }
 
 export interface ApplyVaultOrganizeInput {
@@ -865,6 +902,7 @@ export interface ChatBridge {
   buildContext: (input: BuildChatContextInput) => Promise<ChatContextPacket>;
   storeMemory: (input: StoreChatMemoryInput) => Promise<MemoryItem[]>;
   proposeNoteActions: (input: ProposeChatNoteActionsInput) => Promise<ProposeChatNoteActionsResult>;
+  applyTemplateInstance: (input: ApplyChatTemplateInstanceInput) => Promise<ApplyChatTemplateInstanceResult>;
   applyVaultOrganize: (input: ApplyVaultOrganizeInput) => Promise<ApplyVaultOrganizeResult>;
   runLocalReply: (input: LocalChatRunInput) => Promise<LocalChatRunResult>;
   stream: (input: ChatStreamInput) => Promise<void>;

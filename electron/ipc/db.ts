@@ -62,6 +62,20 @@ const chatNoteActionSchema = z.object({
   errorMessage: z.string().max(2000).optional()
 });
 
+const chatTemplateInstanceSchema = z.object({
+  templateSlug: z.string().min(1).max(180),
+  templateTitle: z.string().min(1).max(180),
+  instanceSlug: z.string().min(1).max(220),
+  instanceTitle: z.string().min(1).max(180),
+  status: z.enum(["active", "completed", "failed"]),
+  sourceUserMessageIds: z.array(z.string().uuid()).min(1).max(80),
+  answerUserMessageIds: z.array(z.string().uuid()).max(80),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+  completedAt: z.number().int().optional(),
+  errorMessage: z.string().max(2000).optional()
+});
+
 const messageSchema = z
   .object({
     id: z.string().uuid(),
@@ -72,7 +86,8 @@ const messageSchema = z
     tokens: z.number().int().nullable(),
     attachments: z.array(chatAttachmentSchema).max(12).optional(),
     mediaArtifacts: z.array(chatMediaArtifactSchema).max(8).optional(),
-    noteActions: z.array(chatNoteActionSchema).max(6).optional()
+    noteActions: z.array(chatNoteActionSchema).max(6).optional(),
+    templateInstance: chatTemplateInstanceSchema.optional()
   })
   .superRefine((value, ctx) => {
     const hasText = value.content.trim().length > 0;

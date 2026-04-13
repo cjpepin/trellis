@@ -20,7 +20,9 @@ function firstLineLooksLikeAssistantChatter(line: string): boolean {
     /^(If you want|Let me know|Would you like|I can (also|help|make)|Hope this|Feel free|That would|Tell me if|I'?m happy to|Anything else|Want me to|Need anything|Is there anything)/i.test(
       t
     ) ||
-    /^(Does that help|Does this\b)/i.test(t)
+    /^(Does that help|Does this\b)/i.test(t) ||
+    /^(I(?:'|’)?m|I am)\s+(?:adding|saving|creating|setting)\b/i.test(t) ||
+    /^You can now\b/i.test(t)
   );
 }
 

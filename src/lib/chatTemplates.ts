@@ -23,6 +23,7 @@ export function buildTemplateUsePrompt(templateTitle: string): string {
 
   return [
     `Use [[${templateTitle}]] as the template for a new note titled "${instanceTitle}".`,
+    "Trellis should create that note instance now and keep updating the same note from my answers; do not ask for a separate save review.",
     "Substitute Trellis macros in the template (such as {{date}}, {{title}}, {{iso_date}}) with their real values for this instance—do not ask me for those.",
     "Ask me focused follow-up questions when a section is missing, and keep the note organized with the template's structure as we talk.",
     "",
@@ -33,7 +34,7 @@ export function buildTemplateUsePrompt(templateTitle: string): string {
 export function buildTemplateCreationPrompt(description: string): string {
   return [
     `Help me create a reusable Trellis template for ${description.trim()}.`,
-    "Include a clear markdown structure and the prompts you should ask me when I use it, so Trellis can save it as a reusable template note.",
+    "Include a clear markdown structure and the prompts you should ask me when I use it, so Trellis can show it as an editable reusable template draft.",
     "You may use placeholders such as {{date}}, {{iso_date}}, and {{title}} where the final note should insert the current date or the new note's title when someone creates a note from this template."
   ].join("\n");
 }

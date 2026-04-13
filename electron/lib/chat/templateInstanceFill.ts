@@ -62,9 +62,10 @@ function formatUserAnswersForPrompt(
  */
 export function buildDeterministicTemplateFillBody(
   templateCtx: { title: string; content: string },
-  transcript: Array<{ role: "user" | "assistant"; content: string }>
+  transcript: Array<{ role: "user" | "assistant"; content: string }>,
+  options?: { now?: Date }
 ): string {
-  const now = new Date();
+  const now = options?.now ?? new Date();
   const base = expandTemplateBodyForInstance(
     templateCtx.title,
     templateBodyWithoutLeadingTitle(templateCtx.content),
@@ -88,12 +89,13 @@ export async function trySynthesizeTemplateInstanceMarkdown(input: {
   templateTitle: string;
   templateContent: string;
   transcript: Array<{ role: "user" | "assistant"; content: string }>;
+  now?: Date;
 }): Promise<string | null> {
   if (!(await isEmbeddedModelAvailable())) {
     return null;
   }
 
-  const now = new Date();
+  const now = input.now ?? new Date();
   const base = truncate(
     expandTemplateBodyForInstance(
       input.templateTitle,

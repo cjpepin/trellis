@@ -126,3 +126,110 @@ test("reviews proposed template note actions from chat", async ({ page }) => {
   expect(path.basename(seeded.approvedPath)).toMatch(/daily-reflection-approved/);
   expect(fs.readFileSync(seeded.approvedPath, "utf8")).toContain("## E2E edit");
 });
+
+test("applies a linked template as a living note instance", async ({ page }) => {
+  await selectWorkspace(page, "preview");
+
+  const result = await page.evaluate(async () => {
+    const settings = await window.trellis.app.getSettings();
+    const vault = settings.vaults[0];
+
+    if (!vault) {
+      throw new Error("Missing preview vault.");
+    }
+
+    const nonce = Date.now();
+    const templateTitle = `Daily Log ${nonce} - {{date}} Template`;
+    await window.trellis.vault.writeNote({
+      vaultId: vault.id,
+      title: templateTitle,
+      folderPath: "templates",
+      content: [
+        `# ${templateTitle}`,
+        "",
+        "## Date",
+        "{{date}}",
+        "",
+        "## Notes",
+        "- "
+      ].join("\n"),
+      frontmatter: {
+        tags: ["template"],
+        type: "concept",
+        sources: 0
+      }
+    });
+
+    const session = await window.trellis.db.createSession({
+      model: "gpt-4.1-mini",
+      vaultId: vault.id
+    });
+    const firstUser = {
+      id: crypto.randomUUID(),
+      role: "user" as const,
+      content: `Fill out [[${templateTitle}]] for today.`
+    };
+    const created = await window.trellis.chat.applyTemplateInstance({
+      vaultId: vault.id,
+      sessionId: session.id,
+      userMessageId: firstUser.id,
+      messages: [firstUser]
+    });
+    const answer = {
+      id: crypto.randomUUID(),
+      role: "user" as const,
+      content: "I hung out with Aidan and went to 3 coffee shops."
+    };
+    const updated = await window.trellis.chat.applyTemplateInstance({
+      vaultId: vault.id,
+      sessionId: session.id,
+      userMessageId: answer.id,
+      messages: [{ ...firstUser, templateInstance: created.state ?? undefined }, answer]
+    });
+    const done = {
+      id: crypto.randomUUID(),
+      role: "user" as const,
+      content: "perfect!"
+    };
+    const completed = await window.trellis.chat.applyTemplateInstance({
+      vaultId: vault.id,
+      sessionId: session.id,
+      userMessageId: done.id,
+      messages: [
+        { ...firstUser, templateInstance: created.state ?? undefined },
+        { ...answer, templateInstance: updated.state ?? undefined },
+        done
+      ]
+    });
+
+    if (!updated.state) {
+      throw new Error("Template instance update did not return state.");
+    }
+
+    const note = await window.trellis.vault.readNote(updated.state.instanceSlug, vault.id);
+
+    return {
+      createdAction: created.action,
+      updatedAction: updated.action,
+      completedAction: completed.action,
+      completedStatus: completed.state?.status ?? null,
+      instanceTitle: updated.state.instanceTitle,
+      noteTitle: note.title,
+      noteFolderPath: note.folderPath,
+      noteTags: note.tags,
+      noteContent: note.content
+    };
+  });
+
+  expect(result.createdAction).toBe("created");
+  expect(result.updatedAction).toBe("updated");
+  expect(result.completedAction).toBe("completed");
+  expect(result.completedStatus).toBe("completed");
+  expect(result.instanceTitle).not.toContain("{{date}}");
+  expect(result.instanceTitle).not.toMatch(/\bTemplate\b/);
+  expect(result.noteTitle).toBe(result.instanceTitle);
+  expect(result.noteFolderPath).toBe("");
+  expect(result.noteTags).not.toContain("template");
+  expect(result.noteContent).toContain("Aidan");
+  expect(result.noteContent).not.toContain("perfect");
+});

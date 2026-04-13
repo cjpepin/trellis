@@ -178,6 +178,98 @@ test("proposeChatNoteActions skips pre-LLM template save when the user still nee
   }
 });
 
+test("proposeChatNoteActions creates a review after a combined template request is drafted", async () => {
+  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-post-draft-"));
+
+  try {
+    const user = makeMessage(
+      "user",
+      [
+        "Create a reusable template for a daily reflection and save it as a template.",
+        "It should track feelings, wins, challenges, learning, and improvements."
+      ].join(" ")
+    );
+    const assistant = makeMessage(
+      "assistant",
+      [
+        "Great! I'll create a reusable template note in your vault called Daily Reflection (template) with the content below:",
+        "",
+        "# Daily Reflection - {{date}}",
+        "",
+        "## How did I feel today?",
+        "- ",
+        "",
+        "## What went well today?",
+        "- ",
+        "",
+        "I'm adding this as Daily Reflection (template) under your templates. You can now instantiate it whenever you want."
+      ].join("\n")
+    );
+    const result = await proposeChatNoteActions(
+      () => makeSettings(vaultPath),
+      {
+        mode: "local",
+        phase: "post_response",
+        vaultId: "vault-1",
+        messages: [user, assistant]
+      }
+    );
+
+    assert.equal(result.clarification, null);
+    assert.equal(result.actions.length, 1);
+    assert.equal(result.actions[0].kind, "create_template");
+    assert.equal(result.actions[0].status, "pending");
+    assert.equal(result.actions[0].targetTitle, "Daily Reflection Template");
+    assert.equal(result.actions[0].targetSlug, "daily-reflection-template");
+    assert.equal(result.actions[0].targetFolderPath, "templates");
+    assert.match(result.actions[0].afterMarkdown, /^# Daily Reflection - \{\{date\}\}/);
+    assert.ok(!result.actions[0].afterMarkdown.includes("I'm adding this"));
+    assert.equal(
+      fs.existsSync(path.join(vaultPath, "wiki", "templates", "daily-reflection-template.md")),
+      false
+    );
+  } finally {
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
+});
+
+test("proposeChatNoteActions creates a review after a draft-only template request is answered", async () => {
+  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-draft-only-"));
+
+  try {
+    const user = makeMessage("user", "Let's create a simple daily log template.");
+    const assistant = makeMessage(
+      "assistant",
+      [
+        "# Daily Log - {{date}}",
+        "",
+        "## Tasks",
+        "- [ ] ",
+        "",
+        "## Notes",
+        "- "
+      ].join("\n")
+    );
+    const result = await proposeChatNoteActions(
+      () => makeSettings(vaultPath),
+      {
+        mode: "local",
+        phase: "post_response",
+        vaultId: "vault-1",
+        messages: [user, assistant]
+      }
+    );
+
+    assert.equal(result.clarification, null);
+    assert.equal(result.actions.length, 1);
+    assert.equal(result.actions[0].kind, "create_template");
+    assert.equal(result.actions[0].targetFolderPath, "templates");
+    assert.deepEqual(result.actions[0].frontmatter.tags, ["template"]);
+  } finally {
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
+});
+
 test("hasTemplateCreationReviewIntent only when saving a template", () => {
   assert.equal(hasTemplateCreationReviewIntent("Update [[Roadmap]] to include template approvals."), false);
   assert.equal(hasTemplateCreationReviewIntent("I like that, save it as a reusable template"), true);

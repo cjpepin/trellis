@@ -155,6 +155,8 @@ const trellis: TrellisBridge = {
     storeMemory: (input) => ipcRenderer.invoke(ipcChannels.chatStoreMemory, input),
     proposeNoteActions: (input) =>
       ipcRenderer.invoke(ipcChannels.chatProposeNoteActions, input),
+    applyTemplateInstance: (input) =>
+      ipcRenderer.invoke(ipcChannels.chatApplyTemplateInstance, input),
     applyVaultOrganize: (input: ApplyVaultOrganizeInput) =>
       ipcRenderer.invoke(ipcChannels.chatApplyVaultOrganize, input),
     runLocalReply: (input) => ipcRenderer.invoke(ipcChannels.chatRunLocalReply, input),

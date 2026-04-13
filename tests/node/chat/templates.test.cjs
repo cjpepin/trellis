@@ -51,11 +51,24 @@ test("template instance slug aligns with shared title date and session prefix", 
   assert.match(titleShared, /Apr 10, 2026/);
 });
 
-test("AI template prompt asks chat to save a reusable template note", () => {
+test("template instance titles expand date macros without appending a second date", () => {
+  const date = new Date("2026-04-10T12:00:00");
+  const title = buildTemplateInstanceTitleShared("Daily Log - {{date}} Template", date);
+  const slug = buildTemplateInstanceSlug("daily-log-date-template", "abcdef12-3456-7890-abcd-ef1234567890", date);
+
+  assert.match(title, /^Daily Log - /);
+  assert.match(title, /2026|Apr/);
+  assert.ok(!title.includes("{{date}}"));
+  assert.doesNotMatch(title, /Template/);
+  assert.doesNotMatch(title, /Apr 10, 2026 - Apr 10, 2026/);
+  assert.equal(slug, "daily-log-2026-04-10-abcdef12");
+});
+
+test("AI template prompt asks chat to draft a reusable template note", () => {
   const prompt = buildTemplateCreationPrompt("a daily reflection");
 
   assert.match(prompt, /reusable Trellis template/);
-  assert.match(prompt, /Trellis can save it as a reusable template note/);
+  assert.match(prompt, /editable reusable template draft/);
   assert.match(prompt, /\{\{date\}\}/);
 });
 
@@ -122,6 +135,29 @@ test("stripAssistantTemplateDraftMarkdown removes assistant intro and footer aro
   assert.ok(!cleaned.includes("Absolutely"));
   assert.ok(!cleaned.includes("If you want, I can also"));
   assert.ok(!cleaned.includes("basketball"));
+});
+
+test("stripAssistantTemplateDraftMarkdown removes false template save footer", () => {
+  const raw = [
+    "Great! I'll create a reusable template note in your vault called Daily Reflection (template) with the content below:",
+    "",
+    "# Daily Reflection - {{date}}",
+    "",
+    "## How did I feel today?",
+    "- ",
+    "",
+    "## What went well today?",
+    "- ",
+    "",
+    "I'm adding this as Daily Reflection (template) under your templates. You can now instantiate a fresh daily reflection note from this template whenever you want."
+  ].join("\n");
+
+  const cleaned = stripAssistantTemplateDraftMarkdown(raw);
+
+  assert.match(cleaned, /^# Daily Reflection - \{\{date\}\}/);
+  assert.ok(!cleaned.includes("Great!"));
+  assert.ok(!cleaned.includes("I'm adding this"));
+  assert.ok(!cleaned.includes("You can now"));
 });
 
 test("stripAssistantTemplateDraftMarkdown does not strip a middle hr when followed by another template", () => {

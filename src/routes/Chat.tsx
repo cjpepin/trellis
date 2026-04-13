@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { ClipboardCopy, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   type AppFeatureFlags,
@@ -10,6 +10,7 @@ import {
   type ChatMediaArtifact,
   type ChatModel,
   type ChatNoteActionProposal,
+  type ChatTemplateInstanceState,
   type MessageRecord,
   type QueueSessionExtractionResult
 } from "@electron/ipc/types";
@@ -42,6 +43,7 @@ import { useAuthStore } from "@/store/authStore";
 import { useChatStore } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
 import { notesRoutePath } from "@/lib/noteRoutes";
+import { formatChatTranscriptForClipboard } from "@/lib/chatClipboard";
 import { cn } from "@/lib/utils";
 import {
   defaultNewTemplateMarkdown,
@@ -519,6 +521,70 @@ export function Chat({
     [activeNoteSlug, activeSession?.title, settings.chat.privacyMode]
   );
 
+  async function applyTemplateInstanceToMessages(input: {
+    sessionId: string;
+    vaultId: string;
+    messages: MessageRecord[];
+    userMessageId: string;
+  }): Promise<MessageRecord[]> {
+    const result = await window.trellis.chat.applyTemplateInstance({
+      vaultId: input.vaultId,
+      sessionId: input.sessionId,
+      userMessageId: input.userMessageId,
+      messages: input.messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        content: formatMessageForApi(message),
+        ...(message.templateInstance ? { templateInstance: message.templateInstance } : {})
+      }))
+    });
+
+    if (!result.applied || !result.state) {
+      return input.messages;
+    }
+
+    const nextMessages = input.messages.map((message) =>
+      message.id === input.userMessageId
+        ? {
+            ...message,
+            templateInstance: result.state as ChatTemplateInstanceState
+          }
+        : message
+    );
+
+    replaceSessionMessages(input.sessionId, nextMessages);
+    await window.trellis.db.replaceMessages({
+      sessionId: input.sessionId,
+      messages: nextMessages
+    });
+
+    if (result.note) {
+      pushToast({
+        title: result.message ?? `${result.note.title} updated.`,
+        tone: "success",
+        noteLinks: [{ label: result.note.title, noteSlug: result.note.slug }]
+      });
+    }
+
+    if (result.action === "created" || result.action === "updated") {
+      try {
+        const snapshot = await window.trellis.vault.listIndex(input.vaultId);
+        replaceWikiIndex({
+          notes: snapshot.notes,
+          folders: snapshot.folders,
+          graph: snapshot.graph
+        });
+        if (result.note) {
+          await loadNote(result.note.slug, input.vaultId);
+        }
+      } catch {
+        // Non-fatal; the next vault refresh will pick up the written template instance.
+      }
+    }
+
+    return nextMessages;
+  }
+
   function buildRetryTranscript(
     sessionId: string,
     targetMessageId: string | undefined,
@@ -625,7 +691,7 @@ export function Chat({
         upsertSession(session);
       }
 
-      const { baseMessages, userMessage } = buildRetryTranscript(
+      let { baseMessages, userMessage } = buildRetryTranscript(
         sessionId,
         targetMessageId,
         value,
@@ -728,6 +794,27 @@ export function Chat({
         }
       }
 
+      if (!targetMessageId) {
+        try {
+          baseMessages = await applyTemplateInstanceToMessages({
+            sessionId,
+            vaultId: sessionVaultId,
+            messages: baseMessages,
+            userMessageId: userMessage.id
+          });
+          userMessage =
+            baseMessages.find((message) => message.id === userMessage.id) ?? userMessage;
+        } catch (error) {
+          pushToast({
+            title:
+              error instanceof Error
+                ? error.message
+                : "Trellis couldn’t update that template instance.",
+            tone: "warning"
+          });
+        }
+      }
+
       let contextPacket: ChatContextPacket = {
         mode: settings.chat.privacyMode,
         references: [],
@@ -776,16 +863,71 @@ export function Chat({
       } else {
         clearMessageMeta(userMessage.id);
       }
-      const nextMessages = [...baseMessages, streamResult.assistantMessage];
-      replaceSessionMessages(sessionId, nextMessages);
+      const assistantForPersistence: MessageRecord = userMessage.templateInstance
+        ? {
+            ...streamResult.assistantMessage,
+            templateInstance: userMessage.templateInstance
+          }
+        : streamResult.assistantMessage;
+      const nextMessages = [...baseMessages, assistantForPersistence];
+      let persistedMessages = nextMessages;
+
+      if (!targetMessageId) {
+        try {
+          const proposal = await window.trellis.chat.proposeNoteActions({
+            mode: settings.chat.privacyMode,
+            phase: "post_response",
+            vaultId: sessionVaultId,
+            activeNoteSlug,
+            messages: nextMessages.map((message) => ({
+              id: message.id,
+              role: message.role,
+              content: formatMessageForApi(message)
+            }))
+          });
+
+          const isTemplateNoteActionReview =
+            proposal.actions.length > 0 &&
+            proposal.actions.every(
+              (action) =>
+                action.kind === "create_template" || action.kind === "update_template"
+            );
+
+          if (isTemplateNoteActionReview) {
+            persistedMessages = nextMessages.map((message) =>
+              message.id === streamResult.assistantMessage?.id
+                ? {
+                    ...message,
+                    content:
+                      "I drafted that template and queued it for review. Make any final edits below, then approve to save it under wiki/templates.",
+                    noteActions: proposal.actions
+                  }
+                : message
+            );
+          }
+        } catch (error) {
+          pushToast({
+            title:
+              error instanceof Error
+                ? error.message
+                : "Trellis couldn’t prepare a note change for review.",
+            tone: "warning"
+          });
+        }
+      }
+
+      replaceSessionMessages(sessionId, persistedMessages);
+      const persistedAssistantMessage =
+        persistedMessages.find((message) => message.id === streamResult.assistantMessage?.id) ??
+        streamResult.assistantMessage;
       if (
         settings.chat.readAloudAutoPlay &&
-        streamResult.assistantMessage.content.trim().length > 0 &&
+        persistedAssistantMessage.content.trim().length > 0 &&
         settings.chat.privacyMode !== "local" &&
         accessToken &&
         useChatStore.getState().activeSessionId === sessionId
       ) {
-        const assistantId = streamResult.assistantMessage.id;
+        const assistantId = persistedAssistantMessage.id;
         const myGen = ++readAloudStreamGenRef.current;
         try {
           const previousPlayback = readAloudPlaybackRef.current;
@@ -798,7 +940,7 @@ export function Chat({
           const playback = new PcmStreamPlayback();
           readAloudPlaybackRef.current = playback;
           await playback.ensureRunning();
-          const text = streamResult.assistantMessage.content.slice(0, 4096);
+          const text = persistedAssistantMessage.content.slice(0, 4096);
           let heardFirstChunk = false;
           await window.trellis.media.synthesizeSpeechStream(
             {
@@ -831,12 +973,12 @@ export function Chat({
       }
       await window.trellis.db.replaceMessages({
         sessionId,
-        messages: nextMessages
+        messages: persistedMessages
       });
       void window.trellis.chat.storeMemory({
         vaultId: sessionVaultId,
         sessionId,
-        messages: nextMessages
+        messages: persistedMessages
           .slice(-2)
           .map((message) => ({
             id: message.id,
@@ -1109,6 +1251,27 @@ export function Chat({
     setDraft("");
     setPendingAttachments([]);
     setPendingImageAttachments([]);
+  }
+
+  async function handleCopyChatToClipboard(): Promise<void> {
+    if (!activeSessionId || currentMessages.length === 0) {
+      return;
+    }
+
+    const text = formatChatTranscriptForClipboard(currentMessages, activeSession?.title ?? null);
+
+    try {
+      await navigator.clipboard.writeText(text);
+      pushToast({
+        title: "Chat copied to clipboard.",
+        tone: "success"
+      });
+    } catch (error: unknown) {
+      pushToast({
+        title: error instanceof Error ? error.message : "Could not copy to clipboard.",
+        tone: "warning"
+      });
+    }
   }
 
   function handleStartNewChat(): void {
@@ -1890,6 +2053,20 @@ export function Chat({
                   Save to note
                 </button>
               </span>
+            ) : null}
+            {activeSessionId && currentMessages.length > 0 ? (
+              <button
+                type="button"
+                data-testid="chat-copy-clipboard"
+                title="Copy this conversation as plain text"
+                className="flex w-full shrink-0 items-center justify-center gap-2 rounded-full border border-trellis-border bg-trellis-surface px-3 py-2 text-center text-sm text-trellis-text transition hover:border-trellis-accent/35 hover:text-trellis-accent"
+                onClick={() => {
+                  void handleCopyChatToClipboard();
+                }}
+              >
+                <ClipboardCopy className="h-4 w-4 shrink-0" aria-hidden />
+                Copy chat
+              </button>
             ) : null}
             <button
               type="button"

@@ -145,7 +145,7 @@ function looksLikeTemplateSaveApprovalTurn(content: string): boolean {
 /** Prior assistant drafted a structured note (H1 + section headings); used to pair with short "yes / please do" replies. */
 function draftAssistantLooksLikeTemplatedMarkdown(content: string): boolean {
   const text = content.trim();
-  if (text.length < 80) {
+  if (text.length < 40) {
     return false;
   }
 
@@ -191,6 +191,24 @@ function isTemplateRequest(content: string): boolean {
   return /\btemplate\b/i.test(content);
 }
 
+function hasTemplateDraftRequestIntent(content: string): boolean {
+  const text = content.trim();
+
+  if (!/\btemplate\b/i.test(text)) {
+    return false;
+  }
+
+  if (/\[\[[^\]]+\]\]/.test(text)) {
+    return false;
+  }
+
+  if (/\b(?:use|fill|apply)\b/i.test(text)) {
+    return false;
+  }
+
+  return /\b(?:create|make|draft|design|build)\b/i.test(text);
+}
+
 function titleFromAssistantMarkdown(content: string): string | null {
   const heading = content.match(/^#\s+(.+?)\s*$/m)?.[1]?.trim();
 
@@ -205,6 +223,7 @@ function titleFromAssistantMarkdown(content: string): string | null {
 function stripTemplateWord(title: string): string {
   return title
     .replace(/\btemplate\b/gi, "")
+    .replace(/\(\s*\)/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -221,6 +240,19 @@ function inferQuotedTitle(content: string): string | null {
     content.match(/(?:called|named|titled)\s+'([^']{1,120})'/i)?.[1]?.trim() ??
     null
   );
+}
+
+function inferAssistantNamedTitle(content: string): string | null {
+  const match =
+    content.match(/\bcalled\s+([^:\n]{1,120}?)\s+with\b/i)?.[1]?.trim() ??
+    content.match(/\bcalled\s+([^:\n]{1,120}?)(?:\.|:|\n|$)/i)?.[1]?.trim() ??
+    null;
+
+  if (!match) {
+    return null;
+  }
+
+  return match.replace(/[`*_]/g, "").trim() || null;
 }
 
 function summarizeForBody(content: string): string {
@@ -291,6 +323,7 @@ async function proposeTemplateSave(input: {
   const cleanedDraft = stripAssistantTemplateDraftMarkdown(input.draftAssistant.content);
   const rawTitle =
     inferQuotedTitle(input.latestUser.content) ??
+    inferAssistantNamedTitle(input.draftAssistant.content) ??
     titleFromAssistantMarkdown(cleanedDraft) ??
     "Reusable Template";
   const targetTitle = normalizeTemplateTitle(rawTitle);
@@ -379,11 +412,59 @@ function getLatestUserAndDraftAssistant(messages: ProposalMessage[]): {
   };
 }
 
+function getLatestUserAndDraftAssistantFromPostResponse(messages: ProposalMessage[]): {
+  latestUser: ProposalMessage | null;
+  draftAssistant: ProposalMessage | null;
+} {
+  let latestAssistantIndex = -1;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "assistant") {
+      latestAssistantIndex = index;
+      break;
+    }
+  }
+
+  if (latestAssistantIndex === -1) {
+    return {
+      latestUser: null,
+      draftAssistant: null
+    };
+  }
+
+  const draftAssistant = messages[latestAssistantIndex] ?? null;
+
+  for (let index = latestAssistantIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "assistant") {
+      return {
+        latestUser: null,
+        draftAssistant
+      };
+    }
+    if (message?.role === "user") {
+      return {
+        latestUser: message,
+        draftAssistant
+      };
+    }
+  }
+
+  return {
+    latestUser: null,
+    draftAssistant
+  };
+}
+
 export async function proposeChatNoteActions(
   getSettings: () => AppSettings,
   input: ProposeChatNoteActionsInput
 ): Promise<ProposeChatNoteActionsResult> {
-  const { latestUser, draftAssistant } = getLatestUserAndDraftAssistant(input.messages);
+  const phase = input.phase ?? "pre_response";
+  const { latestUser, draftAssistant } =
+    phase === "post_response"
+      ? getLatestUserAndDraftAssistantFromPostResponse(input.messages)
+      : getLatestUserAndDraftAssistant(input.messages);
 
   let implicitApproval = false;
   if (latestUser && draftAssistant) {
@@ -393,21 +474,42 @@ export async function proposeChatNoteActions(
     });
   }
 
-  if (!latestUser || (!hasTemplateCreationReviewIntent(latestUser.content) && !implicitApproval)) {
+  const postResponseTemplateDraftReview =
+    phase === "post_response" &&
+    Boolean(latestUser && draftAssistant) &&
+    hasTemplateDraftRequestIntent(latestUser?.content ?? "") &&
+    draftAssistantLooksLikeTemplatedMarkdown(draftAssistant?.content ?? "");
+
+  if (
+    !latestUser ||
+    (
+      !hasTemplateCreationReviewIntent(latestUser.content) &&
+      !implicitApproval &&
+      !postResponseTemplateDraftReview
+    )
+  ) {
     return {
       actions: [],
       clarification: null
     };
   }
 
-  if (!implicitApproval && isCombinedTemplateDraftAndSaveRequest(latestUser.content)) {
+  if (
+    phase === "pre_response" &&
+    !implicitApproval &&
+    isCombinedTemplateDraftAndSaveRequest(latestUser.content)
+  ) {
     return {
       actions: [],
       clarification: null
     };
   }
 
-  if (!looksLikeTemplateSaveApprovalTurn(latestUser.content) && !implicitApproval) {
+  if (
+    phase === "pre_response" &&
+    !looksLikeTemplateSaveApprovalTurn(latestUser.content) &&
+    !implicitApproval
+  ) {
     return {
       actions: [],
       clarification: null

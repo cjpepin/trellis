@@ -45,22 +45,28 @@ export function getDirectNoteActionExcludedMessageIds(messages: MessageRecord[])
   const excluded = new Set<string>();
 
   for (const message of messages) {
-    if (!message.noteActions || message.noteActions.length === 0) {
-      continue;
+    if (message.noteActions && message.noteActions.length > 0) {
+      excluded.add(message.id);
+
+      for (const action of message.noteActions) {
+        if (
+          action.status !== "pending" &&
+          action.status !== "approved" &&
+          action.status !== "rejected"
+        ) {
+          continue;
+        }
+
+        for (const sourceMessageId of action.sourceMessageIds) {
+          excluded.add(sourceMessageId);
+        }
+      }
     }
 
-    excluded.add(message.id);
+    if (message.templateInstance && message.templateInstance.status !== "failed") {
+      excluded.add(message.id);
 
-    for (const action of message.noteActions) {
-      if (
-        action.status !== "pending" &&
-        action.status !== "approved" &&
-        action.status !== "rejected"
-      ) {
-        continue;
-      }
-
-      for (const sourceMessageId of action.sourceMessageIds) {
+      for (const sourceMessageId of message.templateInstance.sourceUserMessageIds) {
         excluded.add(sourceMessageId);
       }
     }

@@ -7,6 +7,7 @@ import type {
   ChatModel,
   ChatNoteActionProposal,
   ChatSessionSummary,
+  ChatTemplateInstanceState,
   ExtractionJobSnapshot,
   ExtractionJobStatus,
   ExtractionJobTrigger,
@@ -42,6 +43,7 @@ interface MessageRow {
   attachments: string | null;
   media_artifacts: string | null;
   note_actions: string | null;
+  template_instance: string | null;
 }
 
 interface NoteEmbeddingRow {
@@ -269,10 +271,29 @@ function parseNoteActions(raw: string | null | undefined): ChatNoteActionProposa
   }
 }
 
+function parseTemplateInstance(raw: string | null | undefined): ChatTemplateInstanceState | undefined {
+  if (!raw || raw.trim().length === 0) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (!parsed || typeof parsed !== "object") {
+      return undefined;
+    }
+
+    return parsed as ChatTemplateInstanceState;
+  } catch {
+    return undefined;
+  }
+}
+
 function mapMessage(row: MessageRow): MessageRecord {
   const attachments = parseAttachments(row.attachments);
   const mediaArtifacts = parseMediaArtifacts(row.media_artifacts);
   const noteActions = parseNoteActions(row.note_actions);
+  const templateInstance = parseTemplateInstance(row.template_instance);
 
   return {
     id: row.id,
@@ -283,7 +304,8 @@ function mapMessage(row: MessageRow): MessageRecord {
     tokens: row.tokens !== null ? Number(row.tokens) : null,
     ...(attachments ? { attachments } : {}),
     ...(mediaArtifacts ? { mediaArtifacts } : {}),
-    ...(noteActions ? { noteActions } : {})
+    ...(noteActions ? { noteActions } : {}),
+    ...(templateInstance ? { templateInstance } : {})
   };
 }
 
@@ -547,6 +569,22 @@ function migrateMessagesNoteActionsColumn(db: Sqlite.Database): void {
   }
 }
 
+function migrateMessagesTemplateInstanceColumn(db: Sqlite.Database): void {
+  try {
+    db.exec(`ALTER TABLE messages ADD COLUMN template_instance TEXT`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (
+      !message.includes("duplicate column") &&
+      !message.includes("already exists") &&
+      !message.includes("Duplicate column")
+    ) {
+      throw error;
+    }
+  }
+}
+
 /** PGlite-era migration; SQLite ships the full CHECK in ensureSchema. No-op. */
 function migrateExtractionJobProviderConstraint(_db: Sqlite.Database): void {}
 
@@ -560,6 +598,7 @@ export async function initializeDatabase(databaseFilePath: string): Promise<Sqli
     migrateMessagesAttachmentsColumn(database);
     migrateMessagesMediaArtifactsColumn(database);
     migrateMessagesNoteActionsColumn(database);
+    migrateMessagesTemplateInstanceColumn(database);
     migrateExtractionJobProviderConstraint(database);
     return database;
   }
@@ -578,6 +617,7 @@ export async function initializeDatabase(databaseFilePath: string): Promise<Sqli
   migrateMessagesAttachmentsColumn(database);
   migrateMessagesMediaArtifactsColumn(database);
   migrateMessagesNoteActionsColumn(database);
+  migrateMessagesTemplateInstanceColumn(database);
   migrateExtractionJobProviderConstraint(database);
 
   return database;
@@ -714,7 +754,7 @@ export async function getMessagesBySession(sessionId: string): Promise<MessageRe
   const db = getDatabase();
   const rows = allRows<MessageRow>(
     db,
-    `SELECT id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions
+    `SELECT id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions, template_instance
      FROM messages
      WHERE session_id = ?
      ORDER BY created_at ASC`,
@@ -743,17 +783,21 @@ export async function appendMessages(messages: MessageRecord[]): Promise<void> {
         message.noteActions && message.noteActions.length > 0
           ? JSON.stringify(message.noteActions)
           : null;
+      const templateInstanceJson = message.templateInstance
+        ? JSON.stringify(message.templateInstance)
+        : null;
 
       runExec(
         db,
-        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions, template_instance)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            content = excluded.content,
            tokens = excluded.tokens,
            attachments = excluded.attachments,
            media_artifacts = excluded.media_artifacts,
-           note_actions = excluded.note_actions`,
+           note_actions = excluded.note_actions,
+           template_instance = excluded.template_instance`,
         [
           message.id,
           message.sessionId,
@@ -763,7 +807,8 @@ export async function appendMessages(messages: MessageRecord[]): Promise<void> {
           message.tokens,
           attachmentsJson,
           mediaJson,
-          noteActionsJson
+          noteActionsJson,
+          templateInstanceJson
         ]
       );
       touchedSessions.add(message.sessionId);
@@ -812,11 +857,14 @@ export async function replaceMessages(sessionId: string, messages: MessageRecord
         message.noteActions && message.noteActions.length > 0
           ? JSON.stringify(message.noteActions)
           : null;
+      const templateInstanceJson = message.templateInstance
+        ? JSON.stringify(message.templateInstance)
+        : null;
 
       runExec(
         db,
-        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions, template_instance)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           message.id,
           message.sessionId,
@@ -826,7 +874,8 @@ export async function replaceMessages(sessionId: string, messages: MessageRecord
           message.tokens,
           attachmentsJson,
           mediaJson,
-          noteActionsJson
+          noteActionsJson,
+          templateInstanceJson
         ]
       );
     }
@@ -1006,11 +1055,14 @@ export async function seedDatabase(fixture: SeedDatabaseFixture): Promise<void> 
         message.noteActions && message.noteActions.length > 0
           ? JSON.stringify(message.noteActions)
           : null;
+      const templateInstanceJson = message.templateInstance
+        ? JSON.stringify(message.templateInstance)
+        : null;
 
       runExec(
         db,
-        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions, template_instance)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           message.id,
           message.sessionId,
@@ -1020,7 +1072,8 @@ export async function seedDatabase(fixture: SeedDatabaseFixture): Promise<void> 
           message.tokens,
           attachmentsJson,
           mediaJson,
-          noteActionsJson
+          noteActionsJson,
+          templateInstanceJson
         ]
       );
     }

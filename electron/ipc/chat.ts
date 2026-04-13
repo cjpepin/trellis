@@ -3,6 +3,7 @@ import { z } from "zod";
 import type {
   AppSettings,
   AppWorkspaceId,
+  ApplyChatTemplateInstanceInput,
   ApplyVaultOrganizeInput,
   BuildChatContextInput,
   ChatStreamPayloadMessage,
@@ -17,6 +18,7 @@ import type {
 import { chatModelIds, ipcChannels, isAppPreviewWorkspace } from "./types";
 import { buildChatContextPacket } from "../lib/chat/context";
 import { proposeChatNoteActions } from "../lib/chat/noteActions";
+import { applyChatTemplateInstance } from "../lib/chat/templateInstanceActions";
 import { executeVaultOrganize } from "../lib/chat/vaultOrganize";
 import { storeTurnMemory } from "../lib/chat/memory";
 import { runLocalChatReply } from "../lib/chat/local";
@@ -77,9 +79,35 @@ const proposeNoteActionsMessageSchema = messageSchema.extend({
 
 const proposeNoteActionsSchema = z.object({
   mode: z.enum(["auto", "off", "local"]),
+  phase: z.enum(["pre_response", "post_response"]).optional(),
   vaultId: z.string().min(1).optional(),
   activeNoteSlug: z.string().min(1).nullable().optional(),
   messages: z.array(proposeNoteActionsMessageSchema).min(1)
+});
+
+const chatTemplateInstanceStateSchema = z.object({
+  templateSlug: z.string().min(1).max(180),
+  templateTitle: z.string().min(1).max(180),
+  instanceSlug: z.string().min(1).max(220),
+  instanceTitle: z.string().min(1).max(180),
+  status: z.enum(["active", "completed", "failed"]),
+  sourceUserMessageIds: z.array(z.string().uuid()).min(1).max(80),
+  answerUserMessageIds: z.array(z.string().uuid()).max(80),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+  completedAt: z.number().int().optional(),
+  errorMessage: z.string().max(2000).optional()
+});
+
+const applyTemplateInstanceMessageSchema = messageWithIdSchema.extend({
+  templateInstance: chatTemplateInstanceStateSchema.optional()
+});
+
+const applyTemplateInstanceSchema = z.object({
+  vaultId: z.string().min(1).optional(),
+  sessionId: z.string().uuid(),
+  userMessageId: z.string().uuid(),
+  messages: z.array(applyTemplateInstanceMessageSchema).min(1)
 });
 
 const applyVaultOrganizeSchema = z.object({
@@ -329,6 +357,13 @@ export function registerChatIpc(options: {
     proposeChatNoteActions(
       options.getSettings,
       proposeNoteActionsSchema.parse(input) as ProposeChatNoteActionsInput
+    )
+  );
+
+  ipcMain.handle(ipcChannels.chatApplyTemplateInstance, async (_event, input: unknown) =>
+    applyChatTemplateInstance(
+      options.getSettings,
+      applyTemplateInstanceSchema.parse(input) as ApplyChatTemplateInstanceInput
     )
   );
 

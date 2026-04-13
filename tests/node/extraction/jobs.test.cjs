@@ -195,6 +195,70 @@ test("planSessionExtraction excludes messages covered by direct note actions", (
   assert.doesNotMatch(plan.retrievalQuery, /Template draft/);
 });
 
+test("planSessionExtraction excludes messages consumed by template instances", () => {
+  const first = createMessage(
+    "11111111-1111-4111-8111-111111111111",
+    "user",
+    "Fill out [[Daily Log Template]]."
+  );
+  const answer = createMessage(
+    "22222222-2222-4222-8222-222222222222",
+    "user",
+    "I hung out with Aidan."
+  );
+  const state = {
+    templateSlug: "daily-log-template",
+    templateTitle: "Daily Log Template",
+    instanceSlug: "daily-log-2026-04-10-abcdef12",
+    instanceTitle: "Daily Log - Apr 10, 2026",
+    status: "active",
+    sourceUserMessageIds: [first.id, answer.id],
+    answerUserMessageIds: [answer.id],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  const trackedAnswer = {
+    ...answer,
+    templateInstance: state
+  };
+  const followUp = createMessage(
+    "33333333-3333-4333-8333-333333333333",
+    "user",
+    "Now let's talk about onboarding."
+  );
+  const reply = createMessage(
+    "44444444-4444-4444-8444-444444444444",
+    "assistant",
+    "Onboarding should stay calm."
+  );
+  const templateReply = {
+    ...createMessage(
+      "55555555-5555-4555-8555-555555555555",
+      "assistant",
+      "I updated that daily log. Anything else to add?"
+    ),
+    templateInstance: state
+  };
+
+  const excluded = getDirectNoteActionExcludedMessageIds([
+    first,
+    trackedAnswer,
+    templateReply,
+    followUp,
+    reply
+  ]);
+  assert.equal(excluded.has(first.id), true);
+  assert.equal(excluded.has(answer.id), true);
+  assert.equal(excluded.has(templateReply.id), true);
+  assert.equal(excluded.has(followUp.id), false);
+
+  const plan = planSessionExtraction([first, trackedAnswer, templateReply, followUp, reply], null);
+  assert.ok(plan);
+  assert.equal(plan.transcript.length, 2);
+  assert.match(plan.retrievalQuery, /onboarding/);
+  assert.doesNotMatch(plan.retrievalQuery, /Aidan/);
+});
+
 test("resolveExtractionExecutionStrategy runs when embedded is available", () => {
   const strategy = resolveExtractionExecutionStrategy("local", [
     { id: "embedded", label: "On-device", available: true }
