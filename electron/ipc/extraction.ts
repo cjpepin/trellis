@@ -50,7 +50,8 @@ const extractionInputSchema = z.object({
   sourceTitle: z.string().min(1).optional(),
   sourcePath: z.string().min(1).optional(),
   sourceContent: z.string().min(1).optional(),
-  preferredLocalModelId: z.string().min(1).optional()
+  preferredLocalModelId: z.string().min(1).optional(),
+  retryThorough: z.boolean().optional()
 });
 
 const runtimeStatusSchema = z.object({

@@ -1,11 +1,18 @@
-import type { ChatAttachment, MessageRecord } from "@electron/ipc/types";
+import type { ChatAttachment, IngestedDraft, MessageRecord } from "@electron/ipc/types";
 import {
   CHAT_ATTACHMENT_CONTEXT_MARKER,
   formatMessageForExtraction
 } from "@shared/chat/formatMessage";
+import { maxChatComposerAttachments } from "@shared/chat/attachmentLimits";
 
 /** Client-only id for pending chips in the composer. */
-export type PendingChatAttachment = ChatAttachment & { clientId: string };
+export type PendingChatAttachment = ChatAttachment & {
+  clientId: string;
+  /** Stripped by `toChatAttachments` before persisting messages. */
+  ingestDraft?: IngestedDraft;
+};
+
+export { maxChatComposerAttachments };
 
 /** Pending image already written to the app media cache via IPC. */
 export type PendingImageAttachment = {
@@ -17,9 +24,13 @@ export type PendingImageAttachment = {
 export { CHAT_ATTACHMENT_CONTEXT_MARKER };
 
 export function toChatAttachments(pending: PendingChatAttachment[]): ChatAttachment[] {
-  return pending.map(
-    ({ clientId: _clientId, ...rest }): ChatAttachment => rest
-  );
+  return pending.map(({ clientId: _clientId, ingestDraft: _ingestDraft, ...rest }): ChatAttachment => rest);
+}
+
+export function collectIngestDrafts(pending: PendingChatAttachment[]): IngestedDraft[] {
+  return pending
+    .map((item) => item.ingestDraft)
+    .filter((draft): draft is IngestedDraft => draft !== undefined);
 }
 
 export function formatMessageForApi(

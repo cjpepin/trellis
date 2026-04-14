@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import { CircleHelp, Link2, Plus, Trash2, X } from "lucide-react";
-import type { AppWorkspaceId, WikiNote } from "@electron/ipc/types";
+import type { AppWorkspaceId, StrandProvenanceSnapshot, WikiNote } from "@electron/ipc/types";
 import { RichTextRenderer } from "@/components/shared/RichTextRenderer";
 import { EditableNoteTitle } from "@/components/wiki/EditableNoteTitle";
 import { WikiRichTextEditor } from "@/components/wiki/WikiRichTextEditor";
@@ -61,6 +61,9 @@ interface Props {
   onAddTag?: (tag: string) => void | Promise<void>;
   onRemoveTag?: (tag: string) => void | Promise<void>;
   onDeleteNote?: () => void | Promise<void>;
+  /** Latest chat session that wrote to this Strand (from wiki_ops), if any. */
+  strandProvenance?: StrandProvenanceSnapshot | null;
+  onOpenStrandSession?: (sessionId: string) => void;
 }
 
 export function NoteViewer({
@@ -77,7 +80,9 @@ export function NoteViewer({
   onSelectTag,
   onAddTag,
   onRemoveTag,
-  onDeleteNote
+  onDeleteNote,
+  strandProvenance = null,
+  onOpenStrandSession
 }: Props) {
   const isPage = variant === "page";
   const [tagDraft, setTagDraft] = useState("");
@@ -129,8 +134,8 @@ export function NoteViewer({
                 <button
                   type="button"
                   className="inline-flex items-center rounded-full border border-trellis-border px-2 py-2 text-trellis-muted transition hover:border-red-400/40 hover:text-red-200"
-                  aria-label="Delete note"
-                  title="Delete note"
+                  aria-label="Delete Strand"
+                  title="Delete Strand"
                   onClick={() => {
                     void onDeleteNote();
                   }}
@@ -271,6 +276,33 @@ export function NoteViewer({
           onSave={onSave ? (markdown) => onSave(markdown, note.slug) : undefined}
         />
       )}
+      {isPage && strandProvenance ? (
+        <footer className="mt-10 border-t border-trellis-border pt-4">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-trellis-faint">Lineage</p>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-trellis-muted">
+            <span>
+              Last touched from chat
+              {strandProvenance.sessionTitle ? `: ${strandProvenance.sessionTitle}` : ""}
+            </span>
+            <span className="text-trellis-faint">·</span>
+            <span>
+              {new Date(strandProvenance.lastTouchedAt).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short"
+              })}
+            </span>
+            {onOpenStrandSession ? (
+              <button
+                type="button"
+                className="rounded-field border border-trellis-border px-2.5 py-1 text-xs text-trellis-text transition hover:border-trellis-accent/35"
+                onClick={() => onOpenStrandSession(strandProvenance.sessionId)}
+              >
+                Open session
+              </button>
+            ) : null}
+          </div>
+        </footer>
+      ) : null}
     </article>
   );
 }

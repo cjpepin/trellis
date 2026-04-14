@@ -7,6 +7,7 @@ import {
   Link2,
   LoaderCircle,
   Paperclip,
+  Pin,
   Pencil,
   RotateCcw,
   StickyNote,
@@ -103,6 +104,7 @@ export function MessageBubble({
   const [appendingFileId, setAppendingFileId] = useState<string | null>(null);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
   const [generatedImageCaptionOpen, setGeneratedImageCaptionOpen] = useState(false);
+  const [replyContextOpen, setReplyContextOpen] = useState(false);
   const pushToast = useUiStore((state) => state.pushToast);
   const replaceIndex = useWikiStore((state) => state.replaceIndex);
 
@@ -187,6 +189,10 @@ export function MessageBubble({
     };
   }, [addMenuFileId]);
 
+  useEffect(() => {
+    setReplyContextOpen(false);
+  }, [message.id]);
+
   const hasRenderableText = message.content.trim().length > 0;
   const hasMedia = (message.mediaArtifacts?.length ?? 0) > 0;
   const collapsibleGeneratedImageCaption =
@@ -236,6 +242,23 @@ export function MessageBubble({
                     <Paperclip className="h-3 w-3 shrink-0 text-trellis-accent" aria-hidden />
                   )}
                   <span className="min-w-0 truncate text-trellis-text">{attachment.label}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          {isUser && message.composerPins && message.composerPins.length > 0 && (
+            <div className="mb-3 flex flex-wrap justify-end gap-1.5">
+              <span className="w-full text-right text-[10px] uppercase tracking-wide text-trellis-faint">
+                Context for this send
+              </span>
+              {message.composerPins.map((pin) => (
+                <span
+                  key={pin.slug}
+                  title="Pinned in the composer for stronger on-device retrieval for this message."
+                  className="inline-flex max-w-[min(100%,240px)] items-center gap-1 rounded-full border border-trellis-accent/30 bg-trellis-accent/5 px-2 py-0.5 text-[11px] text-trellis-text"
+                >
+                  <Pin className="h-3 w-3 shrink-0 text-trellis-accent" aria-hidden />
+                  <span className="min-w-0 truncate">{pin.title}</span>
                 </span>
               ))}
             </div>
@@ -485,6 +508,91 @@ export function MessageBubble({
             <p className={cn("text-sm italic text-trellis-muted", isUser && "text-right")}>
               {hasMedia ? "No message text (see image above)." : "No message text (attachments only)."}
             </p>
+          )}
+          {!isUser && message.replyContext && message.replyContext.items.length > 0 && (
+            <div className="mt-3 w-full border-t border-trellis-border/50 pt-3 text-left">
+              <button
+                type="button"
+                className="flex max-w-full flex-wrap items-center gap-1.5 text-xs text-trellis-muted transition hover:text-trellis-text"
+                aria-expanded={replyContextOpen}
+                title="Strands listed here are grounded for this reply (linked, pinned, open in Wiki, or marked relevant). Other on-device search hits may still be in the prompt; they are omitted from this list."
+                onClick={() => {
+                  setReplyContextOpen((current) => !current);
+                }}
+              >
+                {replyContextOpen ? (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                )}
+                <span>What informed this reply</span>
+                {message.replyContext.sourceLabels.length > 0 ? (
+                  <span
+                    className="ml-0.5 rounded-full border border-trellis-border px-1.5 py-px text-[10px] font-normal uppercase tracking-wide text-trellis-faint"
+                    title="Categories of context included with this reply"
+                  >
+                    {message.replyContext.sourceLabels.join(" · ")}
+                  </span>
+                ) : null}
+              </button>
+              {replyContextOpen ? (
+                <ul className="mt-2 space-y-2 text-sm leading-snug text-trellis-muted">
+                  {message.replyContext.items.map((item, index) => (
+                    <li
+                      key={`${item.kind}-${item.title}-${index}`}
+                      className="flex items-start gap-2"
+                    >
+                      <span
+                        className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-trellis-accent/70"
+                        aria-hidden
+                      />
+                      <span className="min-w-0 flex-1">
+                        {item.kind === "note" && item.slug && onOpenNote ? (
+                          <button
+                            type="button"
+                            title="Open this Strand"
+                            className="text-left text-trellis-text underline decoration-trellis-border decoration-1 underline-offset-2 transition hover:decoration-trellis-accent"
+                            onClick={() => {
+                              onOpenNote(item.slug ?? "");
+                            }}
+                          >
+                            {item.title}
+                            {item.pinned ? (
+                              <span
+                                className="ml-1.5 text-[10px] font-medium uppercase tracking-wide text-trellis-accent"
+                                title="You pinned this note in the composer for this turn"
+                              >
+                                pinned
+                              </span>
+                            ) : null}
+                          </button>
+                        ) : (
+                          <span className="text-trellis-text">
+                            {item.title}
+                            {item.kind === "note" && item.pinned ? (
+                              <span
+                                className="ml-1.5 text-[10px] font-medium uppercase tracking-wide text-trellis-accent"
+                                title="You pinned this note in the composer for this turn"
+                              >
+                                pinned
+                              </span>
+                            ) : null}
+                          </span>
+                        )}
+                        {item.kind === "memory" ? (
+                          <span
+                            className="ml-1.5 text-[10px] uppercase tracking-wide text-trellis-faint"
+                            title="From Trellis local memory (not a vault Strand)"
+                          >
+                            memory
+                          </span>
+                        ) : null}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
           )}
           {hasRenderableText && (
             <div

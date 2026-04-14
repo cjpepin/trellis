@@ -8,6 +8,16 @@ import type {
 } from "@shared/extraction/contracts";
 import type { ExtractionInstallProgressEvent } from "@shared/extraction/localModelInstall";
 import type { ReadAloudSpeedTier } from "@shared/media/readAloudSpeed";
+import type { CreateThoughtInput, ThoughtRecord } from "@shared/thoughts/types";
+
+export type { CreateThoughtInput, ThoughtRecord };
+export type { ThoughtEnrichment, ThoughtSourceType, ThoughtStatus } from "@shared/thoughts/types";
+
+/** Main process pushes this to renderers when a Thought row changes (e.g. enrichment progress). */
+export interface ThoughtUpdatedPayload {
+  vaultId: string;
+  thought: ThoughtRecord;
+}
 
 export type { ExtractionInstallProgressEvent };
 
@@ -29,6 +39,13 @@ export const ipcChannels = {
   dbReplaceMessages: "db:replace:messages",
   dbUpdateSession: "db:update:session",
   dbRecordWikiOps: "db:record:wiki-ops",
+  dbListWikiTouchSessions: "db:list:wiki-touch-sessions",
+  dbGetStrandProvenanceForFile: "db:get:strand-provenance-for-file",
+  dbCreateThought: "db:create:thought",
+  dbListThoughts: "db:list:thoughts",
+  dbGetThought: "db:get:thought",
+  dbRetryThoughtEnrichment: "db:retry:thought-enrichment",
+  thoughtUpdated: "thought:updated",
   extractionGetRuntimeStatus: "extraction:get:runtime-status",
   extractionRun: "extraction:run",
   extractionQueueSession: "extraction:queue:session",
@@ -60,7 +77,6 @@ export const ipcChannels = {
   chatBuildContext: "chat:build:context",
   chatStoreMemory: "chat:store:memory",
   chatProposeNoteActions: "chat:propose-note-actions",
-  chatApplyTemplateInstance: "chat:apply-template-instance",
   chatApplyVaultOrganize: "chat:apply-vault-organize",
   chatRunLocalReply: "chat:run:local-reply",
   chatStream: "chat:stream",
@@ -200,11 +216,7 @@ export interface ChatMediaArtifact {
   pendingGeneration?: boolean;
 }
 
-export type ChatNoteActionKind =
-  | "create_note"
-  | "update_note"
-  | "create_template"
-  | "update_template";
+export type ChatNoteActionKind = "create_note" | "update_note";
 
 export type ChatNoteActionStatus = "pending" | "approved" | "rejected" | "failed";
 
@@ -225,20 +237,19 @@ export interface ChatNoteActionProposal {
   errorMessage?: string;
 }
 
-export type ChatTemplateInstanceStatus = "active" | "completed" | "failed";
+/** Optional summary of vault context included with an assistant reply (for transparency). */
+export interface ChatReplyContextItem {
+  kind: "note" | "memory";
+  title: string;
+  slug?: string;
+  /** User pinned this note in the composer for this turn. */
+  pinned?: boolean;
+}
 
-export interface ChatTemplateInstanceState {
-  templateSlug: string;
-  templateTitle: string;
-  instanceSlug: string;
-  instanceTitle: string;
-  status: ChatTemplateInstanceStatus;
-  sourceUserMessageIds: string[];
-  answerUserMessageIds: string[];
-  createdAt: number;
-  updatedAt: number;
-  completedAt?: number;
-  errorMessage?: string;
+export interface ChatReplyContext {
+  /** High-level buckets, e.g. "Saved notes", "Private memory". */
+  sourceLabels: string[];
+  items: ChatReplyContextItem[];
 }
 
 export interface MessageRecord {
@@ -251,12 +262,23 @@ export interface MessageRecord {
   attachments?: ChatAttachment[];
   mediaArtifacts?: ChatMediaArtifact[];
   noteActions?: ChatNoteActionProposal[];
-  templateInstance?: ChatTemplateInstanceState;
+  /** What local vault context was attached for this assistant message (when privacy allows context). */
+  replyContext?: ChatReplyContext;
+  /**
+   * Wiki notes pinned in the composer when this user message was sent (retrieval boost for that turn).
+   * Lets the transcript show which notes were included as context for the reply.
+   */
+  composerPins?: Array<{ slug: string; title: string }>;
 }
 
 export interface ChatAttachmentPickResult {
   name: string;
   text: string;
+  /**
+   * When set (PDFs via the file picker), sending the message runs the same vault ingest
+   * extraction as the former Ingest screen: raw file is stored under the vault and notes update.
+   */
+  ingestDraft?: IngestedDraft;
 }
 
 export interface ChatReference extends ChatContextReference {}
@@ -307,6 +329,24 @@ export interface WikiNote extends NoteSummary {
   url?: string;
 }
 
+/** User-facing type alias; vault files remain markdown-backed {@link WikiNote}. */
+export type StrandNote = WikiNote;
+
+/** Chat sessions that have applied wiki_ops for a vault (Strands “From chats”). */
+export interface WikiTouchSessionSummary {
+  sessionId: string;
+  sessionTitle: string | null;
+  lastTouchAt: number;
+  touchCount: number;
+}
+
+/** Latest chat session lineage for a Strand markdown file — ids and titles only. */
+export interface StrandProvenanceSnapshot {
+  sessionId: string;
+  sessionTitle: string | null;
+  lastTouchedAt: number;
+}
+
 export interface FolderSummary {
   path: string;
   name: string;
@@ -323,6 +363,8 @@ export interface GraphNode {
   inboundCount: number;
   cluster?: string;
   isPlaceholder?: boolean;
+  /** When set, the graph renderer treats the node as a Thought overlay rather than a Strand file. */
+  graphNodeKind?: "note" | "thought";
 }
 
 export interface GraphEdge {
@@ -490,6 +532,8 @@ export interface BuildChatContextInput {
   sessionTitle?: string | null;
   /** When set, excluded from “recent sessions” summaries so the current chat isn’t counted as “past”. */
   currentSessionId?: string | null;
+  /** Notes the user pinned in chat—merged with [[links]] and active note for retrieval priority. */
+  pinnedNoteSlugs?: string[];
   messages: Array<Pick<MessageRecord, "role" | "content">>;
 }
 
@@ -505,30 +549,14 @@ export interface ProposeChatNoteActionsInput {
   phase?: "pre_response" | "post_response";
   vaultId?: string;
   activeNoteSlug?: string | null;
+  /** Notes pinned in the composer for this turn — used to target update_note proposals. */
+  pinnedNoteSlugs?: string[];
   messages: Array<Pick<MessageRecord, "id" | "role" | "content" | "attachments" | "mediaArtifacts" | "noteActions">>;
 }
 
 export interface ProposeChatNoteActionsResult {
   actions: ChatNoteActionProposal[];
   clarification: string | null;
-}
-
-export interface ApplyChatTemplateInstanceInput {
-  vaultId?: string;
-  sessionId: string;
-  userMessageId: string;
-  messages: Array<Pick<MessageRecord, "id" | "role" | "content" | "templateInstance">>;
-}
-
-export interface ApplyChatTemplateInstanceResult {
-  applied: boolean;
-  action: "created" | "updated" | "completed" | "none";
-  state: ChatTemplateInstanceState | null;
-  note?: {
-    slug: string;
-    title: string;
-  };
-  message: string | null;
 }
 
 export interface ApplyVaultOrganizeInput {
@@ -624,6 +652,8 @@ export interface ExtractionRunInput {
   sourcePath?: string;
   sourceContent?: string;
   preferredLocalModelId?: string;
+  /** Second pass: stronger prompt + higher temperature when the first pass returned no note ops. */
+  retryThorough?: boolean;
 }
 
 export interface ExtractionRunResult {
@@ -853,6 +883,15 @@ export interface DatabaseBridge {
   replaceMessages: (payload: { sessionId: string; messages: MessageRecord[] }) => Promise<void>;
   updateSession: (payload: Partial<ChatSessionSummary> & { id: string }) => Promise<ChatSessionSummary>;
   recordWikiOps: (ops: RecordWikiOpInput[]) => Promise<void>;
+  listWikiTouchSessions: (vaultId: string) => Promise<WikiTouchSessionSummary[]>;
+  getStrandProvenanceForFile: (input: {
+    vaultId: string;
+    fileName: string;
+  }) => Promise<StrandProvenanceSnapshot | null>;
+  createThought: (input: CreateThoughtInput) => Promise<ThoughtRecord>;
+  listThoughts: (vaultId: string) => Promise<ThoughtRecord[]>;
+  getThought: (thoughtId: string) => Promise<ThoughtRecord | null>;
+  retryThoughtEnrichment: (thoughtId: string) => Promise<void>;
 }
 
 export interface VaultBridge {
@@ -902,7 +941,6 @@ export interface ChatBridge {
   buildContext: (input: BuildChatContextInput) => Promise<ChatContextPacket>;
   storeMemory: (input: StoreChatMemoryInput) => Promise<MemoryItem[]>;
   proposeNoteActions: (input: ProposeChatNoteActionsInput) => Promise<ProposeChatNoteActionsResult>;
-  applyTemplateInstance: (input: ApplyChatTemplateInstanceInput) => Promise<ApplyChatTemplateInstanceResult>;
   applyVaultOrganize: (input: ApplyVaultOrganizeInput) => Promise<ApplyVaultOrganizeResult>;
   runLocalReply: (input: LocalChatRunInput) => Promise<LocalChatRunResult>;
   stream: (input: ChatStreamInput) => Promise<void>;
@@ -1004,6 +1042,10 @@ export interface ShellBridge {
   openExternal: (url: string) => Promise<void>;
 }
 
+export interface ThoughtBridge {
+  onThoughtUpdated: (listener: (payload: ThoughtUpdatedPayload) => void) => () => void;
+}
+
 export interface TrellisBridge {
   app: AppBridge;
   auth: AuthBridge;
@@ -1016,4 +1058,5 @@ export interface TrellisBridge {
   chat: ChatBridge;
   media: MediaBridge;
   shell: ShellBridge;
+  thoughts: ThoughtBridge;
 }

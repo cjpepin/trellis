@@ -1,10 +1,5 @@
 import { useCallback } from "react";
-import type {
-  ChatModel,
-  ChatPrivacyMode,
-  MessageRecord,
-  SubscriptionTier
-} from "@electron/ipc/types";
+import type { ChatModel, ChatPrivacyMode, MessageRecord, SubscriptionTier } from "@electron/ipc/types";
 import { streamChat, type ChatNoteReference } from "@/lib/api";
 import { formatMessageForApi } from "@/lib/chatAttachments";
 import { messageRecordsToStreamPayload } from "@/lib/chatStreamMessages";
@@ -12,7 +7,6 @@ import { useChatStore } from "@/store/chatStore";
 
 interface UseStreamInput {
   accessToken: string | null;
-  model: ChatModel;
   privacyMode: ChatPrivacyMode;
   subscriptionTier: SubscriptionTier;
   previewWorkspace?: boolean;
@@ -74,7 +68,6 @@ function getToastCopy(message: string): string {
 
 export function useStream({
   accessToken,
-  model,
   privacyMode,
   subscriptionTier,
   previewWorkspace = false
@@ -90,7 +83,8 @@ export function useStream({
     async (
       sessionId: string,
       messages: MessageRecord[],
-      references: ChatNoteReference[] = []
+      references: ChatNoteReference[] = [],
+      model: ChatModel
     ): Promise<StreamResult> => {
       if (privacyMode !== "local" && !accessToken) {
         throw new Error("Please sign in before starting a chat.");
@@ -192,7 +186,6 @@ export function useStream({
       addMessage,
       markChatRunAssistant,
       markChatRunFirstToken,
-      model,
       patchAssistantDraft,
       previewWorkspace,
       privacyMode,

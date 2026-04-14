@@ -31,13 +31,15 @@ import {
 } from "../../ipc/vault";
 import { getExtractionRuntimeStatus, resolveExtractionMode, runExtraction } from "./service";
 import {
+  buildExtractionRetrievalQuery,
   buildTranscriptDigest,
   buildFormattedTranscript,
+  computeSessionExtractionPlan,
   filterDirectNoteActionMessages,
   findExplicitReferenceSlugs,
-  planSessionExtraction,
   resolveExtractionExecutionStrategy
 } from "./jobs";
+import { logExtraction } from "./extractionLog";
 import { prepareExtractionWrite } from "./guardrails";
 import {
   buildRequestedProviderOrder,
@@ -50,12 +52,7 @@ import type {
   ExtractionResponse,
   ExtractionUpdate
 } from "@shared/extraction/contracts";
-import { buildTemplateInstanceSlug, buildTemplateInstanceTitle } from "@shared/chat/templateInstance";
-import {
-  buildDeterministicTemplateFillBody,
-  trySynthesizeTemplateInstanceMarkdown
-} from "../chat/templateInstanceFill";
-import { normalizeWikiFolderPath } from "@shared/vault/folderPath";
+import { extractionJobRelatedNotesLimit } from "@shared/extraction/config";
 import { buildManualSaveFallbackResponse } from "./manualSaveFallback";
 
 interface CreateExtractionOrchestratorOptions {
@@ -75,7 +72,6 @@ type ExtractionIndexItem = {
   tags: string[];
   folderPath?: string;
   isPlaceholder?: boolean;
-  isTemplate?: boolean;
 };
 
 const activeSessionIds = new Set<string>();
@@ -86,6 +82,10 @@ function isWritableUpdate(
   operation: "create" | "append" | "rewrite";
 } {
   return update.operation !== "noop";
+}
+
+function countNonNoopUpdates(response: ExtractionResponse): number {
+  return response.updates.filter((update) => update.operation !== "noop").length;
 }
 
 function buildExtractionIndex(snapshot: Awaited<ReturnType<typeof buildSnapshot>>) {
@@ -99,132 +99,9 @@ function buildExtractionIndex(snapshot: Awaited<ReturnType<typeof buildSnapshot>
       title: node.title,
       tags: node.tags,
       ...(node.isPlaceholder ? { isPlaceholder: true } : {}),
-      ...(node.tags.some((tag) => tag.trim().toLowerCase() === "template")
-        ? { isTemplate: true }
-        : {}),
       ...(note?.folderPath ? { folderPath: note.folderPath } : {})
     };
   });
-}
-
-function redirectTemplateTargetUpdate(
-  update: ExtractionUpdate,
-  sessionId: string,
-  index: ExtractionIndexItem[]
-): ExtractionUpdate {
-  const target = index.find((note) => note.slug === update.targetSlug);
-
-  if (!target?.isTemplate) {
-    return update;
-  }
-
-  const now = new Date();
-
-  const templateFolder =
-    target.folderPath && target.folderPath.length > 0
-      ? normalizeWikiFolderPath(target.folderPath)
-      : undefined;
-  const folderPath =
-    update.folderPath !== undefined ? normalizeWikiFolderPath(update.folderPath) : templateFolder;
-
-  const next: ExtractionUpdate = {
-    ...update,
-    operation: "create",
-    targetSlug: buildTemplateInstanceSlug(update.targetSlug, sessionId, now),
-    targetTitle: buildTemplateInstanceTitle(update.targetTitle, now),
-    tags: update.tags.filter((tag) => tag.trim().toLowerCase() !== "template")
-  };
-
-  if (folderPath !== undefined) {
-    next.folderPath = folderPath;
-  }
-
-  return next;
-}
-
-function extractionHasWritableOperation(response: ExtractionResponse): boolean {
-  return response.updates.some(
-    (update) =>
-      update.operation === "create" ||
-      update.operation === "append" ||
-      update.operation === "rewrite"
-  );
-}
-
-async function applyTemplateFillFallback(input: {
-  response: ExtractionResponse;
-  explicitSlugs: string[];
-  index: ExtractionIndexItem[];
-  relatedNotes: ExtractionContextNote[];
-  transcript: Array<{ role: "user" | "assistant"; content: string }>;
-  sessionId: string;
-}): Promise<ExtractionResponse> {
-  if (extractionHasWritableOperation(input.response)) {
-    return input.response;
-  }
-
-  const templateSlug = input.explicitSlugs.find((slug) =>
-    input.index.some((entry) => entry.slug === slug && entry.isTemplate)
-  );
-
-  if (!templateSlug) {
-    return input.response;
-  }
-
-  const templateCtx = input.relatedNotes.find((note) => note.slug === templateSlug);
-
-  if (!templateCtx) {
-    return input.response;
-  }
-
-  const templateIndex = input.index.find((entry) => entry.slug === templateSlug);
-  const templateFolder =
-    templateIndex?.folderPath && templateIndex.folderPath.length > 0
-      ? normalizeWikiFolderPath(templateIndex.folderPath)
-      : undefined;
-
-  const filledBody =
-    (await trySynthesizeTemplateInstanceMarkdown({
-      templateTitle: templateCtx.title,
-      templateContent: templateCtx.content,
-      transcript: input.transcript
-    })) ?? buildDeterministicTemplateFillBody(templateCtx, input.transcript);
-
-  const now = new Date();
-  const synthetic: ExtractionUpdate = {
-    operation: "create",
-    targetSlug: buildTemplateInstanceSlug(templateSlug, input.sessionId, now),
-    targetTitle: buildTemplateInstanceTitle(templateCtx.title, now),
-    targetType: "concept",
-    summary: "Instance drafted from chat using linked template",
-    body: filledBody,
-    tags: templateCtx.tags.filter((tag) => tag.trim().toLowerCase() !== "template"),
-    links: [templateCtx.title],
-    ...(templateFolder !== undefined ? { folderPath: templateFolder } : {}),
-    evidence: [
-      {
-        kind: "transcript",
-        ref: "template_chat_fallback",
-        summary:
-          "Extractor returned no writes; filled template instance from chat using on-device formatting when available."
-      }
-    ],
-    confidence: 0.5
-  };
-
-  const sessionTitleWords = buildTemplateInstanceTitle(templateCtx.title, now)
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 6)
-    .join(" ");
-
-  return {
-    updates: [...input.response.updates, synthetic],
-    sessionTitle:
-      input.response.sessionTitle.trim().length > 0
-        ? input.response.sessionTitle
-        : sessionTitleWords || "Template chat"
-  };
 }
 
 async function applyExtractionResponseLocally(
@@ -239,7 +116,7 @@ async function applyExtractionResponseLocally(
   let appliedUpdateCount = 0;
 
   for (const rawUpdate of appliedUpdates) {
-    const update = redirectTemplateTargetUpdate(rawUpdate, sessionId, index);
+    const update = rawUpdate;
     let existingNote: WikiNote | null = null;
 
     try {
@@ -319,6 +196,7 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       relatedNotes: Awaited<ReturnType<typeof searchRelevantNotes>>;
       preferredLocalModelId?: string;
       debugRunId?: string;
+      retryThorough?: boolean;
     }
   ) {
     const mode = resolveExtractionMode(job.mode);
@@ -389,6 +267,10 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         errorMessage: strategy.reason ?? "Note processing skipped.",
         finishedAt: Date.now()
       });
+      logExtraction("runWithStrategy.skip", {
+        jobId: job.id.slice(0, 8),
+        reason: strategy.reason ?? "provider_unavailable"
+      });
       options.notifyJobUpdate(skippedJob);
       return null;
     }
@@ -421,7 +303,8 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
           transcript: input.transcript,
           index: input.index,
           relatedNotes: input.relatedNotes,
-          preferredLocalModelId: input.preferredLocalModelId
+          preferredLocalModelId: input.preferredLocalModelId,
+          retryThorough: input.retryThorough ?? false
         },
         {
           runId: input.debugRunId,
@@ -506,6 +389,15 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
     options.notifyJobUpdate(runningJob);
 
     try {
+      logExtraction("processJob.start", {
+        jobId: job.id.slice(0, 8),
+        sessionId: job.sessionId.slice(0, 8),
+        vaultId: job.vaultId.slice(0, 8),
+        trigger: job.trigger,
+        transcriptStart: job.transcriptStartIndex,
+        transcriptEnd: job.transcriptEndIndex
+      });
+
       const messages = await getMessagesBySession(job.sessionId);
       const fullTranscript = buildFormattedTranscript(messages);
 
@@ -522,6 +414,12 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
           finishedAt: Date.now()
         });
         options.notifyJobUpdate(skippedJob);
+        logExtraction("processJob.skip", {
+          jobId: job.id.slice(0, 8),
+          reason: "transcript_changed_before_run",
+          fullLen: fullTranscript.length,
+          expectedEnd: job.transcriptEndIndex
+        });
         return;
       }
 
@@ -541,6 +439,12 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
           finishedAt: Date.now()
         });
         options.notifyJobUpdate(skippedJob);
+        logExtraction("processJob.skip", {
+          jobId: job.id.slice(0, 8),
+          reason: "digest_superseded",
+          jobDigestPrefix: job.transcriptDigest.slice(0, 8),
+          currentDigestPrefix: currentDigest.slice(0, 8)
+        });
         return;
       }
 
@@ -559,6 +463,10 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
           finishedAt: Date.now()
         });
         options.notifyJobUpdate(skippedJob);
+        logExtraction("processJob.skip", {
+          jobId: job.id.slice(0, 8),
+          reason: "transcript_slice_too_short"
+        });
         return;
       }
 
@@ -570,37 +478,72 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         job.transcriptEndIndex
       );
       const explicitSlugs = findExplicitReferenceSlugs(sourceMessages, snapshot.notes);
+      const retrievalQuery = buildExtractionRetrievalQuery(transcript);
       const relatedNotes = await searchRelevantNotes({
         vaultId: vault.id,
-        query: transcript.map((message) => message.content).join("\n\n"),
+        query: retrievalQuery,
         explicitSlugs,
-        limit: 6
+        limit: extractionJobRelatedNotesLimit
+      });
+      logExtraction("processJob.retrieval", {
+        jobId: job.id.slice(0, 8),
+        relatedNoteCount: relatedNotes.length,
+        explicitSlugCount: explicitSlugs.length,
+        queryChars: retrievalQuery.length
       });
       const index = buildExtractionIndex(snapshot);
-      const extraction = await runWithStrategy(job, {
+      let extraction = await runWithStrategy(job, {
         transcript,
         index,
         relatedNotes,
         preferredLocalModelId: storedConfig?.preferredLocalModelId ?? undefined,
-        debugRunId: debugRun.id
+        debugRunId: debugRun.id,
+        retryThorough: false
       });
 
       if (!extraction) {
         return;
       }
 
-      const responseToApply = await applyTemplateFillFallback({
-        response: extraction.response,
-        explicitSlugs,
-        index,
-        relatedNotes,
-        transcript,
-        sessionId: job.sessionId
+      let modelUpdateCount = countNonNoopUpdates(extraction.response);
+      logExtraction("processJob.model_pass", {
+        jobId: job.id.slice(0, 8),
+        pass: "primary",
+        nonNoopUpdates: modelUpdateCount
       });
+
+      if (
+        modelUpdateCount === 0 &&
+        (job.trigger === "idle" ||
+          job.trigger === "session-switch" ||
+          job.trigger === "manual")
+      ) {
+        logExtraction("processJob.retry_thorough_begin", {
+          jobId: job.id.slice(0, 8),
+          trigger: job.trigger
+        });
+        const second = await runWithStrategy(job, {
+          transcript,
+          index,
+          relatedNotes,
+          preferredLocalModelId: storedConfig?.preferredLocalModelId ?? undefined,
+          debugRunId: debugRun.id,
+          retryThorough: true
+        });
+        if (second) {
+          extraction = second;
+          modelUpdateCount = countNonNoopUpdates(second.response);
+          logExtraction("processJob.model_pass", {
+            jobId: job.id.slice(0, 8),
+            pass: "retry_thorough",
+            nonNoopUpdates: modelUpdateCount
+          });
+        }
+      }
 
       let applied = await applyExtractionResponseLocally(
         vault,
-        responseToApply,
+        extraction.response,
         job.sessionId,
         index
       );
@@ -630,7 +573,7 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         finishedAt: Date.now(),
         errorMessage: null
       });
-      const requestedUpdateCount = responseToApply.updates.filter(
+      const requestedUpdateCount = extraction.response.updates.filter(
         (update) => update.operation !== "noop"
       ).length;
       updateExtractionDebugRun(debugRun.id, {
@@ -642,6 +585,12 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         appliedUpdateCount: applied.appliedUpdateCount,
         guardrailDropCount: Math.max(0, requestedUpdateCount - applied.appliedUpdateCount),
         errorMessage: null
+      });
+      logExtraction("processJob.complete", {
+        jobId: job.id.slice(0, 8),
+        requestedUpdateCount,
+        appliedUpdateCount: applied.appliedUpdateCount,
+        guardrailDropped: Math.max(0, requestedUpdateCount - applied.appliedUpdateCount)
       });
       options.notifyJobUpdate({
         ...completedJob,
@@ -664,6 +613,10 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
             ? error.message
             : "Trellis couldn’t finish extracting notes for that session.",
         finishedAt: Date.now()
+      });
+      logExtraction("processJob.failed", {
+        jobId: job.id.slice(0, 8),
+        error: error instanceof Error ? error.message.slice(0, 200) : "unknown"
       });
       options.notifyJobUpdate(failedJob);
     }
@@ -700,11 +653,23 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
 
       const messages = await getMessagesBySession(session.id);
       const latestCompletedJob = await getLatestCompletedExtractionJob(session.id);
-      const plan = planSessionExtraction(messages, latestCompletedJob, input.force ?? false, {
+      const planOptions = {
         fullTranscriptWhenChanged: input.trigger === "idle" || input.trigger === "session-switch"
-      });
+      };
+      const { plan, ineligibleReason } = computeSessionExtractionPlan(
+        messages,
+        latestCompletedJob,
+        input.force ?? false,
+        planOptions
+      );
 
       if (!plan) {
+        logExtraction("queueSession.ineligible", {
+          sessionId: session.id.slice(0, 8),
+          reason: ineligibleReason ?? "unknown",
+          rawMessageCount: messages.length,
+          trigger: input.trigger ?? "manual"
+        });
         return {
           state: "ineligible",
           job: null
@@ -715,6 +680,11 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       const duplicate = queuedJobs.find((job) => job.transcriptDigest === plan.transcriptDigest);
 
       if (duplicate) {
+        logExtraction("queueSession.duplicate", {
+          sessionId: session.id.slice(0, 8),
+          digestPrefix: plan.transcriptDigest.slice(0, 8),
+          trigger: input.trigger ?? "manual"
+        });
         return {
           state: "duplicate",
           job: duplicate
@@ -732,6 +702,14 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         cloudFunctionsBaseUrl: null,
         cloudPublishableKey: null,
         preferredLocalModelId: input.preferredLocalModelId ?? null
+      });
+
+      logExtraction("queueSession.queued", {
+        sessionId: session.id.slice(0, 8),
+        jobId: job.id.slice(0, 8),
+        trigger: input.trigger ?? "manual",
+        plannedTurns: plan.transcript.length,
+        digestPrefix: plan.transcriptDigest.slice(0, 8)
       });
 
       options.notifyJobUpdate(job);

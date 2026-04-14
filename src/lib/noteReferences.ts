@@ -8,6 +8,7 @@ export interface SlashCommandMatch {
 
 const wikiLinkPattern = /\[\[([^[\]]+)\]\]/g;
 const slashCommandPattern = /(?:^|\s)\/([^\s[\]]*)$/;
+const atCommandPattern = /(?:^|\s)@([^\s[\]]*)$/;
 
 export function slugifyNoteTitle(value: string): string {
   return value
@@ -40,26 +41,41 @@ export function resolveReferencedNoteSlug(
   return slugMatch?.slug ?? null;
 }
 
-export function getSlashCommandMatch(value: string, cursor: number): SlashCommandMatch | null {
+function getTriggerCommandMatch(
+  value: string,
+  cursor: number,
+  pattern: RegExp,
+  triggerChar: string
+): SlashCommandMatch | null {
   const prefix = value.slice(0, cursor);
-  const match = prefix.match(slashCommandPattern);
+  const match = prefix.match(pattern);
 
   if (!match) {
     return null;
   }
 
   const rawMatch = match[0];
-  const slashOffset = rawMatch.lastIndexOf("/");
+  const triggerOffset = rawMatch.lastIndexOf(triggerChar);
 
-  if (slashOffset === -1) {
+  if (triggerOffset === -1) {
     return null;
   }
 
   return {
-    from: prefix.length - (rawMatch.length - slashOffset),
+    from: prefix.length - (rawMatch.length - triggerOffset),
     to: cursor,
     query: match[1] ?? ""
   };
+}
+
+/** `/` in the composer — inserts a [[wiki link]] to a note title. */
+export function getSlashCommandMatch(value: string, cursor: number): SlashCommandMatch | null {
+  return getTriggerCommandMatch(value, cursor, slashCommandPattern, "/");
+}
+
+/** `@` in the composer — same insertion as `/`, for a familiar mention-style affordance. */
+export function getAtCommandMatch(value: string, cursor: number): SlashCommandMatch | null {
+  return getTriggerCommandMatch(value, cursor, atCommandPattern, "@");
 }
 
 export function insertNoteReference(

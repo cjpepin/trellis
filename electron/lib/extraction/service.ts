@@ -146,7 +146,18 @@ export async function runExtraction(
     }
 
     try {
-      const result = await provider.extract(input);
+      const result = await provider.extract({
+        transcript: input.transcript,
+        sessionId: input.sessionId,
+        index: input.index,
+        relatedNotes: input.relatedNotes,
+        sourceType: input.sourceType,
+        sourceTitle: input.sourceTitle,
+        sourcePath: input.sourcePath,
+        sourceContent: input.sourceContent,
+        preferredLocalModelId: input.preferredLocalModelId,
+        retryThorough: input.retryThorough
+      });
       attemptedProviders.push({
         id: provider.id,
         outcome: "success",

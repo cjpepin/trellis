@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ExtractionContextNote } from "@shared/extraction/contracts";
 import type { RetrievalRebuildResult, WikiNote } from "../../ipc/types";
+import { relatedNotesRetrievalDefaultLimit } from "../../../shared/extraction/config";
 import {
   deleteMissingNoteEmbeddings,
   listNoteEmbeddings,
@@ -14,6 +15,8 @@ interface SearchRelevantNotesInput {
   vaultId: string;
   query: string;
   explicitSlugs?: string[];
+  /** Boost retrieval for these slugs (e.g. top inbound-link notes for structural questions). */
+  prioritySlugs?: string[];
   limit?: number;
 }
 
@@ -193,7 +196,8 @@ function pickBestRowPerNote(
   rows: StoredNoteEmbedding[],
   query: string,
   queryEmbedding: number[] | null,
-  explicitSlugs: Set<string>
+  explicitSlugs: Set<string>,
+  prioritySlugs: Set<string>
 ): Array<StoredNoteEmbedding & { score: number; isExplicitMatch: boolean }> {
   const bestBySlug = new Map<string, StoredNoteEmbedding & { score: number; isExplicitMatch: boolean }>();
 
@@ -201,7 +205,8 @@ function pickBestRowPerNote(
     const lexical = lexicalScore(query, row);
     const semantic = cosineSimilarity(queryEmbedding, row.embedding);
     const isExplicitMatch = explicitSlugs.has(row.noteSlug);
-    const score = lexical + semantic * 30 + (isExplicitMatch ? 100 : 0);
+    const priorityBoost = prioritySlugs.has(row.noteSlug) ? 35 : 0;
+    const score = lexical + semantic * 30 + (isExplicitMatch ? 100 : 0) + priorityBoost;
     const candidate = {
       ...row,
       score,
@@ -226,15 +231,16 @@ export async function searchRelevantNotes(
     return [];
   }
 
-  const limit = Math.min(Math.max(input.limit ?? 6, 1), 12);
+  const limit = Math.min(Math.max(input.limit ?? relatedNotesRetrievalDefaultLimit, 1), 16);
   const explicitSlugs = new Set((input.explicitSlugs ?? []).filter((slug) => slug.length > 0));
+  const prioritySlugs = new Set((input.prioritySlugs ?? []).filter((slug) => slug.length > 0));
   rows = rows.filter((row) => row.content.length > 0);
   const hasStoredEmbeddings = rows.some((row) => Array.isArray(row.embedding) && row.embedding.length > 0);
   const queryEmbedding = hasStoredEmbeddings
     ? (await embedTexts([input.query.slice(0, 8_000)])).embeddings[0] ?? null
     : null;
 
-  return pickBestRowPerNote(rows, input.query, queryEmbedding, explicitSlugs)
+  return pickBestRowPerNote(rows, input.query, queryEmbedding, explicitSlugs, prioritySlugs)
     .filter((row) => row.score > 0 || row.isExplicitMatch)
     .sort((left, right) => right.score - left.score)
     .slice(0, limit)

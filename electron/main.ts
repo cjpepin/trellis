@@ -862,7 +862,7 @@ async function bootstrapApplication(): Promise<void> {
     notifyJobUpdate: notifyExtractionJobUpdate
   });
   registerAppIpc();
-  registerDatabaseIpc();
+  registerDatabaseIpc(getSettings);
   registerExtractionIpc({
     queueSession: async (input) => {
       if (!extractionOrchestrator) {
@@ -880,7 +880,7 @@ async function bootstrapApplication(): Promise<void> {
     getWorkspaceId: getCurrentWorkspaceId
   });
   registerMediaIpc({ getWorkspaceId: getCurrentWorkspaceId });
-  registerChatAttachmentIpc();
+  registerChatAttachmentIpc(getSettings);
   createMainWindow();
   await extractionOrchestrator.resumePendingJobs();
 }

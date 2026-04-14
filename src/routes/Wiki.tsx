@@ -9,6 +9,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  MessageSquare,
   Pencil,
   Trash2,
   X
@@ -18,15 +19,12 @@ import type {
   AppWorkspaceId,
   FolderSummary,
   SaveNoteInput,
+  StrandProvenanceSnapshot,
   VaultSnapshot,
-  WikiNote
+  WikiNote,
+  WikiTouchSessionSummary
 } from "@electron/ipc/types";
 import { NoteViewer } from "@/components/wiki/NoteViewer";
-import {
-  buildNoteContentFromTemplate,
-  isTemplateNote,
-  templateTag
-} from "@/lib/chatTemplates";
 import { cn } from "@/lib/utils";
 import { notesRoutePath } from "@/lib/noteRoutes";
 import {
@@ -37,12 +35,16 @@ import {
   WIKI_EXPLORER_UNDO_LIMIT
 } from "@/lib/wikiExplorerUndo";
 import { readWorkspaceLocalStorage, writeWorkspaceLocalStorage } from "@/lib/workspace";
+import { useChatStore } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
 import { useWikiStore } from "@/store/wikiStore";
 
 const WIKI_LIST_WIDTH_KEY = "wiki-list-width";
 const WIKI_LIST_COLLAPSED_KEY = "wiki-list-collapsed";
 const WIKI_EXPANDED_FOLDERS_KEY = "wiki-expanded-folders";
+const WIKI_BROWSE_TAB_KEY = "wiki-browse-tab";
+
+type WikiBrowseTab = "recent" | "sessions" | "explorer";
 const DEFAULT_WIKI_LIST_WIDTH = 360;
 const MIN_WIKI_LIST_WIDTH = 300;
 const MAX_WIKI_LIST_WIDTH = 620;
@@ -63,6 +65,14 @@ function getStoredWikiListWidth(): number {
 
 function getStoredWikiListCollapsed(workspaceId: AppWorkspaceId): boolean {
   return readWorkspaceLocalStorage(WIKI_LIST_COLLAPSED_KEY, workspaceId) === "true";
+}
+
+function getStoredWikiBrowseTab(workspaceId: AppWorkspaceId): WikiBrowseTab {
+  const raw = readWorkspaceLocalStorage(WIKI_BROWSE_TAB_KEY, workspaceId);
+  if (raw === "sessions" || raw === "explorer" || raw === "recent") {
+    return raw;
+  }
+  return "recent";
 }
 
 function getStoredExpandedFolders(workspaceId: AppWorkspaceId): Set<string> {
@@ -174,6 +184,11 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
   );
   const [isResizingList, setIsResizingList] = useState(false);
   const [query, setQuery] = useState("");
+  const [browseTab, setBrowseTab] = useState<WikiBrowseTab>(() => getStoredWikiBrowseTab(workspaceId));
+  const [activeVaultId, setActiveVaultId] = useState("");
+  const [strandProvenance, setStrandProvenance] = useState<StrandProvenanceSnapshot | null>(null);
+  const [touchSessions, setTouchSessions] = useState<WikiTouchSessionSummary[]>([]);
+  const [touchSessionsLoading, setTouchSessionsLoading] = useState(false);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() =>
@@ -185,7 +200,6 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     kind: "note" | "folder";
     parentPath: string;
   } | null>(null);
-  const [pendingCreateTemplateSlug, setPendingCreateTemplateSlug] = useState("");
   const [pendingFolderRenamePath, setPendingFolderRenamePath] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [isSubmittingCreate, setIsSubmittingCreate] = useState(false);
@@ -198,8 +212,8 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
   const replaceIndex = useWikiStore((state) => state.replaceIndex);
   const isHydrated = useWikiStore((state) => state.isHydrated);
   const pushToast = useUiStore((state) => state.pushToast);
+  const setActiveChatSession = useChatStore((state) => state.setActiveSession);
   const activeNote = activeNoteSlug ? noteCache[activeNoteSlug] : null;
-  const templateNotes = useMemo(() => notes.filter(isTemplateNote), [notes]);
 
   const applySnapshot = useCallback(
     (snapshot: VaultSnapshot, preferredSlug?: string | null): void => {
@@ -271,7 +285,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       })
       .catch((error) => {
         pushToast({
-          title: error instanceof Error ? error.message : "Could not load that note.",
+          title: error instanceof Error ? error.message : "Could not load that Strand.",
           tone: "warning"
         });
         void window.trellis.vault.listIndex().then((snapshot) => {
@@ -305,15 +319,83 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
   useEffect(() => {
     setListWidth(getStoredWikiListWidth());
     setListCollapsed(getStoredWikiListCollapsed(workspaceId));
+    setBrowseTab(getStoredWikiBrowseTab(workspaceId));
     setSelectedTag(null);
     setSelectedFolderPath(null);
     setPendingCreate(null);
-    setPendingCreateTemplateSlug("");
     setPendingFolderRenamePath(null);
     setExpandedFolders(getStoredExpandedFolders(workspaceId));
     explorerUndoStackRef.current = [];
     explorerRedoStackRef.current = [];
   }, [workspaceId]);
+
+  useEffect(() => {
+    writeWorkspaceLocalStorage(WIKI_BROWSE_TAB_KEY, browseTab, workspaceId);
+  }, [browseTab, workspaceId]);
+
+  useEffect(() => {
+    void window.trellis.app.getSettings().then((settings) => {
+      setActiveVaultId(settings.activeVaultId);
+    });
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!activeNoteSlug || !activeVaultId) {
+      setStrandProvenance(null);
+      return;
+    }
+
+    const fileName = `${activeNoteSlug}.md`;
+    let cancelled = false;
+
+    void window.trellis.db
+      .getStrandProvenanceForFile({ vaultId: activeVaultId, fileName })
+      .then((row) => {
+        if (!cancelled) {
+          setStrandProvenance(row);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStrandProvenance(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeNoteSlug, activeVaultId]);
+
+  useEffect(() => {
+    if (browseTab !== "sessions" || !activeVaultId) {
+      return;
+    }
+
+    let cancelled = false;
+    setTouchSessionsLoading(true);
+
+    void window.trellis.db
+      .listWikiTouchSessions(activeVaultId)
+      .then((rows) => {
+        if (!cancelled) {
+          setTouchSessions(rows);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTouchSessions([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setTouchSessionsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [browseTab, activeVaultId]);
 
   useEffect(() => {
     async function runExplorerUndo(): Promise<void> {
@@ -323,7 +405,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       const entry = explorerUndoStackRef.current[0];
       if (!entry) {
         pushToast({
-          title: "Nothing to undo for the note list.",
+          title: "Nothing to undo for the Strand list.",
           tone: "warning"
         });
         return;
@@ -353,7 +435,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       const entry = explorerRedoStackRef.current[0];
       if (!entry) {
         pushToast({
-          title: "Nothing to redo for the note list.",
+          title: "Nothing to redo for the Strand list.",
           tone: "warning"
         });
         return;
@@ -502,6 +584,12 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       .sort(sortNotesByTitle);
   }, [normalizedQuery, notes, selectedTag]);
 
+  const recentNotesOrdered = useMemo(() => {
+    return [...filteredNotes].sort(
+      (left, right) => right.updated.localeCompare(left.updated) || left.title.localeCompare(right.title)
+    );
+  }, [filteredNotes]);
+
   const foldersByParent = useMemo(() => {
     const next = new Map<string, FolderSummary[]>();
 
@@ -628,13 +716,11 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       parentPath: selectedFolderPath ?? activeNote?.folderPath ?? ""
     });
     setDraftName("");
-    setPendingCreateTemplateSlug("");
   }
 
   function closeCreateForm(): void {
     setPendingCreate(null);
     setDraftName("");
-    setPendingCreateTemplateSlug("");
   }
 
   function openRenameFolderForm(folder: FolderSummary): void {
@@ -712,23 +798,10 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
         });
       } else {
         const parentPath = pendingCreate.parentPath;
-        const templateSlug = pendingCreateTemplateSlug;
-        const template = templateSlug ? await window.trellis.vault.readNote(templateSlug) : null;
-        const result = template
-          ? await window.trellis.vault.writeNote({
-              title: value,
-              folderPath: parentPath,
-              content: buildNoteContentFromTemplate(template, { instanceTitle: value }),
-              frontmatter: {
-                tags: template.tags.filter((tag) => tag.trim().toLowerCase() !== templateTag),
-                type: template.type,
-                sources: 0
-              }
-            })
-          : await window.trellis.vault.createStub({
-              title: value,
-              folderPath: parentPath
-            });
+        const result = await window.trellis.vault.createStub({
+          title: value,
+          folderPath: parentPath
+        });
         setNote(result.note);
         setSelectedFolderPath(result.note.folderPath || null);
         const snapshot = await window.trellis.vault.listIndex();
@@ -744,34 +817,17 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
             applySnapshot(snap, activeNoteSlug);
           },
           redo: async () => {
-            if (template) {
-              const tpl = await window.trellis.vault.readNote(templateSlug);
-              const r = await window.trellis.vault.writeNote({
-                title: value,
-                folderPath: parentPath,
-                content: buildNoteContentFromTemplate(tpl, { instanceTitle: value }),
-                frontmatter: {
-                  tags: tpl.tags.filter((tag) => tag.trim().toLowerCase() !== templateTag),
-                  type: tpl.type,
-                  sources: 0
-                }
-              });
-              setNote(r.note);
-              const snap = await window.trellis.vault.listIndex();
-              applySnapshot(snap, r.note.slug);
-            } else {
-              const r = await window.trellis.vault.createStub({
-                title: value,
-                folderPath: parentPath
-              });
-              setNote(r.note);
-              const snap = await window.trellis.vault.listIndex();
-              applySnapshot(snap, r.note.slug);
-            }
+            const r = await window.trellis.vault.createStub({
+              title: value,
+              folderPath: parentPath
+            });
+            setNote(r.note);
+            const snap = await window.trellis.vault.listIndex();
+            applySnapshot(snap, r.note.slug);
           }
         });
         pushToast({
-          title: template ? "Note created from template" : "Note created",
+          title: "Note created",
           tone: "success"
         });
       }
@@ -1058,7 +1114,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     folderPath: string;
   }): Promise<void> {
     if (
-      !window.confirm(`Delete "${note.title}"? This removes the note from your vault.`)
+      !window.confirm(`Delete "${note.title}"? This removes the Strand from your vault.`)
     ) {
       return;
     }
@@ -1083,7 +1139,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
         }
       });
       pushToast({
-        title: "Note deleted",
+        title: "Strand deleted",
         tone: "success"
       });
     } catch (error) {
@@ -1585,7 +1641,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
         <button
           type="button"
           className="mr-1 rounded-field border border-transparent p-1 text-trellis-faint opacity-0 transition hover:border-red-400/30 hover:text-red-200 group-hover:opacity-100"
-          title="Delete note"
+          title="Delete Strand"
           aria-label={`Delete ${note.title}`}
           onClick={(event) => {
             event.stopPropagation();
@@ -1838,15 +1894,15 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
                   <button
                     type="button"
                     className="shrink-0 rounded-field border border-transparent p-1.5 text-trellis-muted transition hover:border-trellis-border hover:text-trellis-text"
-                    aria-label="Hide note list"
-                    title="Hide note list"
+                    aria-label="Hide Strand list"
+                    title="Hide Strand list"
                     onClick={() => {
                       setListCollapsed(true);
                     }}
                   >
                     <ChevronLeft className="h-4 w-4" aria-hidden />
                   </button>
-                  <p className="font-display text-2xl text-trellis-text">Notes</p>
+                  <p className="font-display text-2xl text-trellis-text">Strands</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -1861,13 +1917,48 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
                   <button
                     type="button"
                     className="rounded-field border border-trellis-border p-2 text-trellis-muted transition hover:border-trellis-accent/30 hover:text-trellis-text"
-                    title="New note"
-                    aria-label="New note"
+                    title="New Strand"
+                    aria-label="New Strand"
                     onClick={() => openCreateForm("note")}
                   >
                     <FilePlus2 className="h-4 w-4" />
                   </button>
                 </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={`rounded-field border px-2.5 py-1 text-xs transition ${
+                    browseTab === "recent"
+                      ? "border-trellis-accent/40 bg-trellis-accent/10 text-trellis-text"
+                      : "border-trellis-border text-trellis-muted hover:border-trellis-accent/25"
+                  }`}
+                  onClick={() => setBrowseTab("recent")}
+                >
+                  Recent
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-field border px-2.5 py-1 text-xs transition ${
+                    browseTab === "sessions"
+                      ? "border-trellis-accent/40 bg-trellis-accent/10 text-trellis-text"
+                      : "border-trellis-border text-trellis-muted hover:border-trellis-accent/25"
+                  }`}
+                  onClick={() => setBrowseTab("sessions")}
+                >
+                  From chats
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-field border px-2.5 py-1 text-xs transition ${
+                    browseTab === "explorer"
+                      ? "border-trellis-accent/40 bg-trellis-accent/10 text-trellis-text"
+                      : "border-trellis-border text-trellis-muted hover:border-trellis-accent/25"
+                  }`}
+                  onClick={() => setBrowseTab("explorer")}
+                >
+                  Explorer
+                </button>
               </div>
               <input
                 value={query}
@@ -1983,41 +2074,71 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
                         </button>
                       </div>
                     </div>
-                    {pendingCreate.kind === "note" && templateNotes.length > 0 ? (
-                      <div className="border-t border-trellis-border/70 px-2.5 pb-2 pt-1.5">
-                        <label
-                          className="text-[10px] uppercase tracking-[0.14em] text-trellis-faint"
-                          htmlFor="notes-create-template"
-                        >
-                          Template
-                        </label>
-                        <select
-                          id="notes-create-template"
-                          className="mt-1 w-full rounded-field border border-trellis-border bg-trellis-surface px-2 py-1.5 text-xs text-trellis-text outline-none transition focus:border-trellis-accent/50"
-                          value={pendingCreateTemplateSlug}
-                          disabled={isSubmittingCreate}
-                          onChange={(event) => {
-                            setPendingCreateTemplateSlug(event.target.value);
-                          }}
-                        >
-                          <option value="">Blank note</option>
-                          {templateNotes.map((template) => (
-                            <option key={template.slug} value={template.slug}>
-                              {template.title}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    ) : null}
                   </div>
                 ) : null}
-                {rootFolders.map((folder) => renderFolderRow(folder, 0))}
-                {rootNotes.map((note) => renderNoteRow(note, 0))}
-                {rootFolders.length === 0 && rootNotes.length === 0 ? (
+                {browseTab === "explorer" ? (
+                  <>
+                    {rootFolders.map((folder) => renderFolderRow(folder, 0))}
+                    {rootNotes.map((note) => renderNoteRow(note, 0))}
+                  </>
+                ) : null}
+                {browseTab === "recent"
+                  ? recentNotesOrdered.map((note) => renderNoteRow(note, 0))
+                  : null}
+                {browseTab === "sessions" ? (
+                  touchSessionsLoading ? (
+                    <div className="px-3 py-4 text-sm text-trellis-muted">Loading sessions…</div>
+                  ) : touchSessions.length === 0 ? (
+                    <div className="rounded-panel border border-dashed border-trellis-border px-4 py-5 text-sm text-trellis-muted">
+                      No chat sessions have written to this vault yet. Keep chatting — extractions
+                      show up here.
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {touchSessions.map((session) => (
+                        <div
+                          key={session.sessionId}
+                          className="flex items-center gap-1 rounded-field border border-transparent transition hover:border-trellis-border hover:bg-trellis-surface-2"
+                        >
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 px-2.5 py-2 text-left"
+                            onClick={() => {
+                              setActiveChatSession(session.sessionId);
+                              navigate("/chat");
+                            }}
+                          >
+                            <span className="block truncate text-[13px] font-medium text-trellis-text">
+                              {session.sessionTitle?.trim() || "Untitled chat"}
+                            </span>
+                            <span className="mt-0.5 block text-[11px] text-trellis-faint">
+                              {session.touchCount} vault update{session.touchCount === 1 ? "" : "s"} ·{" "}
+                              {new Date(session.lastTouchAt).toLocaleDateString(undefined, {
+                                month: "short",
+                                day: "numeric"
+                              })}
+                            </span>
+                          </button>
+                          <MessageSquare className="mr-2 h-3.5 w-3.5 shrink-0 text-trellis-faint" aria-hidden />
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : null}
+                {browseTab === "explorer" &&
+                rootFolders.length === 0 &&
+                rootNotes.length === 0 ? (
                   <div className="rounded-panel border border-dashed border-trellis-border px-4 py-5 text-sm text-trellis-muted">
                     {hasSidebarFilters
-                      ? "No notes match the current search or tag filter."
-                      : "No notes yet. Create a note or folder to start building your knowledge base."}
+                      ? "No Strands match the current search or tag filter."
+                      : "No Strands in folders yet. Switch to Recent, or create a Strand or folder."}
+                  </div>
+                ) : null}
+                {browseTab === "recent" && recentNotesOrdered.length === 0 ? (
+                  <div className="rounded-panel border border-dashed border-trellis-border px-4 py-5 text-sm text-trellis-muted">
+                    {hasSidebarFilters
+                      ? "No Strands match the current search or tag filter."
+                      : "No Strands yet. Chat to compound memory into your vault."}
                   </div>
                 ) : null}
               </div>
@@ -2032,7 +2153,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
         )}
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize note list"
+        aria-label="Resize Strand list"
       >
         {!listCollapsed ? (
           <button
@@ -2040,7 +2161,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
             tabIndex={-1}
             aria-hidden
             className="group absolute inset-y-8 -left-2 -right-2 z-10 flex cursor-col-resize items-center justify-center bg-transparent"
-            title="Drag to resize note list. Double-click to hide list."
+            title="Drag to resize Strand list. Double-click to hide list."
             onMouseDown={(event) => {
               if (event.button !== 0) {
                 return;
@@ -2063,8 +2184,8 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
           <button
             type="button"
             className="absolute left-4 top-4 z-20 inline-flex h-9 w-9 items-center justify-center rounded-field border border-trellis-border bg-trellis-surface-2 text-trellis-muted shadow-[var(--trellis-elevated-shadow)] transition hover:border-trellis-accent/30 hover:text-trellis-text md:left-6 motion-reduce:transition-none"
-            aria-label="Show note list"
-            title="Show note list"
+            aria-label="Show Strand list"
+            title="Show Strand list"
             onClick={() => {
               setListCollapsed(false);
             }}
@@ -2110,6 +2231,11 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
                 onDeleteNote={() => {
                   void handleDeleteNote();
                 }}
+                strandProvenance={strandProvenance}
+                onOpenStrandSession={(sessionId) => {
+                  setActiveChatSession(sessionId);
+                  navigate("/chat");
+                }}
               />
             </div>
           </div>
@@ -2121,10 +2247,10 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
             )}
           >
             <FileText className="h-8 w-8 text-trellis-accent/80" />
-            <p className="mt-4 font-display text-2xl text-trellis-text">Choose a note</p>
+            <p className="mt-4 font-display text-2xl text-trellis-text">Choose a Strand</p>
             <p className="mt-2 max-w-md text-sm leading-7 text-trellis-muted">
-              Organize notes into folders, tag what matters, and use the left rail as a clean
-              library instead of a transcript feed.
+              Browse Recent or From chats first, or use Explorer when you need folders. Strands are
+              the durable pages your chats compound into.
             </p>
           </div>
         )}

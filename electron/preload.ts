@@ -12,6 +12,7 @@ import {
   type CreateStubInput,
   type CreateCheckoutSessionInput,
   type CreateCheckoutSessionResult,
+  type CreateThoughtInput,
   type DeleteProviderKeyInput,
   type DeleteFolderInput,
   type DeleteNoteInput,
@@ -23,6 +24,8 @@ import {
   type ImportFromObsidianResult,
   type MessageRecord,
   type RenameFolderInput,
+  type ThoughtRecord,
+  type ThoughtUpdatedPayload,
   type TrellisBridge,
   type ParsePdfInput,
   type RecordWikiOpInput,
@@ -69,7 +72,19 @@ const trellis: TrellisBridge = {
     replaceMessages: (payload) => ipcRenderer.invoke(ipcChannels.dbReplaceMessages, payload),
     updateSession: (payload) => ipcRenderer.invoke(ipcChannels.dbUpdateSession, payload),
     recordWikiOps: (ops: RecordWikiOpInput[]) =>
-      ipcRenderer.invoke(ipcChannels.dbRecordWikiOps, ops)
+      ipcRenderer.invoke(ipcChannels.dbRecordWikiOps, ops),
+    listWikiTouchSessions: (vaultId: string) =>
+      ipcRenderer.invoke(ipcChannels.dbListWikiTouchSessions, vaultId),
+    getStrandProvenanceForFile: (input: { vaultId: string; fileName: string }) =>
+      ipcRenderer.invoke(ipcChannels.dbGetStrandProvenanceForFile, input),
+    createThought: (input: CreateThoughtInput) =>
+      ipcRenderer.invoke(ipcChannels.dbCreateThought, input) as Promise<ThoughtRecord>,
+    listThoughts: (vaultId: string) =>
+      ipcRenderer.invoke(ipcChannels.dbListThoughts, vaultId) as Promise<ThoughtRecord[]>,
+    getThought: (thoughtId: string) =>
+      ipcRenderer.invoke(ipcChannels.dbGetThought, thoughtId) as Promise<ThoughtRecord | null>,
+    retryThoughtEnrichment: (thoughtId: string) =>
+      ipcRenderer.invoke(ipcChannels.dbRetryThoughtEnrichment, thoughtId) as Promise<void>
   },
   extraction: {
     getRuntimeStatus: (input) =>
@@ -155,8 +170,6 @@ const trellis: TrellisBridge = {
     storeMemory: (input) => ipcRenderer.invoke(ipcChannels.chatStoreMemory, input),
     proposeNoteActions: (input) =>
       ipcRenderer.invoke(ipcChannels.chatProposeNoteActions, input),
-    applyTemplateInstance: (input) =>
-      ipcRenderer.invoke(ipcChannels.chatApplyTemplateInstance, input),
     applyVaultOrganize: (input: ApplyVaultOrganizeInput) =>
       ipcRenderer.invoke(ipcChannels.chatApplyVaultOrganize, input),
     runLocalReply: (input) => ipcRenderer.invoke(ipcChannels.chatRunLocalReply, input),
@@ -244,6 +257,18 @@ const trellis: TrellisBridge = {
   shell: {
     openPath: (targetPath: string) => ipcRenderer.invoke(ipcChannels.shellOpenPath, targetPath),
     openExternal: (url: string) => ipcRenderer.invoke(ipcChannels.shellOpenExternal, url)
+  },
+  thoughts: {
+    onThoughtUpdated: (listener: (payload: ThoughtUpdatedPayload) => void) => {
+      const channel = ipcChannels.thoughtUpdated;
+      const handler = (_event: unknown, payload: ThoughtUpdatedPayload) => {
+        listener(payload);
+      };
+      ipcRenderer.on(channel, handler);
+      return () => {
+        ipcRenderer.removeListener(channel, handler);
+      };
+    }
   }
 };
 

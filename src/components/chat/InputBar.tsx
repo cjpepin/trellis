@@ -2,16 +2,16 @@ import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react
 import {
   ArrowUpRight,
   Check,
-  ChevronsUpDown,
-  FileText,
+  CircleHelp,
   ImagePlus,
   Link2,
   LoaderCircle,
-  Lock,
   Mic,
   Paperclip,
+  Pin,
   RotateCcw,
-  Wand2
+  Wand2,
+  X
 } from "lucide-react";
 import type {
   ChatModel,
@@ -19,21 +19,17 @@ import type {
   ProviderKeyStatus,
   SubscriptionTier
 } from "@electron/ipc/types";
-import type { PendingChatAttachment, PendingImageAttachment } from "@/lib/chatAttachments";
 import {
-  chatModelOptions,
-  getChatModelAccess,
-  getChatModelOption
-} from "@/lib/chatModels";
+  maxChatComposerAttachments,
+  type PendingChatAttachment,
+  type PendingImageAttachment
+} from "@/lib/chatAttachments";
+import { getChatModelAccess } from "@/lib/chatModels";
 import {
+  getAtCommandMatch,
   getSlashCommandMatch,
   insertNoteReference
 } from "@/lib/noteReferences";
-import {
-  buildTemplateCreationPrompt,
-  buildTemplateUsePrompt,
-  isTemplateNote
-} from "@/lib/chatTemplates";
 import { cn } from "@/lib/utils";
 import { ComposerPendingPreviews } from "@/components/chat/ComposerPendingPreviews";
 
@@ -86,7 +82,8 @@ interface Props {
   disabled?: boolean;
   isStreaming?: boolean;
   busyReason?: string;
-  model: ChatModel;
+  /** Model Trellis will use for the next send (tier + complexity routing). */
+  routedModel: ChatModel;
   subscriptionTier: SubscriptionTier;
   providerKeys: ProviderKeyStatus[];
   notes: NoteSummary[];
@@ -94,7 +91,6 @@ interface Props {
   submitLabel?: string;
   onChange: (value: string) => void;
   onCancel?: () => void;
-  onSelectModel: (model: ChatModel) => void;
   onSubmit: (value: string) => Promise<void>;
   pendingAttachments: PendingChatAttachment[];
   onRemoveAttachment: (clientId: string) => void;
@@ -105,7 +101,6 @@ interface Props {
   onAttachImage: () => void;
   onPasteImage: (input: { base64: string; mimeType: string }) => void;
   onAppendDraft: (text: string) => void;
-  onCreateTemplate: (input: { title: string; content: string }) => Promise<boolean>;
   onGenerateImageWithPrompt: (prompt: string) => Promise<boolean>;
   privacyLocal: boolean;
   cloudMediaAllowed: boolean;
@@ -113,17 +108,23 @@ interface Props {
   speechAllowed: boolean;
   imageGenAllowed: boolean;
   accessToken: string | null;
-  /** Unlocks every catalog model in the picker (preview workspace for admins). */
+  /** Unlocks full routing catalog checks (preview workspace for admins). */
   previewWorkspace?: boolean;
   /** Full catalog in the picker; matches server admin entitlements. */
   isAdmin?: boolean;
+  /** When false (Chat privacy Off), vault retrieval is disabled for cloud replies — hide pin affordance. */
+  contextRetrievalEnabled?: boolean;
+  /** Notes pinned in the composer for stronger on-device retrieval before the next send. */
+  pinnedWikiNotes?: Array<{ slug: string; title: string }>;
+  /** Toggle a wiki note in the composer pin list (add/remove). */
+  onToggleWikiComposerPin?: (slug: string, title: string) => void;
 }
 
 export function InputBar({
   disabled = false,
   isStreaming = false,
   busyReason,
-  model,
+  routedModel,
   subscriptionTier,
   providerKeys,
   notes,
@@ -131,7 +132,6 @@ export function InputBar({
   submitLabel = "Send",
   onChange,
   onCancel,
-  onSelectModel,
   onSubmit,
   pendingAttachments,
   onRemoveAttachment,
@@ -142,7 +142,6 @@ export function InputBar({
   onAttachImage,
   onPasteImage,
   onAppendDraft,
-  onCreateTemplate,
   onGenerateImageWithPrompt,
   privacyLocal,
   cloudMediaAllowed,
@@ -151,36 +150,34 @@ export function InputBar({
   imageGenAllowed,
   accessToken,
   previewWorkspace = false,
-  isAdmin = false
+  isAdmin = false,
+  contextRetrievalEnabled = true,
+  pinnedWikiNotes = [],
+  onToggleWikiComposerPin
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const [cursor, setCursor] = useState(value.length);
   const [activeCommandIndex, setActiveCommandIndex] = useState(0);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [linkEntryOpen, setLinkEntryOpen] = useState(false);
   const [linkUrlDraft, setLinkUrlDraft] = useState("");
   const [clipUrlBusy, setClipUrlBusy] = useState(false);
-  const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
-  const [templateTitleDraft, setTemplateTitleDraft] = useState("");
-  const [templateBodyDraft, setTemplateBodyDraft] = useState("");
-  const [templateCreateBusy, setTemplateCreateBusy] = useState(false);
-  const [templateAiDraft, setTemplateAiDraft] = useState("");
   const [imageGenOpen, setImageGenOpen] = useState(false);
   const [imageGenDraft, setImageGenDraft] = useState("");
   const [imageGenBusy, setImageGenBusy] = useState(false);
-  const selectedModel = useMemo(() => getChatModelOption(model), [model]);
+  const [wikiPinPickerOpen, setWikiPinPickerOpen] = useState(false);
+  const [wikiPinSearch, setWikiPinSearch] = useState("");
+  const wikiPinPickerRef = useRef<HTMLDivElement | null>(null);
   const selectedModelAccess = useMemo(
     () =>
-      getChatModelAccess(model, subscriptionTier, providerKeys, {
+      getChatModelAccess(routedModel, subscriptionTier, providerKeys, {
         previewWorkspace,
         isAdmin
       }),
-    [isAdmin, model, previewWorkspace, providerKeys, subscriptionTier]
+    [isAdmin, routedModel, previewWorkspace, providerKeys, subscriptionTier]
   );
 
   useEffect(() => {
@@ -196,13 +193,16 @@ export function InputBar({
     setCursor((current) => Math.min(current, value.length));
   }, [value.length]);
 
-  const slashCommand = useMemo(() => getSlashCommandMatch(value, cursor), [cursor, value]);
+  const noteLinkCommand = useMemo(
+    () => getSlashCommandMatch(value, cursor) ?? getAtCommandMatch(value, cursor),
+    [cursor, value]
+  );
   const slashSuggestions = useMemo(() => {
-    if (!slashCommand) {
+    if (!noteLinkCommand) {
       return [];
     }
 
-    const normalizedQuery = slashCommand.query.trim().toLowerCase();
+    const normalizedQuery = noteLinkCommand.query.trim().toLowerCase();
     const filteredNotes = normalizedQuery
       ? notes.filter((note) =>
           `${note.title} ${note.tags.join(" ")}`.toLowerCase().includes(normalizedQuery)
@@ -210,37 +210,44 @@ export function InputBar({
       : notes;
 
     return filteredNotes.slice(0, 6);
-  }, [notes, slashCommand]);
-  const templateNotes = useMemo(() => notes.filter(isTemplateNote), [notes]);
-  const activeInputTool = linkEntryOpen || templateMenuOpen || imageGenOpen;
+  }, [notes, noteLinkCommand]);
+  const wikiPinSuggestions = useMemo(() => {
+    const q = wikiPinSearch.trim().toLowerCase();
+    const filtered = q
+      ? notes.filter((note) => `${note.title} ${note.tags.join(" ")}`.toLowerCase().includes(q))
+      : notes;
+
+    return filtered.slice(0, 8);
+  }, [notes, wikiPinSearch]);
+  const activeInputTool = linkEntryOpen || imageGenOpen;
 
   useEffect(() => {
     setActiveCommandIndex(0);
-  }, [slashCommand?.from, slashCommand?.query]);
+  }, [noteLinkCommand?.from, noteLinkCommand?.query]);
 
   useEffect(() => {
-    if (!modelMenuOpen) {
+    if (!wikiPinPickerOpen) {
       return;
     }
 
     function handlePointerDown(event: MouseEvent): void {
-      if (modelMenuRef.current?.contains(event.target as Node)) {
+      if (wikiPinPickerRef.current?.contains(event.target as Node)) {
         return;
       }
 
-      setModelMenuOpen(false);
+      setWikiPinPickerOpen(false);
+      setWikiPinSearch("");
     }
 
     document.addEventListener("mousedown", handlePointerDown);
     return () => {
       document.removeEventListener("mousedown", handlePointerDown);
     };
-  }, [modelMenuOpen]);
+  }, [wikiPinPickerOpen]);
 
   useEffect(() => {
     if (disabled) {
-      setModelMenuOpen(false);
-      setTemplateMenuOpen(false);
+      setWikiPinPickerOpen(false);
     }
   }, [disabled]);
 
@@ -252,8 +259,8 @@ export function InputBar({
     setCursor(textareaRef.current.selectionStart ?? value.length);
   }
 
-  function selectSlashSuggestion(index: number): void {
-    if (!textareaRef.current || !slashCommand) {
+  function selectNoteLinkSuggestion(index: number): void {
+    if (!textareaRef.current || !noteLinkCommand) {
       return;
     }
 
@@ -263,7 +270,7 @@ export function InputBar({
       return;
     }
 
-    const { nextValue, nextCursor } = insertNoteReference(value, slashCommand, suggestion.title);
+    const { nextValue, nextCursor } = insertNoteReference(value, noteLinkCommand, suggestion.title);
     onChange(nextValue);
     window.requestAnimationFrame(() => {
       textareaRef.current?.focus();
@@ -451,50 +458,50 @@ export function InputBar({
     }
   }
 
-  async function submitTemplateCreate(): Promise<void> {
-    const title = templateTitleDraft.trim();
-    const content = templateBodyDraft.trim();
-
-    if (!title || templateCreateBusy) {
-      return;
-    }
-
-    setTemplateCreateBusy(true);
-
-    try {
-      const ok = await onCreateTemplate({ title, content });
-
-      if (ok) {
-        setTemplateTitleDraft("");
-        setTemplateBodyDraft("");
-      }
-    } finally {
-      setTemplateCreateBusy(false);
-    }
-  }
-
-  function submitTemplateAiDraft(): void {
-    const description = templateAiDraft.trim();
-
-    if (!description) {
-      return;
-    }
-
-    onAppendDraft(buildTemplateCreationPrompt(description));
-    setTemplateAiDraft("");
-    setTemplateMenuOpen(false);
-  }
-
   return (
     <div className="trellis-chat-composer w-full px-3 pb-2.5 pt-2">
       <div className="flex items-start gap-2.5">
         <div className="relative flex-1">
+          {pinnedWikiNotes.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {pinnedWikiNotes.map((note) => (
+                <span
+                  key={note.slug}
+                  title="Pinned for the next reply — Trellis boosts these notes when gathering local context (retrieval stays on your device in Auto)."
+                  className="inline-flex max-w-[min(100%,240px)] items-center gap-1 rounded-full border border-trellis-accent/30 bg-trellis-accent/5 px-2 py-0.5 text-[11px] text-trellis-text"
+                >
+                  <Pin className="h-3 w-3 shrink-0 text-trellis-accent" aria-hidden />
+                  <span className="min-w-0 truncate">{note.title}</span>
+                  <button
+                    type="button"
+                    title="Remove from pinned context"
+                    aria-label={`Unpin ${note.title}`}
+                    className="shrink-0 rounded-full p-0.5 text-trellis-muted transition hover:bg-trellis-surface hover:text-trellis-text"
+                    onClick={() => {
+                      onToggleWikiComposerPin?.(note.slug, note.title);
+                    }}
+                  >
+                    <X className="h-3 w-3" aria-hidden />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <ComposerPendingPreviews
             pendingAttachments={pendingAttachments}
             pendingImages={pendingImages}
             onRemoveAttachment={onRemoveAttachment}
             onRemoveImage={onRemoveImage}
           />
+          {!contextRetrievalEnabled ? (
+            <p
+              className="rounded-field border border-trellis-accent/25 bg-trellis-surface px-3 py-2 text-xs leading-snug text-trellis-muted"
+              role="status"
+            >
+              Chat privacy is Off — note excerpts are not sent to the cloud. Set Chat privacy to Auto or
+              Local in Settings for vault-aware replies.
+            </p>
+          ) : null}
           {linkEntryOpen ? (
             <div className="flex min-h-[42px] flex-col gap-2 py-1">
               <label
@@ -551,121 +558,6 @@ export function InputBar({
                 >
                   Close
                 </button>
-              </div>
-            </div>
-          ) : templateMenuOpen ? (
-            <div className="flex min-h-[42px] flex-col gap-3 py-1">
-              <div>
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint">
-                    Templates
-                  </p>
-                  <button
-                    type="button"
-                    className="rounded-full border border-transparent px-2 py-1 text-xs text-trellis-muted transition hover:border-trellis-border hover:text-trellis-text"
-                    onClick={() => {
-                      setTemplateMenuOpen(false);
-                    }}
-                  >
-                    Close
-                  </button>
-                </div>
-                {templateNotes.length > 0 ? (
-                  <div className="mt-2 grid gap-1">
-                    {templateNotes.slice(0, 6).map((template) => (
-                      <button
-                        key={template.slug}
-                        type="button"
-                        className="w-full rounded-field px-3 py-2 text-left transition hover:bg-trellis-surface"
-                        onClick={() => {
-                          onAppendDraft(buildTemplateUsePrompt(template.title));
-                          setTemplateMenuOpen(false);
-                        }}
-                      >
-                        <p className="text-sm text-trellis-text">{template.title}</p>
-                        <p className="mt-1 max-h-10 overflow-hidden text-xs leading-5 text-trellis-muted">
-                          {template.excerpt || "Use this structure in chat."}
-                        </p>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-2 text-sm text-trellis-muted">
-                    No saved templates yet. Create one here, or ask Trellis to make one.
-                  </p>
-                )}
-              </div>
-              <div className="grid gap-2 border-t border-trellis-border pt-3 md:grid-cols-2">
-                <div className="flex flex-col gap-2">
-                  <label
-                    className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint"
-                    htmlFor="chat-template-title"
-                  >
-                    Save a template
-                  </label>
-                  <input
-                    id="chat-template-title"
-                    className="trellis-input min-h-0 py-2 text-sm"
-                    placeholder="Daily reflection template"
-                    value={templateTitleDraft}
-                    disabled={disabled || templateCreateBusy}
-                    onChange={(event) => {
-                      setTemplateTitleDraft(event.target.value);
-                    }}
-                  />
-                  <textarea
-                    className="trellis-input min-h-[92px] resize-y py-2 text-sm"
-                    placeholder={"## Wins\n\n## Friction\n\n## Tomorrow"}
-                    value={templateBodyDraft}
-                    disabled={disabled || templateCreateBusy}
-                    onChange={(event) => {
-                      setTemplateBodyDraft(event.target.value);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    disabled={disabled || templateCreateBusy || templateTitleDraft.trim().length === 0}
-                    className="w-fit rounded-full border border-trellis-border px-3 py-2 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:opacity-40"
-                    onClick={() => {
-                      void submitTemplateCreate();
-                    }}
-                  >
-                    {templateCreateBusy ? (
-                      <span className="inline-flex items-center gap-2">
-                        <LoaderCircle className="h-4 w-4 animate-spin text-trellis-accent" aria-hidden />
-                        Saving...
-                      </span>
-                    ) : (
-                      "Save template"
-                    )}
-                  </button>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label
-                    className="text-[11px] uppercase tracking-[0.16em] text-trellis-faint"
-                    htmlFor="chat-template-ai"
-                  >
-                    Ask Trellis
-                  </label>
-                  <textarea
-                    id="chat-template-ai"
-                    className="trellis-input min-h-[92px] resize-y py-2 text-sm"
-                    placeholder="a daily reflection with mood, energy, gratitude, and tomorrow"
-                    value={templateAiDraft}
-                    disabled={disabled}
-                    onChange={(event) => {
-                      setTemplateAiDraft(event.target.value);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    disabled={disabled || templateAiDraft.trim().length === 0}
-                    className="w-fit rounded-full border border-trellis-border px-3 py-2 text-xs text-trellis-text transition hover:border-trellis-accent/35 disabled:opacity-40"
-                    onClick={submitTemplateAiDraft}
-                  >
-                    Draft with chat
-                  </button>
-                </div>
               </div>
             </div>
           ) : imageGenOpen ? (
@@ -735,7 +627,7 @@ export function InputBar({
               onKeyUp={syncCursor}
               onSelect={syncCursor}
               onKeyDown={(event) => {
-                if (slashCommand) {
+                if (noteLinkCommand) {
                   if (event.key === "ArrowDown" && slashSuggestions.length > 0) {
                     event.preventDefault();
                     setActiveCommandIndex((current) => (current + 1) % slashSuggestions.length);
@@ -752,7 +644,7 @@ export function InputBar({
 
                   if ((event.key === "Enter" || event.key === "Tab") && slashSuggestions.length > 0) {
                     event.preventDefault();
-                    selectSlashSuggestion(activeCommandIndex);
+                    selectNoteLinkSuggestion(activeCommandIndex);
                     return;
                   }
                 }
@@ -764,9 +656,12 @@ export function InputBar({
               }}
             />
           )}
-          {!activeInputTool && slashCommand && (
+          {!activeInputTool && noteLinkCommand && (
             <div className="trellis-elevated absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden">
-              <div className="border-b border-trellis-border px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-trellis-faint">
+              <div
+                className="border-b border-trellis-border px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-trellis-faint"
+                title="Inserts a [[wiki link]]. Trellis uses links and nearby text to pull Strand content into the reply when chat privacy allows vault context."
+              >
                 Link a note
               </div>
               {slashSuggestions.length > 0 ? (
@@ -783,7 +678,7 @@ export function InputBar({
                       )}
                       onMouseDown={(event) => {
                         event.preventDefault();
-                        selectSlashSuggestion(index);
+                        selectNoteLinkSuggestion(index);
                       }}
                     >
                       <p className="text-sm text-trellis-text">{note.title}</p>
@@ -809,7 +704,7 @@ export function InputBar({
               (isStreaming
                 ? "Wait for this chat to finish before sending another message."
                 : !selectedModelAccess.allowed
-                  ? selectedModelAccess.reason ?? "Choose an available model to send."
+                  ? selectedModelAccess.reason ?? "Adjust account settings to send."
                   : "Add a message or attachment to send")
             : "Send message (Enter)";
 
@@ -851,6 +746,8 @@ export function InputBar({
               ariaLabel="Attach file from computer"
               disabled={disabled || isStreaming}
               onClick={() => {
+                setWikiPinPickerOpen(false);
+                setWikiPinSearch("");
                 onAttachFile();
               }}
               buttonClassName="text-trellis-muted hover:text-trellis-text"
@@ -864,42 +761,128 @@ export function InputBar({
               active={linkEntryOpen}
               onClick={() => {
                 setImageGenOpen(false);
-                setTemplateMenuOpen(false);
+                setWikiPinPickerOpen(false);
+                setWikiPinSearch("");
                 setLinkEntryOpen((current) => !current);
               }}
               buttonClassName="text-trellis-muted hover:text-trellis-text"
             >
               <Link2 className="h-4 w-4" aria-hidden />
             </ComposerIconButton>
-            <ComposerIconButton
-              title="Use or create a template"
-              ariaLabel="Use or create template"
-              disabled={disabled || isStreaming}
-              active={templateMenuOpen}
-              onClick={() => {
-                setLinkEntryOpen(false);
-                setImageGenOpen(false);
-                setTemplateMenuOpen((current) => !current);
-              }}
-              buttonClassName="text-trellis-muted hover:text-trellis-text"
-              dataTestId="chat-template-menu"
-            >
-              <FileText className="h-4 w-4" aria-hidden />
-            </ComposerIconButton>
+            <div ref={wikiPinPickerRef} className="relative inline-flex">
+              <ComposerIconButton
+                title={
+                  !contextRetrievalEnabled
+                    ? "Chat privacy is Off — no vault snippets are sent with cloud replies. Turn on Auto or Local in Settings to use Strand context."
+                    : "Pin Strands so Trellis always considers them when gathering local context for your next message."
+                }
+                ariaLabel="Pin Strands for context"
+                disabled={
+                  disabled || isStreaming || !contextRetrievalEnabled || !onToggleWikiComposerPin
+                }
+                active={wikiPinPickerOpen}
+                onClick={() => {
+                  setImageGenOpen(false);
+                  setLinkEntryOpen(false);
+                  setWikiPinPickerOpen((current) => {
+                    if (current) {
+                      setWikiPinSearch("");
+                    }
+
+                    return !current;
+                  });
+                }}
+                buttonClassName="text-trellis-muted hover:text-trellis-text"
+              >
+                <Pin className="h-4 w-4" aria-hidden />
+              </ComposerIconButton>
+              {wikiPinPickerOpen && contextRetrievalEnabled && onToggleWikiComposerPin ? (
+                <div
+                  className="trellis-elevated absolute bottom-full left-0 z-30 mb-2 w-[min(100vw-2rem,320px)] overflow-hidden rounded-field border border-trellis-border bg-trellis-surface shadow-lg"
+                  role="listbox"
+                  aria-label="Strands to pin"
+                >
+                  <div className="border-b border-trellis-border px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-trellis-faint">
+                    Pin for next reply
+                  </div>
+                  <div className="p-2">
+                    <label className="sr-only" htmlFor="wiki-pin-search">
+                      Search Strands
+                    </label>
+                    <input
+                      id="wiki-pin-search"
+                      type="search"
+                      autoComplete="off"
+                      placeholder="Search notes…"
+                      className="trellis-input mb-2 w-full py-2 text-sm"
+                      value={wikiPinSearch}
+                      onChange={(event) => {
+                        setWikiPinSearch(event.target.value);
+                      }}
+                    />
+                    {wikiPinSuggestions.length > 0 ? (
+                      <ul className="max-h-52 space-y-1 overflow-y-auto">
+                        {wikiPinSuggestions.map((note) => {
+                          const pinned = pinnedWikiNotes.some((item) => item.slug === note.slug);
+
+                          return (
+                            <li key={note.slug}>
+                              <button
+                                type="button"
+                                role="option"
+                                title={
+                                  pinned
+                                    ? "Click to unpin this note"
+                                    : "Pin this note — Trellis will boost it when building context"
+                                }
+                                className={cn(
+                                  "flex w-full items-start gap-2 rounded-field px-3 py-2 text-left transition hover:bg-trellis-surface",
+                                  pinned && "trellis-selected-surface"
+                                )}
+                                onClick={() => {
+                                  onToggleWikiComposerPin(note.slug, note.title);
+                                }}
+                              >
+                                {pinned ? (
+                                  <Check
+                                    className="mt-0.5 h-4 w-4 shrink-0 text-trellis-accent"
+                                    aria-hidden
+                                  />
+                                ) : (
+                                  <Pin className="mt-0.5 h-4 w-4 shrink-0 text-trellis-muted" aria-hidden />
+                                )}
+                                <span className="min-w-0 flex-1">
+                                  <span className="block text-sm text-trellis-text">{note.title}</span>
+                                  <span className="mt-0.5 line-clamp-2 text-xs text-trellis-muted">
+                                    {note.excerpt || "Strand"}
+                                  </span>
+                                </span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : (
+                      <p className="px-1 py-2 text-sm text-trellis-muted">No notes match.</p>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
             <ComposerIconButton
               title={
                 privacyLocal
                   ? "Vision needs cloud chat — turn off local-only privacy to attach images"
                   : !visionAllowed
-                    ? "Attach an image file — your current model is not vision-capable; switch to GPT-4o Mini, GPT-4o, or Claude, or Trellis will remind you when you click"
-                    : "Attach an image file (PNG, JPEG, WebP, GIF) for vision-capable models"
+                    ? "Images need a vision-capable route — shorten the message or reduce attachments so Trellis can pick a vision model for your plan."
+                    : "Attach an image file (PNG, JPEG, WebP, GIF)"
               }
               ariaLabel="Attach image file"
               disabled={
                 disabled ||
                 isStreaming ||
                 privacyLocal ||
-                pendingAttachments.length + pendingImages.length >= 12
+                pendingAttachments.length + pendingImages.length >= maxChatComposerAttachments
               }
               onClick={() => {
                 onAttachImage();
@@ -913,7 +896,7 @@ export function InputBar({
                 privacyLocal
                   ? "Voice to text needs cloud chat — turn off local-only privacy"
                   : !speechAllowed
-                    ? "Speech input is not available for this model or setup"
+                    ? "Speech input is not available for this chat setup"
                     : isTranscribing
                       ? "Turning speech into text…"
                       : isRecording
@@ -955,7 +938,7 @@ export function InputBar({
                 privacyLocal
                   ? "Image generation needs cloud chat — turn off local-only privacy"
                   : !imageGenAllowed
-                    ? "Describe an image to generate — requires GPT-4o; Trellis will remind you if your model cannot generate"
+                    ? "Image generation needs a GPT-4o-class route — not available for this composer state or plan"
                     : imageGenBusy
                       ? "Generating an image…"
                       : "Generate a PNG with AI from a short description (opens prompt below)"
@@ -965,7 +948,8 @@ export function InputBar({
               active={imageGenOpen}
               onClick={() => {
                 setLinkEntryOpen(false);
-                setTemplateMenuOpen(false);
+                setWikiPinPickerOpen(false);
+                setWikiPinSearch("");
                 setImageGenOpen((current) => !current);
               }}
               buttonClassName="text-trellis-muted hover:text-trellis-text"
@@ -973,10 +957,32 @@ export function InputBar({
               <Wand2 className="h-4 w-4" aria-hidden />
             </ComposerIconButton>
           </div>
-          <p className="min-w-0 text-xs text-trellis-muted">
-            Type <code>/</code> for notes. Templates, files, links, and images can guide the chat. Enter sends ·
-            Shift+Enter newline.
-          </p>
+          <div className="group relative inline-flex shrink-0 items-center">
+            <button
+              type="button"
+              className="rounded-full border border-transparent p-1 text-trellis-muted outline-none ring-trellis-accent/40 transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text focus-visible:ring-2"
+              aria-label="Composer help: type slash or at-sign to link notes; pin for priority; clip, files, and images add more context; Enter sends; Shift+Enter newline."
+            >
+              <CircleHelp className="h-4 w-4" aria-hidden />
+            </button>
+            <div
+              className={cn(
+                "trellis-elevated invisible absolute left-0 top-full z-40 mt-1.5 w-[min(100vw-2rem,340px)]",
+                "rounded-field border border-trellis-border bg-trellis-surface px-3 py-2 shadow-lg",
+                "text-xs leading-5 text-trellis-text",
+                "opacity-0 transition-opacity motion-reduce:transition-none",
+                "group-hover:visible group-hover:opacity-100",
+                "group-focus-within:visible group-focus-within:opacity-100"
+              )}
+              role="tooltip"
+            >
+              Type{" "}
+              <code className="rounded border border-trellis-border/50 px-1 py-px font-mono text-[0.95em]">/</code> or{" "}
+              <code className="rounded border border-trellis-border/50 px-1 py-px font-mono text-[0.95em]">@</code> to link
+              notes · pin
+              for priority · clip, files, and images add more context. Enter sends · Shift+Enter newline.
+            </div>
+          </div>
           {onCancel && (
             <button
               type="button"
@@ -992,123 +998,14 @@ export function InputBar({
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {submitLabel !== "Send" && (
             <span className="rounded-full border border-trellis-accent/25 px-2.5 py-1 text-xs text-trellis-accent">
               {submitLabel}
             </span>
           )}
-          <div className="relative" ref={modelMenuRef}>
-            <span
-              title={disabled ? "Choose which model generates replies" : undefined}
-              className={cn("inline-flex max-w-[200px]", disabled && "cursor-not-allowed")}
-            >
-              <button
-                type="button"
-                disabled={disabled}
-                title={disabled ? undefined : "Choose which model generates replies"}
-                aria-label="Choose chat model"
-                aria-expanded={modelMenuOpen}
-                className={cn(
-                  "trellis-accent-button flex max-w-[200px] items-center gap-2 rounded-full border px-3 py-1.5 text-left text-xs transition hover:border-trellis-accent/50 disabled:border-trellis-border disabled:text-trellis-faint",
-                  disabled && "pointer-events-none"
-                )}
-                onClick={() => {
-                  setModelMenuOpen((current) => !current);
-                }}
-              >
-                <span className="min-w-0 truncate text-trellis-text">{selectedModel.label}</span>
-                <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-trellis-muted" aria-hidden />
-              </button>
-            </span>
-            {modelMenuOpen && (
-              <div className="trellis-elevated absolute bottom-full right-0 z-30 mb-3 w-[340px] overflow-hidden">
-                <div className="border-b border-trellis-border px-3 py-2">
-                  <p className="text-xs leading-5 text-trellis-muted">
-                    {isAdmin
-                      ? "Admin: full catalog on this account."
-                      : subscriptionTier === "pro"
-                        ? "All models on this account."
-                        : subscriptionTier === "byok"
-                          ? "BYOK unlocks providers you’ve configured locally."
-                          : "Trial includes fast models; upgrade for premium."}
-                  </p>
-                </div>
-                <div className="max-h-[360px] overflow-y-auto px-2 py-2">
-                  <div className="space-y-1">
-                    {chatModelOptions.map((option) => {
-                      const isSelected = option.id === model;
-                      const access = getChatModelAccess(option.id, subscriptionTier, providerKeys, {
-                        previewWorkspace,
-                        isAdmin
-                      });
-                      const isAccessible = access.allowed;
-
-                      return (
-                        <button
-                          key={option.id}
-                          type="button"
-                          disabled={!isAccessible}
-                          className={cn(
-                            "flex w-full items-start gap-3 rounded-field px-3 py-2 text-left transition",
-                            isSelected
-                              ? "trellis-selected-surface"
-                              : "hover:bg-trellis-surface",
-                            !isAccessible && "cursor-not-allowed opacity-70"
-                          )}
-                          onClick={() => {
-                            if (!isAccessible) {
-                              return;
-                            }
-
-                            onSelectModel(option.id);
-                            setModelMenuOpen(false);
-                          }}
-                        >
-                          <div className="flex min-w-0 flex-1 items-start gap-3">
-                            <div className="pt-1">
-                              {isSelected ? (
-                                <Check className="h-4 w-4 text-trellis-accent" />
-                              ) : isAccessible ? (
-                                <div className="h-2 w-2 rounded-full bg-trellis-accent/60" />
-                              ) : (
-                                <Lock className="h-4 w-4 text-trellis-faint" />
-                              )}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <p className="text-sm text-trellis-text">{option.label}</p>
-                                <span
-                                  className={cn(
-                                    "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]",
-                                    option.tier === "cheap"
-                                      ? "border-trellis-border text-trellis-muted"
-                                      : "border-trellis-accent/25 text-trellis-accent"
-                                  )}
-                                >
-                                  {option.tier === "cheap" ? "Fast" : "Premium"}
-                                </span>
-                              </div>
-                              <p className="mt-1 text-xs leading-5 text-trellis-muted">
-                                {option.summary}
-                              </p>
-                              {!isAccessible && access.reason && (
-                                <p className="mt-1 text-[11px] leading-5 text-trellis-faint">
-                                  {access.reason}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
           {!selectedModelAccess.allowed && selectedModelAccess.reason && (
-            <span className="max-w-[260px] text-right text-[11px] leading-5 text-trellis-muted">
+            <span className="max-w-[260px] text-[11px] leading-5 text-trellis-muted">
               {selectedModelAccess.reason}
             </span>
           )}

@@ -160,12 +160,19 @@ async function runEmbeddedExtraction(input: ProviderExtractInput): Promise<Extra
       autoDisposeSequence: true
     });
 
+    const retrySuffix = input.retryThorough
+      ? "\n\n## Second pass\n" +
+        "The previous extraction pass returned no durable note operations. Re-read the transcript above. " +
+        "If it contains any concrete takeaway, decision, definition, preference, plan, named entity, or technical detail someone might search for later, return one concise synthesis or concept note. " +
+        "Prefer updating or creating a real note over noop. Only return an empty updates array if the thread is purely social, empty, or content-free.\n"
+      : "";
+
     try {
-      const userMessage = buildExtractionUserMessage(input);
+      const userMessage = buildExtractionUserMessage(input) + retrySuffix;
       const content = (
         await session.prompt(userMessage, {
           grammar,
-          temperature: 0.2,
+          temperature: input.retryThorough ? 0.42 : 0.22,
           maxTokens: 4096
         })
       ).trim();

@@ -1,12 +1,5 @@
 import { create } from "zustand";
-import {
-  defaultChatModel,
-  normalizeChatModel,
-  type AppWorkspaceId,
-  type ChatModel,
-  type ChatSessionSummary,
-  type MessageRecord
-} from "@electron/ipc/types";
+import type { AppWorkspaceId, ChatSessionSummary, MessageRecord } from "@electron/ipc/types";
 import {
   canStartChatRun,
   filterChatRunsBySessionIds,
@@ -14,7 +7,6 @@ import {
   type ChatRunAttention,
   type ChatRunState
 } from "@/lib/chatRunState";
-import { readWorkspaceLocalStorage, writeWorkspaceLocalStorage } from "@/lib/workspace";
 
 export interface MessageMeta {
   status: "pending" | "failed";
@@ -28,7 +20,6 @@ interface ChatState {
   messageMetaById: Record<string, MessageMeta>;
   chatRunsBySession: Record<string, ChatRunState>;
   chatRunNotificationsBySession: Record<string, ChatRunAttention>;
-  activeModel: ChatModel;
   lastExtractedMessageCount: Record<string, number>;
   workspaceId: AppWorkspaceId;
   hydrateWorkspace: (workspaceId: AppWorkspaceId, sessions: ChatSessionSummary[]) => void;
@@ -53,17 +44,8 @@ interface ChatState {
   markChatRunFirstToken: (sessionId: string) => void;
   finishChatRun: (sessionId: string, attention?: ChatRunAttention | null) => void;
   acknowledgeChatRunNotification: (sessionId: string) => void;
-  setActiveModel: (model: ChatModel) => void;
   markExtracted: (sessionId: string, messageCount: number) => void;
 }
-
-function getStoredModel(): ChatModel | null {
-  const value = readWorkspaceLocalStorage("model");
-
-  return value ? normalizeChatModel(value) : null;
-}
-
-const storedModel = getStoredModel();
 
 function sortSessions(sessions: ChatSessionSummary[]): ChatSessionSummary[] {
   return [...sessions].sort((left, right) => right.updatedAt - left.updatedAt);
@@ -91,7 +73,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messageMetaById: {},
   chatRunsBySession: {},
   chatRunNotificationsBySession: {},
-  activeModel: storedModel ?? defaultChatModel,
   lastExtractedMessageCount: {},
   workspaceId: "personal",
   hydrateWorkspace: (workspaceId, sessions) =>
@@ -106,10 +87,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messageMetaById: {},
         chatRunsBySession: {},
         chatRunNotificationsBySession: {},
-        lastExtractedMessageCount: {},
-        activeModel: normalizeChatModel(
-          readWorkspaceLocalStorage("model", workspaceId) ?? defaultChatModel
-        )
+        lastExtractedMessageCount: {}
       };
     }),
   hydrateSessions: (sessions) =>
@@ -349,12 +327,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         )
       )
     })),
-  setActiveModel: (model) => {
-    set((state) => {
-      writeWorkspaceLocalStorage("model", model, state.workspaceId);
-      return { activeModel: model };
-    });
-  },
   markExtracted: (sessionId, messageCount) =>
     set((state) => ({
       lastExtractedMessageCount: {

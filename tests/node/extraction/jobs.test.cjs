@@ -3,6 +3,8 @@ const test = require("node:test");
 const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
 const {
+  buildExtractionRetrievalQuery,
+  computeSessionExtractionPlan,
   getDirectNoteActionExcludedMessageIds,
   planSessionExtraction,
   resolveExtractionExecutionStrategy
@@ -42,6 +44,36 @@ function createCompletedJob(overrides = {}) {
     ...overrides
   };
 }
+
+test("computeSessionExtractionPlan returns ineligible reason when fewer than two turns", () => {
+  const messages = [createMessage("1", "user", "Only one turn.")];
+  const { plan, ineligibleReason } = computeSessionExtractionPlan(messages, null);
+
+  assert.equal(plan, null);
+  assert.equal(ineligibleReason, "fewer_than_two_turns");
+});
+
+test("buildExtractionRetrievalQuery combines last pair with full transcript for long threads", () => {
+  const transcript = [
+    { role: "user", content: "early topic" },
+    { role: "assistant", content: "early reply" },
+    { role: "user", content: "late topic" },
+    { role: "assistant", content: "late reply" }
+  ];
+  const query = buildExtractionRetrievalQuery(transcript);
+
+  assert.match(query, /late topic/);
+  assert.match(query, /early topic/);
+  assert.match(query, /---/);
+});
+
+test("buildExtractionRetrievalQuery returns full join for two or fewer turns", () => {
+  const transcript = [
+    { role: "user", content: "a" },
+    { role: "assistant", content: "b" }
+  ];
+  assert.equal(buildExtractionRetrievalQuery(transcript), "a\n\nb");
+});
 
 test("planSessionExtraction returns null when the transcript digest already ran", () => {
   const messages = [
@@ -136,30 +168,29 @@ test("planSessionExtraction can reprocess the full changed transcript for backgr
 });
 
 test("planSessionExtraction excludes messages covered by direct note actions", () => {
-  const draft = createMessage("11111111-1111-4111-8111-111111111111", "assistant", "Template draft");
+  const draft = createMessage("11111111-1111-4111-8111-111111111111", "assistant", "Note draft");
   const saveRequest = createMessage(
     "22222222-2222-4222-8222-222222222222",
     "user",
-    "Save it as a reusable template"
+    "Save that as a new wiki note"
   );
   const proposal = {
     ...createMessage("33333333-3333-4333-8333-333333333333", "assistant", "Review this diff."),
     noteActions: [
       {
         id: "44444444-4444-4444-8444-444444444444",
-        kind: "create_template",
+        kind: "create_note",
         status: "pending",
-        targetTitle: "Daily Reflection Template",
-        targetSlug: "daily-reflection-template",
-        targetFolderPath: "templates",
+        targetTitle: "Daily Reflection",
+        targetSlug: "daily-reflection",
+        targetFolderPath: "",
         beforeMarkdown: "",
         afterMarkdown: "## Mood\n\n- How did you feel?",
         frontmatter: {
-          tags: ["template"],
           type: "concept",
           sources: 0
         },
-        rationale: "Save the template we drafted.",
+        rationale: "Save the note we drafted.",
         sourceMessageIds: [draft.id, saveRequest.id],
         createdAt: Date.now()
       }
@@ -192,71 +223,7 @@ test("planSessionExtraction excludes messages covered by direct note actions", (
   assert.ok(plan);
   assert.equal(plan.transcript.length, 2);
   assert.match(plan.retrievalQuery, /onboarding/);
-  assert.doesNotMatch(plan.retrievalQuery, /Template draft/);
-});
-
-test("planSessionExtraction excludes messages consumed by template instances", () => {
-  const first = createMessage(
-    "11111111-1111-4111-8111-111111111111",
-    "user",
-    "Fill out [[Daily Log Template]]."
-  );
-  const answer = createMessage(
-    "22222222-2222-4222-8222-222222222222",
-    "user",
-    "I hung out with Aidan."
-  );
-  const state = {
-    templateSlug: "daily-log-template",
-    templateTitle: "Daily Log Template",
-    instanceSlug: "daily-log-2026-04-10-abcdef12",
-    instanceTitle: "Daily Log - Apr 10, 2026",
-    status: "active",
-    sourceUserMessageIds: [first.id, answer.id],
-    answerUserMessageIds: [answer.id],
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  };
-  const trackedAnswer = {
-    ...answer,
-    templateInstance: state
-  };
-  const followUp = createMessage(
-    "33333333-3333-4333-8333-333333333333",
-    "user",
-    "Now let's talk about onboarding."
-  );
-  const reply = createMessage(
-    "44444444-4444-4444-8444-444444444444",
-    "assistant",
-    "Onboarding should stay calm."
-  );
-  const templateReply = {
-    ...createMessage(
-      "55555555-5555-4555-8555-555555555555",
-      "assistant",
-      "I updated that daily log. Anything else to add?"
-    ),
-    templateInstance: state
-  };
-
-  const excluded = getDirectNoteActionExcludedMessageIds([
-    first,
-    trackedAnswer,
-    templateReply,
-    followUp,
-    reply
-  ]);
-  assert.equal(excluded.has(first.id), true);
-  assert.equal(excluded.has(answer.id), true);
-  assert.equal(excluded.has(templateReply.id), true);
-  assert.equal(excluded.has(followUp.id), false);
-
-  const plan = planSessionExtraction([first, trackedAnswer, templateReply, followUp, reply], null);
-  assert.ok(plan);
-  assert.equal(plan.transcript.length, 2);
-  assert.match(plan.retrievalQuery, /onboarding/);
-  assert.doesNotMatch(plan.retrievalQuery, /Aidan/);
+  assert.doesNotMatch(plan.retrievalQuery, /Note draft/);
 });
 
 test("resolveExtractionExecutionStrategy runs when embedded is available", () => {

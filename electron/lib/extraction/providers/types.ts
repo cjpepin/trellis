@@ -20,6 +20,7 @@ export interface ProviderExtractInput {
   sourcePath?: string;
   sourceContent?: string;
   preferredLocalModelId?: string;
+  retryThorough?: boolean;
 }
 
 export interface ExtractionProvider {

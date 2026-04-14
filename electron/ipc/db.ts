@@ -1,15 +1,22 @@
 import { ipcMain } from "electron";
 import { z } from "zod";
+import type { AppSettings } from "./types";
 import { chatModelIds, ipcChannels } from "./types";
 import {
   appendMessages,
   createSession,
+  createThought,
   getMessagesBySession,
+  getStrandProvenanceForFile,
+  getThoughtById,
   listSessions,
+  listThoughtsForVault,
+  listWikiTouchSessionsForVault,
   replaceMessages,
   recordWikiOps,
   updateSession
 } from "../lib/database";
+import { runThoughtEnrichment } from "../lib/thoughts/enrichThought";
 
 const createSessionSchema = z.object({
   model: z.enum(chatModelIds),
@@ -38,7 +45,7 @@ const noteTypeSchema = z.enum(["concept", "entity", "source-summary", "synthesis
 
 const chatNoteActionSchema = z.object({
   id: z.string().uuid(),
-  kind: z.enum(["create_note", "update_note", "create_template", "update_template"]),
+  kind: z.enum(["create_note", "update_note"]),
   status: z.enum(["pending", "approved", "rejected", "failed"]),
   targetTitle: z.string().min(1).max(120),
   targetSlug: z.string().min(1).max(180),
@@ -62,18 +69,21 @@ const chatNoteActionSchema = z.object({
   errorMessage: z.string().max(2000).optional()
 });
 
-const chatTemplateInstanceSchema = z.object({
-  templateSlug: z.string().min(1).max(180),
-  templateTitle: z.string().min(1).max(180),
-  instanceSlug: z.string().min(1).max(220),
-  instanceTitle: z.string().min(1).max(180),
-  status: z.enum(["active", "completed", "failed"]),
-  sourceUserMessageIds: z.array(z.string().uuid()).min(1).max(80),
-  answerUserMessageIds: z.array(z.string().uuid()).max(80),
-  createdAt: z.number().int(),
-  updatedAt: z.number().int(),
-  completedAt: z.number().int().optional(),
-  errorMessage: z.string().max(2000).optional()
+const chatReplyContextItemSchema = z.object({
+  kind: z.enum(["note", "memory"]),
+  title: z.string().min(1).max(500),
+  slug: z.string().min(1).max(220).optional(),
+  pinned: z.boolean().optional()
+});
+
+const chatReplyContextSchema = z.object({
+  sourceLabels: z.array(z.string().min(1).max(80)),
+  items: z.array(chatReplyContextItemSchema).max(24)
+});
+
+const composerPinSchema = z.object({
+  slug: z.string().min(1).max(220),
+  title: z.string().min(1).max(500)
 });
 
 const messageSchema = z
@@ -87,7 +97,8 @@ const messageSchema = z
     attachments: z.array(chatAttachmentSchema).max(12).optional(),
     mediaArtifacts: z.array(chatMediaArtifactSchema).max(8).optional(),
     noteActions: z.array(chatNoteActionSchema).max(6).optional(),
-    templateInstance: chatTemplateInstanceSchema.optional()
+    replyContext: chatReplyContextSchema.optional(),
+    composerPins: z.array(composerPinSchema).max(12).optional()
   })
   .superRefine((value, ctx) => {
     const hasText = value.content.trim().length > 0;
@@ -119,12 +130,26 @@ const wikiOpSchema = z.object({
   action: z.enum(["create", "rewrite", "append"])
 });
 
+const vaultIdSchema = z.string().min(1);
+
+const strandProvenanceInputSchema = z.object({
+  vaultId: vaultIdSchema,
+  fileName: z.string().min(1).max(500)
+});
+
 const replaceMessagesSchema = z.object({
   sessionId: sessionIdSchema,
   messages: z.array(messageSchema)
 });
 
-export function registerDatabaseIpc(): void {
+const createThoughtSchema = z.object({
+  vaultId: z.string().min(1),
+  content: z.string().min(1).max(20_000),
+  sourceType: z.enum(["manual", "imported", "converted_from_note", "system"]).optional(),
+  backingNoteSlug: z.string().min(1).max(220).nullable().optional()
+});
+
+export function registerDatabaseIpc(getSettings: () => AppSettings): void {
   ipcMain.handle(ipcChannels.dbListSessions, async () => listSessions());
   ipcMain.handle(ipcChannels.dbCreateSession, async (_event, payload: unknown) => {
     const parsed = createSessionSchema.parse(payload);
@@ -145,5 +170,28 @@ export function registerDatabaseIpc(): void {
   );
   ipcMain.handle(ipcChannels.dbRecordWikiOps, async (_event, ops: unknown) => {
     await recordWikiOps(z.array(wikiOpSchema).parse(ops));
+  });
+  ipcMain.handle(ipcChannels.dbListWikiTouchSessions, async (_event, vaultId: unknown) => {
+    return listWikiTouchSessionsForVault(vaultIdSchema.parse(vaultId));
+  });
+  ipcMain.handle(ipcChannels.dbGetStrandProvenanceForFile, async (_event, payload: unknown) => {
+    const parsed = strandProvenanceInputSchema.parse(payload);
+    return getStrandProvenanceForFile(parsed.vaultId, parsed.fileName);
+  });
+  ipcMain.handle(ipcChannels.dbCreateThought, async (_event, payload: unknown) => {
+    const parsed = createThoughtSchema.parse(payload);
+    const thought = await createThought(parsed);
+    void runThoughtEnrichment(thought.id, getSettings);
+    return thought;
+  });
+  ipcMain.handle(ipcChannels.dbListThoughts, async (_event, vaultId: unknown) =>
+    listThoughtsForVault(vaultIdSchema.parse(vaultId))
+  );
+  ipcMain.handle(ipcChannels.dbGetThought, async (_event, thoughtId: unknown) =>
+    getThoughtById(sessionIdSchema.parse(thoughtId))
+  );
+  ipcMain.handle(ipcChannels.dbRetryThoughtEnrichment, async (_event, thoughtId: unknown) => {
+    const id = sessionIdSchema.parse(thoughtId);
+    void runThoughtEnrichment(id, getSettings);
   });
 }

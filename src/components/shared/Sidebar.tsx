@@ -3,14 +3,13 @@ import {
   Database,
   History,
   LayoutGrid,
-  LayoutTemplate,
   MessageSquare,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
   ScrollText,
   Settings2,
-  Upload
+  Sparkles,
 } from "lucide-react";
 import { NavLink, useNavigate } from "react-router-dom";
 import type { AppSettings } from "@electron/ipc/types";
@@ -28,10 +27,9 @@ interface Props {
 
 const navItems = [
   { to: "/chat", label: "Chat", icon: MessageSquare },
-  { to: "/notes", label: "Notes", icon: ScrollText },
-  { to: "/templates", label: "Templates", icon: LayoutTemplate },
+  { to: "/thoughts", label: "Thoughts", icon: Sparkles },
+  { to: "/notes", label: "Strands", icon: ScrollText },
   { to: "/graph", label: "Graph", icon: Network },
-  { to: "/ingest", label: "Ingest", icon: Upload },
   { to: "/settings", label: "Settings", icon: Settings2 }
 ];
 

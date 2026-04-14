@@ -6,8 +6,8 @@ import type {
   ChatMediaArtifact,
   ChatModel,
   ChatNoteActionProposal,
+  ChatReplyContext,
   ChatSessionSummary,
-  ChatTemplateInstanceState,
   ExtractionJobSnapshot,
   ExtractionJobStatus,
   ExtractionJobTrigger,
@@ -19,6 +19,13 @@ import type {
   RecordWikiOpInput
 } from "../ipc/types";
 import { normalizeChatModel } from "../ipc/types";
+import type {
+  CreateThoughtInput,
+  ThoughtEnrichment,
+  ThoughtRecord,
+  ThoughtSourceType,
+  ThoughtStatus
+} from "@shared/thoughts/types";
 
 let database: Sqlite.Database | null = null;
 let currentDatabasePath: string | null = null;
@@ -43,7 +50,8 @@ interface MessageRow {
   attachments: string | null;
   media_artifacts: string | null;
   note_actions: string | null;
-  template_instance: string | null;
+  reply_context: string | null;
+  composer_pins: string | null;
 }
 
 interface NoteEmbeddingRow {
@@ -96,6 +104,22 @@ interface MemoryItemRow {
   confidence: string;
   created_at: string;
   updated_at: string;
+}
+
+interface ThoughtRow {
+  id: string;
+  vault_id: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  source_type: ThoughtSourceType;
+  status: ThoughtStatus;
+  backing_note_slug: string | null;
+  related_thought_ids: string;
+  extracted_entities: string;
+  tags: string;
+  enrichment_json: string | null;
+  enrichment_error: string | null;
 }
 
 interface ExtractionJobConfigRow {
@@ -271,7 +295,43 @@ function parseNoteActions(raw: string | null | undefined): ChatNoteActionProposa
   }
 }
 
-function parseTemplateInstance(raw: string | null | undefined): ChatTemplateInstanceState | undefined {
+function parseComposerPins(
+  raw: string | null | undefined
+): Array<{ slug: string; title: string }> | undefined {
+  if (!raw || raw.trim().length === 0) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return undefined;
+    }
+
+    const out: Array<{ slug: string; title: string }> = [];
+
+    for (const entry of parsed) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+
+      const rec = entry as Record<string, unknown>;
+      const slug = rec.slug;
+      const title = rec.title;
+
+      if (typeof slug === "string" && slug.length > 0 && typeof title === "string" && title.length > 0) {
+        out.push({ slug, title });
+      }
+    }
+
+    return out.length > 0 ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseReplyContext(raw: string | null | undefined): ChatReplyContext | undefined {
   if (!raw || raw.trim().length === 0) {
     return undefined;
   }
@@ -283,7 +343,43 @@ function parseTemplateInstance(raw: string | null | undefined): ChatTemplateInst
       return undefined;
     }
 
-    return parsed as ChatTemplateInstanceState;
+    const rec = parsed as Record<string, unknown>;
+    const labels = rec.sourceLabels;
+    const items = rec.items;
+
+    if (!Array.isArray(labels) || !Array.isArray(items)) {
+      return undefined;
+    }
+
+    const sourceLabels = labels.filter((value): value is string => typeof value === "string");
+    const parsedItems: ChatReplyContext["items"] = [];
+
+    for (const entry of items) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+
+      const item = entry as Record<string, unknown>;
+      const kind = item.kind;
+      const title = item.title;
+
+      if (kind !== "note" && kind !== "memory") {
+        continue;
+      }
+
+      if (typeof title !== "string" || title.length === 0) {
+        continue;
+      }
+
+      parsedItems.push({
+        kind,
+        title,
+        ...(typeof item.slug === "string" && item.slug.length > 0 ? { slug: item.slug } : {}),
+        ...(item.pinned === true ? { pinned: true } : {})
+      });
+    }
+
+    return { sourceLabels, items: parsedItems };
   } catch {
     return undefined;
   }
@@ -293,7 +389,8 @@ function mapMessage(row: MessageRow): MessageRecord {
   const attachments = parseAttachments(row.attachments);
   const mediaArtifacts = parseMediaArtifacts(row.media_artifacts);
   const noteActions = parseNoteActions(row.note_actions);
-  const templateInstance = parseTemplateInstance(row.template_instance);
+  const replyContext = parseReplyContext(row.reply_context);
+  const composerPins = parseComposerPins(row.composer_pins);
 
   return {
     id: row.id,
@@ -305,7 +402,8 @@ function mapMessage(row: MessageRow): MessageRecord {
     ...(attachments ? { attachments } : {}),
     ...(mediaArtifacts ? { mediaArtifacts } : {}),
     ...(noteActions ? { noteActions } : {}),
-    ...(templateInstance ? { templateInstance } : {})
+    ...(replyContext ? { replyContext } : {}),
+    ...(composerPins ? { composerPins } : {})
   };
 }
 
@@ -489,6 +587,25 @@ function ensureSchema(db: Sqlite.Database): void {
     CREATE INDEX IF NOT EXISTS memory_items_linked_note_idx
       ON memory_items (vault_id, linked_note_slug);
 
+    CREATE TABLE IF NOT EXISTS thoughts (
+      id TEXT PRIMARY KEY,
+      vault_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      source_type TEXT NOT NULL CHECK(source_type IN ('manual', 'imported', 'converted_from_note', 'system')),
+      status TEXT NOT NULL CHECK(status IN ('raw', 'processing', 'enriched', 'failed')),
+      backing_note_slug TEXT,
+      related_thought_ids TEXT NOT NULL DEFAULT '[]',
+      extracted_entities TEXT NOT NULL DEFAULT '[]',
+      tags TEXT NOT NULL DEFAULT '[]',
+      enrichment_json TEXT,
+      enrichment_error TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS thoughts_vault_updated_idx
+      ON thoughts (vault_id, updated_at DESC);
+
     CREATE TABLE IF NOT EXISTS extraction_jobs (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL REFERENCES chat_sessions(id),
@@ -569,9 +686,47 @@ function migrateMessagesNoteActionsColumn(db: Sqlite.Database): void {
   }
 }
 
-function migrateMessagesTemplateInstanceColumn(db: Sqlite.Database): void {
+function migrateMessagesDropTemplateInstanceColumn(db: Sqlite.Database): void {
+  const row = db
+    .prepare(
+      `SELECT 1 AS ok FROM pragma_table_info('messages') WHERE name = 'template_instance' LIMIT 1`
+    )
+    .get() as { ok: number } | undefined;
+
+  if (!row) {
+    return;
+  }
+
   try {
-    db.exec(`ALTER TABLE messages ADD COLUMN template_instance TEXT`);
+    db.exec(`ALTER TABLE messages DROP COLUMN template_instance`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (!message.includes("no such column") && !message.includes("duplicate column")) {
+      throw error;
+    }
+  }
+}
+
+function migrateMessagesReplyContextColumn(db: Sqlite.Database): void {
+  try {
+    db.exec(`ALTER TABLE messages ADD COLUMN reply_context TEXT`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (
+      !message.includes("duplicate column") &&
+      !message.includes("already exists") &&
+      !message.includes("Duplicate column")
+    ) {
+      throw error;
+    }
+  }
+}
+
+function migrateMessagesComposerPinsColumn(db: Sqlite.Database): void {
+  try {
+    db.exec(`ALTER TABLE messages ADD COLUMN composer_pins TEXT`);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
 
@@ -598,7 +753,9 @@ export async function initializeDatabase(databaseFilePath: string): Promise<Sqli
     migrateMessagesAttachmentsColumn(database);
     migrateMessagesMediaArtifactsColumn(database);
     migrateMessagesNoteActionsColumn(database);
-    migrateMessagesTemplateInstanceColumn(database);
+    migrateMessagesDropTemplateInstanceColumn(database);
+    migrateMessagesReplyContextColumn(database);
+    migrateMessagesComposerPinsColumn(database);
     migrateExtractionJobProviderConstraint(database);
     return database;
   }
@@ -617,7 +774,9 @@ export async function initializeDatabase(databaseFilePath: string): Promise<Sqli
   migrateMessagesAttachmentsColumn(database);
   migrateMessagesMediaArtifactsColumn(database);
   migrateMessagesNoteActionsColumn(database);
-  migrateMessagesTemplateInstanceColumn(database);
+  migrateMessagesDropTemplateInstanceColumn(database);
+  migrateMessagesReplyContextColumn(database);
+  migrateMessagesComposerPinsColumn(database);
   migrateExtractionJobProviderConstraint(database);
 
   return database;
@@ -754,7 +913,7 @@ export async function getMessagesBySession(sessionId: string): Promise<MessageRe
   const db = getDatabase();
   const rows = allRows<MessageRow>(
     db,
-    `SELECT id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions, template_instance
+    `SELECT id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions, reply_context, composer_pins
      FROM messages
      WHERE session_id = ?
      ORDER BY created_at ASC`,
@@ -783,21 +942,24 @@ export async function appendMessages(messages: MessageRecord[]): Promise<void> {
         message.noteActions && message.noteActions.length > 0
           ? JSON.stringify(message.noteActions)
           : null;
-      const templateInstanceJson = message.templateInstance
-        ? JSON.stringify(message.templateInstance)
-        : null;
+      const replyContextJson = message.replyContext ? JSON.stringify(message.replyContext) : null;
+      const composerPinsJson =
+        message.composerPins && message.composerPins.length > 0
+          ? JSON.stringify(message.composerPins)
+          : null;
 
       runExec(
         db,
-        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions, template_instance)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions, reply_context, composer_pins)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            content = excluded.content,
            tokens = excluded.tokens,
            attachments = excluded.attachments,
            media_artifacts = excluded.media_artifacts,
            note_actions = excluded.note_actions,
-           template_instance = excluded.template_instance`,
+           reply_context = excluded.reply_context,
+           composer_pins = excluded.composer_pins`,
         [
           message.id,
           message.sessionId,
@@ -808,7 +970,8 @@ export async function appendMessages(messages: MessageRecord[]): Promise<void> {
           attachmentsJson,
           mediaJson,
           noteActionsJson,
-          templateInstanceJson
+          replyContextJson,
+          composerPinsJson
         ]
       );
       touchedSessions.add(message.sessionId);
@@ -857,14 +1020,16 @@ export async function replaceMessages(sessionId: string, messages: MessageRecord
         message.noteActions && message.noteActions.length > 0
           ? JSON.stringify(message.noteActions)
           : null;
-      const templateInstanceJson = message.templateInstance
-        ? JSON.stringify(message.templateInstance)
-        : null;
+      const replyContextJson = message.replyContext ? JSON.stringify(message.replyContext) : null;
+      const composerPinsJson =
+        message.composerPins && message.composerPins.length > 0
+          ? JSON.stringify(message.composerPins)
+          : null;
 
       runExec(
         db,
-        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions, template_instance)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions, reply_context, composer_pins)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           message.id,
           message.sessionId,
@@ -875,7 +1040,8 @@ export async function replaceMessages(sessionId: string, messages: MessageRecord
           attachmentsJson,
           mediaJson,
           noteActionsJson,
-          templateInstanceJson
+          replyContextJson,
+          composerPinsJson
         ]
       );
     }
@@ -950,6 +1116,86 @@ export async function recordWikiOps(ops: RecordWikiOpInput[]): Promise<void> {
   txn();
 }
 
+interface WikiTouchSessionSummaryRow {
+  sessionId: string;
+  sessionTitle: string | null;
+  lastTouchAt: number;
+  touchCount: number;
+}
+
+/** Chat sessions that have applied wiki_ops to the vault, for the Strands “From chats” list. */
+export async function listWikiTouchSessionsForVault(
+  vaultId: string
+): Promise<WikiTouchSessionSummaryRow[]> {
+  const db = getDatabase();
+  const rows = allRows<{
+    session_id: string;
+    session_title: string | null;
+    last_touch_at: number;
+    touch_count: number;
+  }>(
+    db,
+    `SELECT wo.session_id AS session_id,
+            cs.title AS session_title,
+            MAX(wo.created_at) AS last_touch_at,
+            COUNT(*) AS touch_count
+     FROM wiki_ops wo
+     INNER JOIN chat_sessions cs ON cs.id = wo.session_id
+     WHERE cs.vault_id = ? AND wo.session_id IS NOT NULL
+     GROUP BY wo.session_id
+     ORDER BY last_touch_at DESC
+     LIMIT 80`,
+    [vaultId]
+  );
+
+  return rows.map((row) => ({
+    sessionId: row.session_id,
+    sessionTitle: row.session_title,
+    lastTouchAt: row.last_touch_at,
+    touchCount: row.touch_count
+  }));
+}
+
+export interface StrandProvenanceRow {
+  sessionId: string;
+  sessionTitle: string | null;
+  lastTouchedAt: number;
+}
+
+/** Latest extraction/write lineage for a vault markdown file (e.g. `slug.md`). */
+export async function getStrandProvenanceForFile(
+  vaultId: string,
+  fileName: string
+): Promise<StrandProvenanceRow | null> {
+  const db = getDatabase();
+  const row = firstRow<{
+    session_id: string;
+    session_title: string | null;
+    last_touched_at: number;
+  }>(
+    db,
+    `SELECT wo.session_id AS session_id,
+            cs.title AS session_title,
+            wo.created_at AS last_touched_at
+     FROM wiki_ops wo
+     INNER JOIN chat_sessions cs ON cs.id = wo.session_id
+     WHERE cs.vault_id = ? AND wo.file = ?
+     ORDER BY wo.created_at DESC
+     LIMIT 1`,
+    [vaultId, fileName]
+  );
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    sessionId: row.session_id,
+    sessionTitle: row.session_title,
+    lastTouchedAt: row.last_touched_at
+  };
+}
+
 export async function listMemoryItems(vaultId: string): Promise<MemoryItem[]> {
   const db = getDatabase();
   const rows = allRows<MemoryItemRow>(
@@ -963,6 +1209,195 @@ export async function listMemoryItems(vaultId: string): Promise<MemoryItem[]> {
   );
 
   return rows.map(mapMemoryItem);
+}
+
+function parseThoughtStringArray(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter((value): value is string => typeof value === "string");
+  } catch {
+    return [];
+  }
+}
+
+function mapThoughtRow(row: ThoughtRow): ThoughtRecord {
+  let enrichment: ThoughtEnrichment | null = null;
+
+  if (row.enrichment_json) {
+    try {
+      enrichment = JSON.parse(row.enrichment_json) as ThoughtEnrichment;
+    } catch {
+      enrichment = null;
+    }
+  }
+
+  return {
+    id: row.id,
+    vaultId: row.vault_id,
+    content: row.content,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+    sourceType: row.source_type,
+    status: row.status,
+    backingNoteSlug: row.backing_note_slug,
+    relatedThoughtIds: parseThoughtStringArray(row.related_thought_ids),
+    extractedEntities: parseThoughtStringArray(row.extracted_entities),
+    tags: parseThoughtStringArray(row.tags),
+    enrichment,
+    enrichmentError: row.enrichment_error
+  };
+}
+
+export async function createThought(input: CreateThoughtInput): Promise<ThoughtRecord> {
+  const db = getDatabase();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const sourceType: ThoughtSourceType = input.sourceType ?? "manual";
+  const content = input.content.trim();
+
+  if (content.length === 0) {
+    throw new Error("Thought content cannot be empty.");
+  }
+
+  const row = firstRow<ThoughtRow>(
+    db,
+    `INSERT INTO thoughts (
+       id,
+       vault_id,
+       content,
+       created_at,
+       updated_at,
+       source_type,
+       status,
+       backing_note_slug,
+       related_thought_ids,
+       extracted_entities,
+       tags,
+       enrichment_json,
+       enrichment_error
+     )
+     VALUES (?, ?, ?, ?, ?, ?, 'raw', ?, '[]', '[]', '[]', NULL, NULL)
+     RETURNING id, vault_id, content, created_at, updated_at, source_type, status, backing_note_slug,
+               related_thought_ids, extracted_entities, tags, enrichment_json, enrichment_error`,
+    [id, input.vaultId, content, now, now, sourceType, input.backingNoteSlug ?? null]
+  );
+
+  if (!row) {
+    throw new Error("Could not create thought.");
+  }
+
+  return mapThoughtRow(row);
+}
+
+export async function getThoughtById(thoughtId: string): Promise<ThoughtRecord | null> {
+  const db = getDatabase();
+  const row = firstRow<ThoughtRow>(
+    db,
+    `SELECT id, vault_id, content, created_at, updated_at, source_type, status, backing_note_slug,
+            related_thought_ids, extracted_entities, tags, enrichment_json, enrichment_error
+     FROM thoughts
+     WHERE id = ?`,
+    [thoughtId]
+  );
+
+  return row ? mapThoughtRow(row) : null;
+}
+
+export async function listThoughtsForVault(vaultId: string, limit = 300): Promise<ThoughtRecord[]> {
+  const db = getDatabase();
+  const rows = allRows<ThoughtRow>(
+    db,
+    `SELECT id, vault_id, content, created_at, updated_at, source_type, status, backing_note_slug,
+            related_thought_ids, extracted_entities, tags, enrichment_json, enrichment_error
+     FROM thoughts
+     WHERE vault_id = ?
+     ORDER BY updated_at DESC
+     LIMIT ?`,
+    [vaultId, limit]
+  );
+
+  return rows.map(mapThoughtRow);
+}
+
+export async function markThoughtProcessing(thoughtId: string): Promise<void> {
+  const db = getDatabase();
+  const now = Date.now();
+
+  runExec(
+    db,
+    `UPDATE thoughts
+     SET status = 'processing', updated_at = ?, enrichment_error = NULL
+     WHERE id = ?`,
+    [now, thoughtId]
+  );
+}
+
+export async function finalizeThoughtEnrichment(
+  thoughtId: string,
+  payload: {
+    enrichment: ThoughtEnrichment;
+    relatedThoughtIds: string[];
+    extractedEntities: string[];
+    tags: string[];
+  }
+): Promise<ThoughtRecord> {
+  const db = getDatabase();
+  const now = Date.now();
+
+  const row = firstRow<ThoughtRow>(
+    db,
+    `UPDATE thoughts
+     SET status = 'enriched',
+         updated_at = ?,
+         enrichment_json = ?,
+         related_thought_ids = ?,
+         extracted_entities = ?,
+         tags = ?,
+         enrichment_error = NULL
+     WHERE id = ?
+     RETURNING id, vault_id, content, created_at, updated_at, source_type, status, backing_note_slug,
+               related_thought_ids, extracted_entities, tags, enrichment_json, enrichment_error`,
+    [
+      now,
+      JSON.stringify(payload.enrichment),
+      JSON.stringify(payload.relatedThoughtIds),
+      JSON.stringify(payload.extractedEntities),
+      JSON.stringify(payload.tags),
+      thoughtId
+    ]
+  );
+
+  if (!row) {
+    throw new Error(`Thought ${thoughtId} not found.`);
+  }
+
+  return mapThoughtRow(row);
+}
+
+export async function finalizeThoughtFailure(thoughtId: string, message: string): Promise<ThoughtRecord> {
+  const db = getDatabase();
+  const now = Date.now();
+
+  const row = firstRow<ThoughtRow>(
+    db,
+    `UPDATE thoughts
+     SET status = 'failed', updated_at = ?, enrichment_error = ?
+     WHERE id = ?
+     RETURNING id, vault_id, content, created_at, updated_at, source_type, status, backing_note_slug,
+               related_thought_ids, extracted_entities, tags, enrichment_json, enrichment_error`,
+    [now, message, thoughtId]
+  );
+
+  if (!row) {
+    throw new Error(`Thought ${thoughtId} not found.`);
+  }
+
+  return mapThoughtRow(row);
 }
 
 export async function saveMemoryItem(input: SaveMemoryItemInput): Promise<MemoryItem> {
@@ -1055,14 +1490,16 @@ export async function seedDatabase(fixture: SeedDatabaseFixture): Promise<void> 
         message.noteActions && message.noteActions.length > 0
           ? JSON.stringify(message.noteActions)
           : null;
-      const templateInstanceJson = message.templateInstance
-        ? JSON.stringify(message.templateInstance)
-        : null;
+      const replyContextJson = message.replyContext ? JSON.stringify(message.replyContext) : null;
+      const composerPinsJson =
+        message.composerPins && message.composerPins.length > 0
+          ? JSON.stringify(message.composerPins)
+          : null;
 
       runExec(
         db,
-        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions, template_instance)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, session_id, role, content, created_at, tokens, attachments, media_artifacts, note_actions, reply_context, composer_pins)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           message.id,
           message.sessionId,
@@ -1073,7 +1510,8 @@ export async function seedDatabase(fixture: SeedDatabaseFixture): Promise<void> 
           attachmentsJson,
           mediaJson,
           noteActionsJson,
-          templateInstanceJson
+          replyContextJson,
+          composerPinsJson
         ]
       );
     }

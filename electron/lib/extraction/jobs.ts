@@ -63,13 +63,6 @@ export function getDirectNoteActionExcludedMessageIds(messages: MessageRecord[])
       }
     }
 
-    if (message.templateInstance && message.templateInstance.status !== "failed") {
-      excluded.add(message.id);
-
-      for (const sourceMessageId of message.templateInstance.sourceUserMessageIds) {
-        excluded.add(sourceMessageId);
-      }
-    }
   }
 
   return excluded;
@@ -97,22 +90,30 @@ export function buildTranscriptDigest(
     .digest("hex");
 }
 
-export function planSessionExtraction(
+export type ExtractionPlanIneligibleReason =
+  | "fewer_than_two_turns"
+  | "digest_unchanged"
+  | "planned_slice_fewer_than_two_turns";
+
+export function computeSessionExtractionPlan(
   messages: MessageRecord[],
   latestCompletedJob: ExtractionJobSnapshot | null,
   force = false,
   options: PlanSessionExtractionOptions = {}
-): PlannedSessionExtraction | null {
+): {
+  plan: PlannedSessionExtraction | null;
+  ineligibleReason: ExtractionPlanIneligibleReason | null;
+} {
   const fullTranscript = buildFormattedTranscript(messages);
 
   if (fullTranscript.length < 2) {
-    return null;
+    return { plan: null, ineligibleReason: "fewer_than_two_turns" };
   }
 
   const transcriptDigest = buildTranscriptDigest(fullTranscript);
 
   if (!force && latestCompletedJob?.transcriptDigest === transcriptDigest) {
-    return null;
+    return { plan: null, ineligibleReason: "digest_unchanged" };
   }
 
   let transcriptStartIndex = 0;
@@ -131,16 +132,43 @@ export function planSessionExtraction(
   const transcript = fullTranscript.slice(transcriptStartIndex);
 
   if (transcript.length < 2) {
-    return null;
+    return { plan: null, ineligibleReason: "planned_slice_fewer_than_two_turns" };
   }
 
   return {
-    transcript,
-    transcriptStartIndex,
-    transcriptEndIndex: fullTranscript.length,
-    transcriptDigest,
-    retrievalQuery: transcript.map((message) => message.content).join("\n\n")
+    plan: {
+      transcript,
+      transcriptStartIndex,
+      transcriptEndIndex: fullTranscript.length,
+      transcriptDigest,
+      retrievalQuery: transcript.map((message) => message.content).join("\n\n")
+    },
+    ineligibleReason: null
   };
+}
+
+export function planSessionExtraction(
+  messages: MessageRecord[],
+  latestCompletedJob: ExtractionJobSnapshot | null,
+  force = false,
+  options: PlanSessionExtractionOptions = {}
+): PlannedSessionExtraction | null {
+  return computeSessionExtractionPlan(messages, latestCompletedJob, force, options).plan;
+}
+
+/**
+ * Biases lexical retrieval toward the latest user/assistant exchange while keeping full-thread terms.
+ */
+export function buildExtractionRetrievalQuery(
+  transcript: Array<{ role: "user" | "assistant"; content: string }>
+): string {
+  const full = transcript.map((message) => message.content).join("\n\n");
+  if (transcript.length <= 2) {
+    return full;
+  }
+
+  const lastPair = transcript.slice(-2).map((message) => message.content).join("\n\n");
+  return `${lastPair}\n\n---\n\n${full}`;
 }
 
 export function findExplicitReferenceSlugs(

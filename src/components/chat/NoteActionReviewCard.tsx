@@ -14,10 +14,6 @@ interface Props {
 
 function actionLabel(kind: ChatNoteActionProposal["kind"]): string {
   switch (kind) {
-    case "create_template":
-      return "Create template";
-    case "update_template":
-      return "Update template";
     case "create_note":
       return "Create note";
     case "update_note":
@@ -28,16 +24,6 @@ function actionLabel(kind: ChatNoteActionProposal["kind"]): string {
 function targetPath(action: ChatNoteActionProposal): string {
   const folder = action.targetFolderPath.trim();
   return `wiki/${folder ? `${folder}/` : ""}${action.targetSlug}.md`;
-}
-
-function draftEditorLabel(kind: ChatNoteActionProposal["kind"]): string {
-  switch (kind) {
-    case "create_template":
-    case "update_template":
-      return "Template markdown";
-    default:
-      return "Note markdown";
-  }
 }
 
 const DIFF_PREVIEW_MAX_LINES = 160;
@@ -103,7 +89,7 @@ export function NoteActionReviewCard({
             className="text-[10px] uppercase tracking-[0.16em] text-trellis-faint"
             htmlFor={`note-action-draft-${action.id}`}
           >
-            {draftEditorLabel(action.kind)}
+            Note markdown
           </label>
           <textarea
             id={`note-action-draft-${action.id}`}

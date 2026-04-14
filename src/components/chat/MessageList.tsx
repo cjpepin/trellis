@@ -55,8 +55,8 @@ export function MessageList({
       <div className="flex h-full flex-col items-center justify-center px-8 text-center">
         <p className="font-display text-4xl text-trellis-text">What are you thinking through?</p>
         <p className="mt-4 max-w-xl text-base leading-7 text-trellis-muted">
-          Start a conversation, pull in notes with <code>/</code>, and let the thread turn
-          into durable wiki knowledge over time.
+          Start a conversation, link Strands with <code>/</code> or <code>@</code>, pin what
+          matters, and let the thread compound into durable memory in your vault.
         </p>
       </div>
     );

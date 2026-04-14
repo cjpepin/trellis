@@ -28,5 +28,8 @@ test("extraction config exports rollout flag names and stable thresholds", () =>
     "TRELLIS_ENABLE_HEURISTIC_EXTRACTION_FALLBACK"
   );
   assert.equal(extractionThresholds.maxTagsPerNote, 6);
-  assert.ok(extractionThresholds.rewriteConfidenceFloor >= 0.75);
+  assert.ok(
+    extractionThresholds.rewriteConfidenceFloor >= 0.68 &&
+      extractionThresholds.rewriteConfidenceFloor <= 0.78
+  );
 });

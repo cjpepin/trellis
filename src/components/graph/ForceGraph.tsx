@@ -7,6 +7,10 @@ interface Props {
   focusedNodeId?: string | null;
   onSelectNode: (slug: string) => void;
   onHoverNode: (payload: { title: string; x: number; y: number } | null) => void;
+  /** `degree`: emphasize wikilink topology (default). `recency`: emphasize recently updated Strands. */
+  visualEmphasis?: "degree" | "recency";
+  /** Slug → 0–1 score (newer = higher). Used when `visualEmphasis` is `recency`. */
+  recencyBySlug?: Record<string, number>;
 }
 
 type SimNode = d3.SimulationNodeDatum & {
@@ -18,6 +22,7 @@ type SimNode = d3.SimulationNodeDatum & {
   inboundCount?: number;
   cluster?: string;
   isPlaceholder?: boolean;
+  graphNodeKind?: "note" | "thought";
 };
 
 type SimLink = d3.SimulationLinkDatum<SimNode> &
@@ -45,6 +50,60 @@ function linkStrength(association: number): number {
 }
 
 const UNCLUSTERED = "__unclustered__";
+
+/** Inclusive cap: degrees above this map to the top of the palette (keeps outliers from flattening the ramp). */
+const GRAPH_CONNECTION_COLOR_MAX_DEGREE = 50;
+
+/**
+ * Piecewise theme ramp: Trellis tokens only. Stops move from muted surface-bound accent (few links) through
+ * core accent, a gentle success-tinted band, then brighter hover tones — so themes like default (amber) and
+ * ocean (cyan) shift hue slowly without relying on `--trellis-warning` where it duplicates `--trellis-accent`.
+ */
+const THEME_GRAPH_FILL_STOPS = [
+  "color-mix(in srgb, var(--trellis-accent-surface) 68%, var(--trellis-accent-dim))",
+  "color-mix(in srgb, var(--trellis-accent-surface) 36%, var(--trellis-accent-dim))",
+  "color-mix(in srgb, var(--trellis-accent-dim) 44%, var(--trellis-accent))",
+  "color-mix(in srgb, var(--trellis-accent) 62%, var(--trellis-success))",
+  "color-mix(in srgb, var(--trellis-accent) 36%, var(--trellis-success))",
+  "color-mix(in srgb, var(--trellis-success) 40%, var(--trellis-accent-hover))",
+  "color-mix(in srgb, var(--trellis-node-hover) 52%, color-mix(in srgb, var(--trellis-accent-hover) 55%, var(--trellis-success)))"
+] as const;
+
+const THEME_GRAPH_STROKE_STOPS = [
+  "color-mix(in srgb, var(--trellis-accent-dim) 58%, var(--trellis-accent-surface))",
+  "color-mix(in srgb, var(--trellis-accent-dim) 42%, var(--trellis-accent))",
+  "color-mix(in srgb, var(--trellis-accent-dim) 28%, var(--trellis-accent))",
+  "color-mix(in srgb, var(--trellis-accent) 55%, var(--trellis-success))",
+  "color-mix(in srgb, var(--trellis-success) 48%, var(--trellis-accent))",
+  "color-mix(in srgb, var(--trellis-success) 36%, var(--trellis-accent-hover))",
+  "color-mix(in srgb, var(--trellis-accent-hover) 44%, color-mix(in srgb, var(--trellis-node-hover) 50%, var(--trellis-success)))"
+] as const;
+
+/** Blend adjacent theme stops; nested `color-mix` keeps transitions smooth. */
+function themeGraphPiecewiseMix(t: number, stops: readonly string[]): string {
+  const n = stops.length;
+  if (n === 0) {
+    return "var(--trellis-accent)";
+  }
+  if (n === 1) {
+    return stops[0] ?? "var(--trellis-accent)";
+  }
+  const clamped = Math.max(0, Math.min(1, t));
+  const scaled = clamped * (n - 1);
+  const i = Math.min(Math.floor(scaled), n - 2);
+  const u = scaled - i;
+  const a = stops[i]!;
+  const b = stops[i + 1]!;
+  return `color-mix(in srgb, ${a} ${(1 - u) * 100}%, ${b})`;
+}
+
+function connectionSpectrumFill(t: number): string {
+  return themeGraphPiecewiseMix(t, THEME_GRAPH_FILL_STOPS);
+}
+
+function connectionSpectrumStroke(t: number): string {
+  return themeGraphPiecewiseMix(t, THEME_GRAPH_STROKE_STOPS);
+}
 
 function clusterKey(node: Pick<SimNode, "cluster">): string {
   const c = node.cluster?.trim();
@@ -106,7 +165,14 @@ function seedNodesForLayout(
   return { clusterTarget, useClusterForces: true };
 }
 
-export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverNode }: Props) {
+export function ForceGraph({
+  graph,
+  focusedNodeId = null,
+  onSelectNode,
+  onHoverNode,
+  visualEmphasis = "degree",
+  recencyBySlug = {}
+}: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const onSelectNodeRef = useRef(onSelectNode);
   const onHoverNodeRef = useRef(onHoverNode);
@@ -162,7 +228,7 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
 
       group
         .append("text")
-        .text("Start chatting to grow your graph")
+        .text("Chat compounds into Strands — links appear as you go")
         .attr("fill", "var(--trellis-text)")
         .attr("text-anchor", "middle")
         .attr("font-size", 14)
@@ -186,46 +252,55 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
       return (n.inboundCount ?? 0) + (outboundById.get(n.id) ?? 0);
     }
 
-    const activities = realNodes.map((n) => totalDegree(n));
-    /** One shade step per distinct connection total (in+out), evenly spaced — not just min vs max. */
-    const distinctDegrees = [...new Set(activities)].sort((a, b) => a - b);
+    /** Normalize against this graph's degree range so small graphs still use the full ramp (global /50 was almost flat). */
+    let paletteMaxDeg = 1;
+    for (const n of realNodes) {
+      paletteMaxDeg = Math.max(
+        paletteMaxDeg,
+        Math.min(GRAPH_CONNECTION_COLOR_MAX_DEGREE, totalDegree(n))
+      );
+    }
 
-    /**
-     * 0–1: which step this node sits on among distinct degree values in this graph.
-     * Stays within the warm accent family; combined with a narrow mix range for subtle per-step shades.
-     */
-    function connectionHighlight(node: SimNode): number {
+    function connectionToneT(node: SimNode): number {
       if (node.isPlaceholder) {
         return 0;
       }
-      const a = totalDegree(node);
-      if (distinctDegrees.length <= 1) {
-        return 0.5;
+      const capped = Math.max(0, Math.min(GRAPH_CONNECTION_COLOR_MAX_DEGREE, totalDegree(node)));
+      return paletteMaxDeg > 0 ? capped / paletteMaxDeg : 0;
+    }
+
+    function recencyToneT(node: SimNode): number {
+      if (node.isPlaceholder) {
+        return 0;
       }
-      const step = distinctDegrees.indexOf(a);
-      return step / (distinctDegrees.length - 1);
+      const r = recencyBySlug[node.slug];
+      return typeof r === "number" && Number.isFinite(r) ? Math.max(0, Math.min(1, r)) : 0.12;
     }
 
     function getNodeFill(node: SimNode): string {
       if (node.isPlaceholder) {
         return "color-mix(in srgb, var(--trellis-node) 28%, var(--trellis-surface-2))";
       }
-      const t = connectionHighlight(node);
-      /**
-       * Theme ambers only: deeper dim-forward base at low degree, much more accent-hover at high.
-       * Hover band ~5–72% so adjacent degree steps are easy to tell apart.
-       */
-      const warmBase = "color-mix(in srgb, var(--trellis-node) 22%, var(--trellis-accent-dim))";
-      return `color-mix(in srgb, var(--trellis-accent-hover) ${5 + 67 * t}%, ${warmBase})`;
+      if (node.graphNodeKind === "thought") {
+        return "color-mix(in srgb, var(--trellis-success) 26%, var(--trellis-accent-surface))";
+      }
+      if (visualEmphasis === "recency") {
+        return connectionSpectrumFill(recencyToneT(node));
+      }
+      return connectionSpectrumFill(connectionToneT(node));
     }
 
     function getNodeStroke(node: SimNode): string {
       if (node.isPlaceholder) {
         return "color-mix(in srgb, var(--trellis-accent) 50%, var(--trellis-surface-2))";
       }
-      const t = connectionHighlight(node);
-      /** Match fill: dim-heavy rings for low degree, brighter node-forward rings for high. */
-      return `color-mix(in srgb, var(--trellis-node) ${4 + 62 * t}%, var(--trellis-accent-dim))`;
+      if (node.graphNodeKind === "thought") {
+        return "color-mix(in srgb, var(--trellis-success) 44%, var(--trellis-accent-dim))";
+      }
+      if (visualEmphasis === "recency") {
+        return connectionSpectrumStroke(recencyToneT(node));
+      }
+      return connectionSpectrumStroke(connectionToneT(node));
     }
 
     const { clusterTarget, useClusterForces } = seedNodesForLayout(nodes, width, height);
@@ -544,7 +619,7 @@ export function ForceGraph({ graph, focusedNodeId = null, onSelectNode, onHoverN
       focusNodeInViewRef.current = null;
       onHoverNodeRef.current(null);
     };
-  }, [graph]);
+  }, [graph, visualEmphasis, recencyBySlug]);
 
   useEffect(() => {
     focusedNodeIdRef.current = focusedNodeId;

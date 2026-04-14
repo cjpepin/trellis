@@ -12,7 +12,7 @@ const retrievalSearchSchema = z.object({
   query: z.string().min(1).max(40_000),
   explicitSlugs: z.array(z.string().min(1)).max(12).optional(),
   vaultId: z.string().min(1).optional(),
-  limit: z.number().int().min(1).max(12).optional()
+  limit: z.number().int().min(1).max(16).optional()
 });
 
 function resolveVault(settings: AppSettings, vaultId?: string) {

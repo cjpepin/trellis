@@ -84,3 +84,51 @@ test("searchRelevantNotes includes explicit matches and ranks lexical hits witho
     database.listNoteEmbeddings = originalList;
   }
 });
+
+test("searchRelevantNotes boosts prioritySlugs when lexical match is weak", async () => {
+  const originalList = database.listNoteEmbeddings;
+
+  database.listNoteEmbeddings = async () => [
+    {
+      vaultId: "vault-1",
+      noteSlug: "hub-note",
+      chunkId: "0",
+      noteTitle: "Hub Note",
+      noteType: "concept",
+      tags: ["x"],
+      headingPath: "Hub Note > Overview",
+      content: "Minimal.",
+      contentHash: "a",
+      embedding: null,
+      updatedAt: Date.now()
+    },
+    {
+      vaultId: "vault-1",
+      noteSlug: "other-note",
+      chunkId: "0",
+      noteTitle: "Other Note",
+      noteType: "concept",
+      tags: ["y"],
+      headingPath: "Other Note > Overview",
+      content: "Different content here.",
+      contentHash: "b",
+      embedding: null,
+      updatedAt: Date.now()
+    }
+  ];
+
+  try {
+    const results = await searchRelevantNotes({
+      vaultId: "vault-1",
+      query: "zzzzzz unrelated query tokens",
+      explicitSlugs: [],
+      prioritySlugs: ["hub-note"],
+      limit: 6
+    });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0].slug, "hub-note");
+  } finally {
+    database.listNoteEmbeddings = originalList;
+  }
+});

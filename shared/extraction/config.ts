@@ -22,9 +22,18 @@ export const defaultEmbeddedExtractionModelDownloadUrl =
 /** Approximate size for UI copy; varies slightly by mirror. */
 export const defaultLocalExtractionModelApproxDownload = "2.2 GB";
 
+/**
+ * Default number of top-matching note chunks passed into extraction and (when omitted) retrieval IPC.
+ * Keeps prompt context rich while staying within model limits (see extraction-v2 §7.3).
+ */
+export const relatedNotesRetrievalDefaultLimit = 12;
+
+/** Wider retrieval for main-process extraction jobs only (chat context keeps default). */
+export const extractionJobRelatedNotesLimit = 16;
+
 export const extractionThresholds = {
   maxTagsPerNote: 6,
-  rewriteConfidenceFloor: 0.78,
+  rewriteConfidenceFloor: 0.72,
   /** Minimum body length after basic sanitization in shared validation (keeps tiny junk out). */
   minValidatedBodyChars: 20,
   /** After guardrails strip headings and links, the note must still have enough prose to save. */

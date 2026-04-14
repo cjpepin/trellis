@@ -15,7 +15,7 @@ import { RouteErrorBoundary } from "@/components/shared/RouteErrorBoundary";
 import { Sidebar } from "@/components/shared/Sidebar";
 import { Toast } from "@/components/shared/Toast";
 import { getProfileSnapshot, hydrateStoredSession, persistSession } from "@/lib/auth";
-import { applyTheme } from "@/lib/settings";
+import { applyTheme, getActiveVault } from "@/lib/settings";
 import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
 import { parallelChatLimitMessage } from "@/lib/chatRunState";
 import {
@@ -25,13 +25,13 @@ import {
 } from "@/lib/workspace";
 import { Chat } from "@/routes/Chat";
 import { Graph } from "@/routes/Graph";
-import { Ingest } from "@/routes/Ingest";
 import { Settings } from "@/routes/Settings";
-import { Templates } from "@/routes/Templates";
+import { Thoughts } from "@/routes/Thoughts";
 import { Wiki } from "@/routes/Wiki";
 import { useAuthStore } from "@/store/authStore";
 import { useChatStore } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
+import { useThoughtStore } from "@/store/thoughtStore";
 import { useWikiStore } from "@/store/wikiStore";
 
 const SIDEBAR_STORAGE_KEY = "sidebar-width";
@@ -83,6 +83,19 @@ function AppFrame({
   const [sidebarWidth, setSidebarWidth] = useState(getStoredSidebarWidth);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(getStoredSidebarCollapsed);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const upsertThought = useThoughtStore((state) => state.upsertThought);
+
+  useEffect(() => {
+    const vaultId = getActiveVault(settings).id;
+
+    return window.trellis.thoughts.onThoughtUpdated((payload) => {
+      if (payload.vaultId !== vaultId) {
+        return;
+      }
+
+      upsertThought(payload.thought);
+    });
+  }, [settings, upsertThought]);
 
   useEffect(() => {
     setActiveWorkspaceId(workspace.id);
@@ -183,18 +196,18 @@ function AppFrame({
             }
           />
           <Route
-            path="/notes"
+            path="/thoughts"
             element={
               <RouteErrorBoundary>
-                <Wiki workspaceId={workspace.id} />
+                <Thoughts settings={settings} />
               </RouteErrorBoundary>
             }
           />
           <Route
-            path="/templates"
+            path="/notes"
             element={
               <RouteErrorBoundary>
-                <Templates />
+                <Wiki workspaceId={workspace.id} />
               </RouteErrorBoundary>
             }
           />
@@ -207,14 +220,7 @@ function AppFrame({
               </RouteErrorBoundary>
             }
           />
-          <Route
-            path="/ingest"
-            element={
-              <RouteErrorBoundary>
-                <Ingest settings={settings} workspace={workspace} />
-              </RouteErrorBoundary>
-            }
-          />
+          <Route path="/ingest" element={<Navigate to="/chat" replace />} />
           <Route
             path="/settings"
             element={
@@ -258,6 +264,7 @@ export default function App() {
   const hydrateWorkspace = useChatStore((state) => state.hydrateWorkspace);
   const hydrateSessions = useChatStore((state) => state.hydrateSessions);
   const hydrateWiki = useWikiStore((state) => state.hydrate);
+  const hydrateThoughts = useThoughtStore((state) => state.hydrate);
   const setConfigured = useAuthStore((state) => state.setConfigured);
   const setLoading = useAuthStore((state) => state.setLoading);
   const setAuthenticated = useAuthStore((state) => state.setAuthenticated);
@@ -278,7 +285,8 @@ export default function App() {
       },
       { preserveActiveNote: true }
     );
-  }, [hydrateWiki]);
+    await hydrateThoughts(snapshot.vaultId);
+  }, [hydrateThoughts, hydrateWiki]);
 
   const applyBootstrapPayload = useCallback(
     (payload: AppBootstrap) => {
@@ -299,9 +307,10 @@ export default function App() {
         folders: payload.folders,
         graph: payload.graph
       });
+      void hydrateThoughts(payload.settings.activeVaultId);
       setConfigured(hasSupabaseConfig());
     },
-    [hydrateWiki, hydrateWorkspace, setConfigured, setProviderKeys]
+    [hydrateThoughts, hydrateWiki, hydrateWorkspace, setConfigured, setProviderKeys]
   );
 
   const syncAuth = useCallback(
@@ -559,8 +568,8 @@ export default function App() {
           const applied = notification.appliedNotes ?? [];
           const completedTitle =
             notification.trigger === "manual"
-              ? "Chat saved to your notes"
-              : `✦ ${notification.appliedUpdateCount} notes updated`;
+              ? "Chat saved to your Strands"
+              : `✦ ${notification.appliedUpdateCount} Strands updated`;
           pushToast({
             title: completedTitle,
             tone: "success",
@@ -580,16 +589,11 @@ export default function App() {
                 title:
                   error instanceof Error
                     ? error.message
-                    : "Could not refresh your notes after processing.",
+                    : "Could not refresh your Strands after processing.",
                 tone: "warning"
               });
             });
           }
-        } else {
-          pushToast({
-            title: "Note capture finished; no new wiki pages were added this time.",
-            tone: "default"
-          });
         }
 
         void window.trellis.db.listSessions().then(hydrateSessions).catch(() => {

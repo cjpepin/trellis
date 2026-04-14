@@ -22,7 +22,6 @@ import StarterKit from "@tiptap/starter-kit";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { WikiAwareLink } from "@/components/wiki/wikiAwareLink";
 import { WikiNoteLinkAutocomplete } from "@/components/wiki/WikiNoteLinkAutocomplete";
-import { TemplateMacroAutocomplete } from "@/components/wiki/TemplateMacroAutocomplete";
 import {
   Bold,
   Code,
@@ -1008,7 +1007,6 @@ const WikiRichTextPreviewPanel = forwardRef<WikiRichTextPreviewPanelHandle, Wiki
         notes={wikiNotes}
         existingSlugs={existingSlugSet}
       />
-      <TemplateMacroAutocomplete editor={editor} />
       <div
         className={cn(
           "relative z-0 min-w-0 bg-trellis-surface",

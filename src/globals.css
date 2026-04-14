@@ -62,36 +62,36 @@
 }
 
 :root[data-theme="light"] {
-  --trellis-bg: #f4efe4;
-  --trellis-surface: #fbf7f0;
-  --trellis-surface-2: #f7f1e6;
-  --trellis-sidebar: #efe7d7;
-  --trellis-border: #d7c8b1;
-  --trellis-text: #30271c;
-  --trellis-text-muted: #746552;
-  --trellis-text-faint: #a19179;
-  --trellis-accent: #a46e25;
-  --trellis-accent-dim: #7a541f;
-  --trellis-accent-hover: #c18634;
-  --trellis-success: #447048;
-  --trellis-warning: #a46e25;
-  --trellis-error: #8f4040;
-  --trellis-node: #b58136;
-  --trellis-node-hover: #cf9850;
-  --trellis-edge: #cfbfa7;
-  --trellis-edge-hover: #b59f82;
-  --trellis-input-bg: #fffdf8;
-  --trellis-accent-surface: #f1e2c9;
-  --trellis-selected-surface: #eddcc0;
-  --trellis-overlay-surface: rgba(244, 239, 228, 0.94);
-  --trellis-chip-surface: #efe5d4;
-  --trellis-code-surface: #eadcc5;
-  --trellis-selection: rgba(164, 110, 37, 0.2);
-  --trellis-bg-glow: rgba(164, 110, 37, 0.09);
-  --trellis-bg-sheen: rgba(255, 255, 255, 0.55);
+  --trellis-bg: #fcfcfc;
+  --trellis-surface: #ffffff;
+  --trellis-surface-2: #f8f8f9;
+  --trellis-sidebar: #f8f8f9;
+  --trellis-border: #ececee;
+  --trellis-text: #1a1a1c;
+  --trellis-text-muted: #8f8f98;
+  --trellis-text-faint: #c1c1c9;
+  --trellis-accent: #9a7238;
+  --trellis-accent-dim: #7a5a2c;
+  --trellis-accent-hover: #b8894a;
+  --trellis-success: #15803d;
+  --trellis-warning: #a67c32;
+  --trellis-error: #b91c1c;
+  --trellis-node: #9a7238;
+  --trellis-node-hover: #b8894a;
+  --trellis-edge: #e8e8ec;
+  --trellis-edge-hover: #d6d6de;
+  --trellis-input-bg: #fffefb;
+  --trellis-accent-surface: #f6f3ec;
+  --trellis-selected-surface: #efe9db;
+  --trellis-overlay-surface: rgba(252, 252, 252, 0.96);
+  --trellis-chip-surface: #f7f5f0;
+  --trellis-code-surface: #f5f3ed;
+  --trellis-selection: rgba(154, 114, 56, 0.18);
+  --trellis-bg-glow: rgba(154, 114, 56, 0.05);
+  --trellis-bg-sheen: rgba(255, 255, 255, 0.92);
   --trellis-elevated-shadow:
-    0 0 0 1px rgba(164, 110, 37, 0.1),
-    0 6px 18px rgba(103, 82, 47, 0.1);
+    0 0 0 1px rgba(154, 114, 56, 0.07),
+    0 6px 18px rgba(0, 0, 0, 0.04);
 }
 
 :root[data-theme="nature-dark"] {
@@ -519,7 +519,8 @@
   }
 
   .trellis-scrollbar {
-    scrollbar-color: rgba(200, 169, 110, 0.24) transparent;
+    scrollbar-color: color-mix(in srgb, var(--trellis-accent) 26%, transparent)
+      transparent;
   }
 
   .trellis-sidebar {

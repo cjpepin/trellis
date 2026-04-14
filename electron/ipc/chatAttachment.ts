@@ -2,21 +2,24 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import pdfParse from "pdf-parse";
 import { BrowserWindow, dialog, ipcMain } from "electron";
+import {
+  maxChatAttachmentContextChars,
+  maxChatPickPdfBytes,
+  maxChatPickTextFileBytes
+} from "../../shared/chat/attachmentLimits";
+import type { AppSettings } from "./types";
 import { ipcChannels } from "./types";
-
-const maxTextChars = 120_000;
-const maxPdfBytes = 15 * 1024 * 1024;
-const maxTextFileBytes = 2 * 1024 * 1024;
+import { saveRawSource } from "./vault";
 
 function truncateText(value: string): string {
-  if (value.length <= maxTextChars) {
+  if (value.length <= maxChatAttachmentContextChars) {
     return value;
   }
 
-  return `${value.slice(0, maxTextChars)}\n\n[…truncated for chat context]`;
+  return `${value.slice(0, maxChatAttachmentContextChars)}\n\n[…truncated for chat context]`;
 }
 
-export function registerChatAttachmentIpc(): void {
+export function registerChatAttachmentIpc(getSettings: () => AppSettings): void {
   ipcMain.handle(ipcChannels.chatPickAttachment, async (event) => {
     const parentWindow = BrowserWindow.fromWebContents(event.sender);
     const dialogOptions = {
@@ -44,20 +47,39 @@ export function registerChatAttachmentIpc(): void {
     if (ext === ".pdf") {
       const buf = await fs.readFile(filePath);
 
-      if (buf.length > maxPdfBytes) {
+      if (buf.length > maxChatPickPdfBytes) {
         throw new Error("That PDF is too large to attach.");
       }
 
+      const settings = getSettings();
+      const activeVault =
+        settings.vaults.find((vault) => vault.id === settings.activeVaultId) ?? settings.vaults[0];
+
+      if (!activeVault) {
+        throw new Error("Trellis needs at least one configured vault.");
+      }
+
+      const bytes = new Uint8Array(buf);
+      const sourcePath = await saveRawSource(activeVault.path, name, bytes);
       const pdf = await pdfParse(Buffer.from(buf));
+      const content = pdf.text.trim();
+      const title = name.replace(/\.pdf$/i, "");
+
       return {
         name,
-        text: truncateText(pdf.text.trim())
+        text: truncateText(content),
+        ingestDraft: {
+          title,
+          content,
+          sourcePath,
+          sourceType: "pdf" as const
+        }
       };
     }
 
     const buf = await fs.readFile(filePath);
 
-    if (buf.length > maxTextFileBytes) {
+    if (buf.length > maxChatPickTextFileBytes) {
       throw new Error("That file is too large to attach.");
     }
 

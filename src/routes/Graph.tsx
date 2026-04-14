@@ -7,8 +7,10 @@ import { isPaidSubscriptionTier } from "@/lib/chatModels";
 import type { GraphData, GraphNode } from "@electron/ipc/types";
 import { isAppPreviewWorkspace } from "@electron/ipc/types";
 import { useGraph } from "@/hooks/useGraph";
+import { mergeThoughtsIntoGraph } from "@/lib/thoughtGraphOverlay";
 import { getActiveWorkspaceId } from "@/lib/workspace";
 import { useAuthStore } from "@/store/authStore";
+import { useThoughtStore } from "@/store/thoughtStore";
 import { useUiStore } from "@/store/uiStore";
 import { notesRoutePath } from "@/lib/noteRoutes";
 import { useWikiStore } from "@/store/wikiStore";
@@ -68,9 +70,11 @@ function getSearchRank(node: GraphNode, query: string): number {
 export function Graph() {
   const navigate = useNavigate();
   const graph = useGraph();
+  const thoughts = useThoughtStore((state) => state.thoughts);
   const [tooltip, setTooltip] = useState<{ title: string; x: number; y: number } | null>(null);
   const [query, setQuery] = useState("");
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+  const [visualEmphasis, setVisualEmphasis] = useState<"degree" | "recency">("degree");
   const subscriptionTier = useAuthStore((state) => state.subscriptionTier);
   const notes = useWikiStore((state) => state.notes);
   const setActiveNote = useWikiStore((state) => state.setActiveNote);
@@ -79,10 +83,29 @@ export function Graph() {
   const pushToast = useUiStore((state) => state.pushToast);
   const isPreviewMode =
     !isAppPreviewWorkspace(getActiveWorkspaceId()) && !isPaidSubscriptionTier(subscriptionTier);
-  const visibleGraph = useMemo(
-    () => (isPreviewMode ? buildPreviewGraph(graph) : graph),
-    [graph, isPreviewMode]
+  const graphWithThoughts = useMemo(
+    () => mergeThoughtsIntoGraph(graph, thoughts),
+    [graph, thoughts]
   );
+
+  const visibleGraph = useMemo(
+    () => (isPreviewMode ? buildPreviewGraph(graphWithThoughts) : graphWithThoughts),
+    [graphWithThoughts, isPreviewMode]
+  );
+  const recencyBySlug = useMemo(() => {
+    const now = Date.now();
+    const out: Record<string, number> = {};
+    for (const note of notes) {
+      const t = Date.parse(note.updated);
+      if (!Number.isFinite(t)) {
+        continue;
+      }
+      const ageDays = (now - t) / 86_400_000;
+      out[note.slug] = Math.max(0, Math.min(1, 1 - Math.min(ageDays, 45) / 45));
+    }
+    return out;
+  }, [notes]);
+
   const searchResults = useMemo(() => {
     const normalizedQuery = normalizeSearchValue(query);
 
@@ -126,6 +149,16 @@ export function Graph() {
   }
 
   async function handleSelectNode(slug: string): Promise<void> {
+    if (slug.startsWith("thought-")) {
+      const thoughtId = slug.slice("thought-".length);
+
+      if (thoughtId.length > 0) {
+        navigate(`/thoughts?id=${encodeURIComponent(thoughtId)}`);
+      }
+
+      return;
+    }
+
     try {
       if (notes.some((note) => note.slug === slug)) {
         setActiveNote(slug);
@@ -145,14 +178,14 @@ export function Graph() {
         graph: snapshot.graph
       });
       pushToast({
-        title: "Stub note created",
+        title: "Stub Strand created",
         tone: "success",
         noteLinks: [{ label: result.note.title, noteSlug: result.note.slug }]
       });
       navigate(notesRoutePath(result.note.slug));
     } catch (error) {
       pushToast({
-        title: error instanceof Error ? error.message : "Could not open that note.",
+        title: error instanceof Error ? error.message : "Could not open that Strand.",
         tone: "warning"
       });
     }
@@ -166,12 +199,37 @@ export function Graph() {
             <p className="font-display text-2xl text-trellis-text">Knowledge Graph</p>
             <p className="mt-1 text-xs text-trellis-muted">
               {isPreviewMode
-                ? `Previewing ${visibleGraph.nodes.length} connected notes from this vault.`
-                : "Notes become nodes. [[Links]] between notes become edges."}
+                ? `Previewing ${visibleGraph.nodes.length} connected Strands from this vault.`
+                : "Strands are nodes. [[Links]] shape how ideas connect."}
             </p>
             <p className="mt-2 text-xs text-trellis-faint">
-              Click any node to open that note in Notes.
+              Click a node to open that Strand. Use the emphasis control to compare link topology with
+              recency.
             </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className={`rounded-field border px-3 py-1.5 text-xs transition ${
+                  visualEmphasis === "degree"
+                    ? "border-trellis-accent/40 bg-trellis-accent/10 text-trellis-text"
+                    : "border-trellis-border text-trellis-muted hover:border-trellis-accent/25"
+                }`}
+                onClick={() => setVisualEmphasis("degree")}
+              >
+                Links
+              </button>
+              <button
+                type="button"
+                className={`rounded-field border px-3 py-1.5 text-xs transition ${
+                  visualEmphasis === "recency"
+                    ? "border-trellis-accent/40 bg-trellis-accent/10 text-trellis-text"
+                    : "border-trellis-border text-trellis-muted hover:border-trellis-accent/25"
+                }`}
+                onClick={() => setVisualEmphasis("recency")}
+              >
+                Recency
+              </button>
+            </div>
           </div>
           <div className="flex w-full flex-col gap-3 md:w-[320px] md:items-end">
             <div className="relative w-full">
@@ -256,6 +314,8 @@ export function Graph() {
             onSelectNode={(slug) => {
               void handleSelectNode(slug);
             }}
+            visualEmphasis={visualEmphasis}
+            recencyBySlug={recencyBySlug}
           />
         </div>
       </section>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardCopy, Sparkles } from "lucide-react";
+import { ClipboardCopy } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   type AppFeatureFlags,
@@ -10,23 +10,36 @@ import {
   type ChatMediaArtifact,
   type ChatModel,
   type ChatNoteActionProposal,
-  type ChatTemplateInstanceState,
+  type IngestedDraft,
   type MessageRecord,
   type QueueSessionExtractionResult
 } from "@electron/ipc/types";
 import { getChatModelMediaCapabilities } from "@shared/chat/capabilities";
+import { messageLikelyExpectsVaultContextForChat } from "@shared/chat/privacyVaultIntent";
+import { buildChatReplyContext } from "@shared/chat/replyContext";
 import { normalizeReadAloudSpeedTier } from "@shared/media/readAloudSpeed";
+import { ChatContextGraphPanel } from "@/components/chat/ChatContextGraphPanel";
 import { ChatVaultSelect } from "@/components/chat/ChatVaultSelect";
 import { InputBar } from "@/components/chat/InputBar";
 import { MessageList } from "@/components/chat/MessageList";
-import type { ChatNoteReference } from "@/lib/api";
-import { canUseChatModel, getFirstAccessibleChatModel } from "@/lib/chatModels";
+import { useApplyExtraction } from "@/hooks/useApplyExtraction";
+import { extractIngestedSource, type ChatNoteReference } from "@/lib/api";
 import {
+  routingSignalsFromUserMessage,
+  selectChatModelForImageGeneration,
+  selectChatModelForRequest,
+  type ChatModelRoutingSignals
+} from "@/lib/chatModelRouting";
+import {
+  collectIngestDrafts,
   formatMessageForApi,
+  maxChatComposerAttachments,
   toChatAttachments,
   type PendingChatAttachment,
   type PendingImageAttachment
 } from "@/lib/chatAttachments";
+import { buildExtractionIndex } from "@/lib/extractionIndex";
+import { relatedNotesRetrievalDefaultLimit } from "@shared/extraction/config";
 import { useChatScrollFollow } from "@/hooks/useChatScrollFollow";
 import { getChatStreamToastCopy, useStream } from "@/hooks/useStream";
 import {
@@ -45,11 +58,7 @@ import { useUiStore } from "@/store/uiStore";
 import { notesRoutePath } from "@/lib/noteRoutes";
 import { formatChatTranscriptForClipboard } from "@/lib/chatClipboard";
 import { cn } from "@/lib/utils";
-import {
-  defaultNewTemplateMarkdown,
-  stripAssistantTemplateDraftMarkdown,
-  templateTag
-} from "@/lib/chatTemplates";
+import { buildContextSubgraph, collectChatContextNoteSlugs } from "@/lib/chatContextGraph";
 import { useWikiStore } from "@/store/wikiStore";
 import { PcmStreamPlayback } from "@/lib/pcmStreamPlayback";
 
@@ -95,6 +104,10 @@ export function Chat({
   const [draft, setDraft] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<PendingChatAttachment[]>([]);
   const [pendingImageAttachments, setPendingImageAttachments] = useState<PendingImageAttachment[]>([]);
+  /** Wiki notes explicitly pinned in the composer for stronger retrieval (session-local). */
+  const [pinnedWikiNotes, setPinnedWikiNotes] = useState<Array<{ slug: string; title: string }>>([]);
+  /** Mini context graph rail: collapsed by default per session. */
+  const [contextGraphCollapsed, setContextGraphCollapsed] = useState(true);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [readAloudActiveMessageId, setReadAloudActiveMessageId] = useState<string | null>(null);
   /** True until the first PCM chunk arrives for the current read-aloud session (loading state). */
@@ -102,16 +115,13 @@ export function Chat({
   const readAloudPlaybackRef = useRef<PcmStreamPlayback | null>(null);
   const readAloudStreamGenRef = useRef(0);
   const [busyNoteActionId, setBusyNoteActionId] = useState<string | null>(null);
-  /** True while queuing manual save or until that extraction job finishes. */
-  const [manualNoteCaptureActive, setManualNoteCaptureActive] = useState(false);
-  const pendingManualExtractionJobIdRef = useRef<string | null>(null);
-  const manualSaveToastIdRef = useRef<string | null>(null);
   const accessToken = useAuthStore((state) => state.accessToken);
   const authStatus = useAuthStore((state) => state.status);
   const subscriptionTier = useAuthStore((state) => state.subscriptionTier);
   const isAdmin = useAuthStore((state) => state.isAdmin);
   const providerKeys = useAuthStore((state) => state.providerKeys);
   const notes = useWikiStore((state) => state.notes);
+  const graph = useWikiStore((state) => state.graph);
   const activeNoteSlug = useWikiStore((state) => state.activeNoteSlug);
   const setNote = useWikiStore((state) => state.setNote);
   const setActiveNote = useWikiStore((state) => state.setActiveNote);
@@ -121,8 +131,6 @@ export function Chat({
   const setActiveSession = useChatStore((state) => state.setActiveSession);
   const messagesBySession = useChatStore((state) => state.messagesBySession);
   const setSessionMessages = useChatStore((state) => state.setSessionMessages);
-  const activeModel = useChatStore((state) => state.activeModel);
-  const setActiveModel = useChatStore((state) => state.setActiveModel);
   const chatRunsBySession = useChatStore((state) => state.chatRunsBySession);
   const startChatRun = useChatStore((state) => state.startChatRun);
   const finishChatRun = useChatStore((state) => state.finishChatRun);
@@ -132,7 +140,6 @@ export function Chat({
   const setMessageMeta = useChatStore((state) => state.setMessageMeta);
   const clearMessageMeta = useChatStore((state) => state.clearMessageMeta);
   const pushToast = useUiStore((state) => state.pushToast);
-  const removeToast = useUiStore((state) => state.removeToast);
   const stopReadAloud = useCallback(async () => {
     readAloudStreamGenRef.current += 1;
     await window.trellis.media.cancelSynthesizeSpeechStream();
@@ -146,7 +153,6 @@ export function Chat({
   }, []);
   const streamAssistant = useStream({
     accessToken,
-    model: activeModel,
     privacyMode: settings.chat.privacyMode,
     subscriptionTier,
     previewWorkspace: workspace.isPreview
@@ -191,6 +197,40 @@ export function Chat({
   );
 
   useEffect(() => {
+    setPinnedWikiNotes([]);
+    setContextGraphCollapsed(true);
+  }, [activeSessionId]);
+
+  const chatContextNoteSlugs = useMemo(
+    () =>
+      collectChatContextNoteSlugs({
+        messages: currentMessages,
+        notes,
+        pinnedWikiNotes
+      }),
+    [currentMessages, notes, pinnedWikiNotes]
+  );
+
+  const chatContextSubgraph = useMemo(
+    () => buildContextSubgraph(graph, chatContextNoteSlugs),
+    [chatContextNoteSlugs, graph]
+  );
+
+  const showChatContextGraph = chatContextSubgraph.nodes.length > 0;
+
+  const toggleWikiComposerPin = useCallback((slug: string, title: string) => {
+    setPinnedWikiNotes((current) => {
+      const exists = current.some((note) => note.slug === slug);
+
+      if (exists) {
+        return current.filter((note) => note.slug !== slug);
+      }
+
+      return [...current, { slug, title }];
+    });
+  }, []);
+
+  useEffect(() => {
     if (!activeSessionId || messagesBySession[activeSessionId]) {
       return;
     }
@@ -223,29 +263,36 @@ export function Chat({
     [isAdmin, workspace.isPreview]
   );
 
-  useEffect(() => {
-    if (
-      canUseChatModel(activeModel, subscriptionTier, providerKeys.statuses, chatModelAccessOptions)
-    ) {
-      return;
-    }
+  const composerRoutingSignals: ChatModelRoutingSignals = useMemo(() => {
+    const hasVision =
+      pendingImageAttachments.length > 0 ||
+      Boolean(editingMessage?.mediaArtifacts?.some((artifact) => artifact.kind === "image"));
 
-    const fallbackModel = getFirstAccessibleChatModel(
-      subscriptionTier,
-      providerKeys.statuses,
-      chatModelAccessOptions
-    );
-
-    if (fallbackModel !== activeModel) {
-      setActiveModel(fallbackModel);
-    }
+    return {
+      userTextLength: draft.trim().length,
+      transcriptMessageCount: editingMessageId ? currentMessages.length : currentMessages.length + 1,
+      hasVisionInTurn: hasVision,
+      nonImageAttachmentCount: pendingAttachments.length
+    };
   }, [
-    activeModel,
-    chatModelAccessOptions,
-    providerKeys.statuses,
-    setActiveModel,
-    subscriptionTier
+    currentMessages.length,
+    draft,
+    editingMessage,
+    editingMessageId,
+    pendingAttachments.length,
+    pendingImageAttachments.length
   ]);
+
+  const composerRoutedModel = useMemo(
+    () =>
+      selectChatModelForRequest(
+        subscriptionTier,
+        providerKeys.statuses,
+        composerRoutingSignals,
+        chatModelAccessOptions
+      ),
+    [chatModelAccessOptions, composerRoutingSignals, providerKeys.statuses, subscriptionTier]
+  );
 
   const queueExtraction = useCallback(
     async (
@@ -281,7 +328,7 @@ export function Chat({
     ]
   );
 
-  /** Skips IPC when on-device extraction is disabled (matches Save to note / feature flag). */
+  /** Skips IPC when on-device extraction is disabled. */
   const maybeQueueSessionExtraction = useCallback(
     async (
       sessionId: string,
@@ -310,145 +357,54 @@ export function Chat({
     [maybeQueueSessionExtraction, pushToast]
   );
 
-  const canSaveChatToNote = useMemo(
-    () =>
-      Boolean(activeSessionId) &&
-      currentMessages.length >= 2 &&
-      !chatDisabled &&
-      !activeSessionRunning,
-    [activeSessionId, activeSessionRunning, chatDisabled, currentMessages.length]
-  );
-
-  const handleSaveChatToNote = useCallback(async () => {
-    if (!activeSessionId || manualNoteCaptureActive || !canSaveChatToNote) {
-      return;
-    }
-
-    setManualNoteCaptureActive(true);
-    pendingManualExtractionJobIdRef.current = null;
-
-    const processingToastId = pushToast({
-      title: "Processing this chat into notes in the background…",
-      tone: "default"
-    });
-    manualSaveToastIdRef.current = processingToastId;
-
-    try {
-      const result = await window.trellis.extraction.queueSession({
-        sessionId: activeSessionId,
-        trigger: "manual",
-        mode: resolveExtractionModeForSubscription(settings.extraction.mode, subscriptionTier),
-        preferredLocalModelId: settings.extraction.preferredLocalModelId ?? undefined,
-        force: true
-      });
-
-      if (result.state === "queued" && result.job) {
-        pendingManualExtractionJobIdRef.current = result.job.id;
+  const applyExtractionComposer = useApplyExtraction();
+  const flushComposerSourceIngest = useCallback(
+    async (drafts: IngestedDraft[], sessionId: string | null, vaultId: string) => {
+      if (drafts.length === 0) {
         return;
       }
 
-      if (result.state === "duplicate" && result.job) {
-        pendingManualExtractionJobIdRef.current = result.job.id;
-        return;
-      }
-
-      removeToast(processingToastId);
-      manualSaveToastIdRef.current = null;
-      pushToast({
-        title: "Add at least one exchange before saving to a note.",
-        tone: "warning"
-      });
-    } catch (error) {
-      removeToast(processingToastId);
-      manualSaveToastIdRef.current = null;
-      pushToast({
-        title:
-          error instanceof Error ? error.message : "Could not save this chat to your notes.",
-        tone: "warning"
-      });
-    } finally {
-      if (!pendingManualExtractionJobIdRef.current) {
-        setManualNoteCaptureActive(false);
-      }
-    }
-  }, [
-    activeSessionId,
-    canSaveChatToNote,
-    manualNoteCaptureActive,
-    pushToast,
-    removeToast,
-    settings.extraction.mode,
-    settings.extraction.preferredLocalModelId,
-    subscriptionTier
-  ]);
-
-  useEffect(() => {
-    return window.trellis.extraction.onJobUpdate((notification) => {
-      const pendingId = pendingManualExtractionJobIdRef.current;
-      if (!pendingId || notification.id !== pendingId) {
-        return;
-      }
-      if (
-        notification.status === "completed" ||
-        notification.status === "failed" ||
-        notification.status === "skipped"
-      ) {
-        const toastId = manualSaveToastIdRef.current;
-        if (toastId) {
-          useUiStore.getState().removeToast(toastId);
-          manualSaveToastIdRef.current = null;
-        }
-        pendingManualExtractionJobIdRef.current = null;
-        setManualNoteCaptureActive(false);
-
-        const push = useUiStore.getState().pushToast;
-
-        if (notification.status === "completed") {
-          const applied = notification.appliedNotes ?? [];
-          if (applied.length > 0) {
-            push({
-              title:
-                applied.length === 1
-                  ? "Chat processed — your note is ready."
-                  : `Chat processed — ${applied.length} notes updated.`,
-              tone: "success",
-              noteLinks: applied.map((note) => ({
-                noteSlug: note.slug,
-                label: note.title
-              }))
-            });
-          } else {
-            push({
-              title: "Chat processed — your wiki is up to date.",
-              tone: "success"
-            });
-          }
-        } else if (notification.status === "failed") {
-          push({
+      for (const draft of drafts) {
+        try {
+          const relatedNotes = await window.trellis.retrieval.searchNotes({
+            query: draft.content,
+            limit: relatedNotesRetrievalDefaultLimit
+          });
+          const index = buildExtractionIndex(useWikiStore.getState().graph);
+          const response = await extractIngestedSource({
+            accessToken,
+            index,
+            transcript: [],
+            relatedNotes,
+            mode: resolveExtractionModeForSubscription(settings.extraction.mode, subscriptionTier),
+            preferredLocalModelId: settings.extraction.preferredLocalModelId,
+            sourceType: draft.sourceType,
+            sourceTitle: draft.title,
+            sourcePath: draft.sourcePath,
+            sourceContent: draft.content,
+            onProgress: () => {}
+          });
+          await applyExtractionComposer(response, { sessionId: sessionId ?? undefined, vaultId });
+        } catch (error) {
+          pushToast({
             title:
-              notification.errorMessage ?? "Could not finish saving this chat to your notes.",
+              error instanceof Error
+                ? error.message
+                : "Trellis couldn’t process an attached source.",
             tone: "error"
           });
-        } else {
-          push({
-            title:
-              notification.errorMessage ?? "Nothing new to save from this chat yet.",
-            tone: "warning"
-          });
         }
       }
-    });
-  }, []);
-
-  useEffect(() => {
-    const toastId = manualSaveToastIdRef.current;
-    if (toastId) {
-      removeToast(toastId);
-      manualSaveToastIdRef.current = null;
-    }
-    pendingManualExtractionJobIdRef.current = null;
-    setManualNoteCaptureActive(false);
-  }, [activeSessionId, removeToast]);
+    },
+    [
+      accessToken,
+      applyExtractionComposer,
+      pushToast,
+      settings.extraction.mode,
+      settings.extraction.preferredLocalModelId,
+      subscriptionTier
+    ]
+  );
 
   useEffect(() => {
     if (
@@ -483,7 +439,7 @@ export function Chat({
 
       if (!notes.some((note) => note.slug === slug)) {
         pushToast({
-          title: "That note is not available in this vault yet.",
+          title: "That Strand is not available in this vault yet.",
           tone: "warning"
         });
         return;
@@ -495,7 +451,7 @@ export function Chat({
         navigate(notesRoutePath(slug));
       } catch (error) {
         pushToast({
-          title: error instanceof Error ? error.message : "Could not open that note.",
+          title: error instanceof Error ? error.message : "Could not open that Strand.",
           tone: "warning"
         });
       }
@@ -507,90 +463,31 @@ export function Chat({
     async (
       messages: Array<Pick<MessageRecord, "role" | "content">>,
       vaultId: string,
-      options?: { currentSessionId?: string | null }
+      options?: { currentSessionId?: string | null; activeNoteSlug?: string | null }
     ): Promise<ChatContextPacket> => {
+      const contextActiveNoteSlug =
+        options?.activeNoteSlug !== undefined ? options.activeNoteSlug : activeNoteSlug;
+
       return window.trellis.chat.buildContext({
         mode: settings.chat.privacyMode,
         vaultId,
-        activeNoteSlug,
+        activeNoteSlug: contextActiveNoteSlug,
         sessionTitle: activeSession?.title ?? null,
         currentSessionId: options?.currentSessionId ?? null,
+        pinnedNoteSlugs: pinnedWikiNotes.map((note) => note.slug),
         messages
       });
     },
-    [activeNoteSlug, activeSession?.title, settings.chat.privacyMode]
+    [activeNoteSlug, activeSession?.title, pinnedWikiNotes, settings.chat.privacyMode]
   );
-
-  async function applyTemplateInstanceToMessages(input: {
-    sessionId: string;
-    vaultId: string;
-    messages: MessageRecord[];
-    userMessageId: string;
-  }): Promise<MessageRecord[]> {
-    const result = await window.trellis.chat.applyTemplateInstance({
-      vaultId: input.vaultId,
-      sessionId: input.sessionId,
-      userMessageId: input.userMessageId,
-      messages: input.messages.map((message) => ({
-        id: message.id,
-        role: message.role,
-        content: formatMessageForApi(message),
-        ...(message.templateInstance ? { templateInstance: message.templateInstance } : {})
-      }))
-    });
-
-    if (!result.applied || !result.state) {
-      return input.messages;
-    }
-
-    const nextMessages = input.messages.map((message) =>
-      message.id === input.userMessageId
-        ? {
-            ...message,
-            templateInstance: result.state as ChatTemplateInstanceState
-          }
-        : message
-    );
-
-    replaceSessionMessages(input.sessionId, nextMessages);
-    await window.trellis.db.replaceMessages({
-      sessionId: input.sessionId,
-      messages: nextMessages
-    });
-
-    if (result.note) {
-      pushToast({
-        title: result.message ?? `${result.note.title} updated.`,
-        tone: "success",
-        noteLinks: [{ label: result.note.title, noteSlug: result.note.slug }]
-      });
-    }
-
-    if (result.action === "created" || result.action === "updated") {
-      try {
-        const snapshot = await window.trellis.vault.listIndex(input.vaultId);
-        replaceWikiIndex({
-          notes: snapshot.notes,
-          folders: snapshot.folders,
-          graph: snapshot.graph
-        });
-        if (result.note) {
-          await loadNote(result.note.slug, input.vaultId);
-        }
-      } catch {
-        // Non-fatal; the next vault refresh will pick up the written template instance.
-      }
-    }
-
-    return nextMessages;
-  }
 
   function buildRetryTranscript(
     sessionId: string,
     targetMessageId: string | undefined,
     nextContent: string | undefined,
     nextAttachments: ChatAttachment[] | undefined,
-    nextMediaArtifacts?: ChatMediaArtifact[]
+    nextMediaArtifacts: ChatMediaArtifact[] | undefined,
+    composerPins?: Array<{ slug: string; title: string }>
   ): {
     baseMessages: MessageRecord[];
     userMessage: MessageRecord;
@@ -608,7 +505,8 @@ export function Chat({
         ...(nextAttachments && nextAttachments.length > 0 ? { attachments: nextAttachments } : {}),
         ...(nextMediaArtifacts && nextMediaArtifacts.length > 0
           ? { mediaArtifacts: nextMediaArtifacts }
-          : {})
+          : {}),
+        ...(composerPins && composerPins.length > 0 ? { composerPins } : {})
       };
 
       return {
@@ -632,7 +530,8 @@ export function Chat({
     const updatedUserMessage: MessageRecord = {
       ...targetMessage,
       content: nextContent ?? targetMessage.content,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      ...(composerPins && composerPins.length > 0 ? { composerPins } : {})
     };
 
     if (nextAttachments !== undefined) {
@@ -663,13 +562,14 @@ export function Chat({
     value: string,
     targetMessageId?: string,
     attachmentPayload?: ChatAttachment[],
-    mediaPayload?: ChatMediaArtifact[]
+    mediaPayload?: ChatMediaArtifact[],
+    ingestDrafts: IngestedDraft[] = []
   ): Promise<void> {
     let optimisticUserMessage: MessageRecord | null = null;
     let sessionId = activeSessionId;
+    let createdSessionThisSend = false;
     let runStarted = false;
     let finishAttention: ChatRunAttention | null = null;
-    const runModel: ChatModel = activeModel;
     const sessionVaultId = activeSession?.vaultId || activeVault.id;
 
     try {
@@ -681,23 +581,62 @@ export function Chat({
         return;
       }
 
+      const priorForEstimate = activeSessionId
+        ? useChatStore.getState().messagesBySession[activeSessionId] ?? []
+        : [];
+      const estimateSignals: ChatModelRoutingSignals = {
+        userTextLength: value.trim().length,
+        transcriptMessageCount: targetMessageId
+          ? priorForEstimate.length
+          : priorForEstimate.length + 1,
+        hasVisionInTurn: mediaPayload?.some((artifact) => artifact.kind === "image") ?? false,
+        nonImageAttachmentCount: attachmentPayload?.length ?? 0
+      };
+      const sessionSeedModel = selectChatModelForRequest(
+        subscriptionTier,
+        providerKeys.statuses,
+        estimateSignals,
+        chatModelAccessOptions
+      );
+
       if (!sessionId) {
         const session = await window.trellis.db.createSession({
-          model: runModel,
+          model: sessionSeedModel,
           vaultId: activeVault.id
         });
         sessionId = session.id;
+        createdSessionThisSend = true;
         setActiveSession(session.id);
         upsertSession(session);
       }
+
+      const priorMessages = useChatStore.getState().messagesBySession[sessionId] ?? [];
+      const omitActiveNoteForFirstTurn =
+        !targetMessageId && priorMessages.length === 0 && pinnedWikiNotes.length === 0;
 
       let { baseMessages, userMessage } = buildRetryTranscript(
         sessionId,
         targetMessageId,
         value,
         attachmentPayload,
-        mediaPayload
+        mediaPayload,
+        targetMessageId ? undefined : pinnedWikiNotes
       );
+      const runModel = selectChatModelForRequest(
+        subscriptionTier,
+        providerKeys.statuses,
+        routingSignalsFromUserMessage(baseMessages, userMessage),
+        chatModelAccessOptions
+      );
+
+      if (createdSessionThisSend && runModel !== sessionSeedModel) {
+        const updatedSession = await window.trellis.db.updateSession({
+          id: sessionId,
+          model: runModel
+        });
+        upsertSession(updatedSession);
+      }
+
       const existingRuns = useChatStore.getState().chatRunsBySession;
       if (existingRuns[sessionId]) {
         pushToast({
@@ -738,7 +677,8 @@ export function Chat({
           const proposal = await window.trellis.chat.proposeNoteActions({
             mode: settings.chat.privacyMode,
             vaultId: sessionVaultId,
-            activeNoteSlug,
+            activeNoteSlug: omitActiveNoteForFirstTurn ? null : activeNoteSlug,
+            pinnedNoteSlugs: pinnedWikiNotes.map((note) => note.slug),
             messages: baseMessages.map((message) => ({
               id: message.id,
               role: message.role,
@@ -746,21 +686,20 @@ export function Chat({
             }))
           });
 
-          const isTemplateNoteActionReview =
+          const isChatNoteActionReview =
             proposal.actions.length > 0 &&
             proposal.actions.every(
-              (action) =>
-                action.kind === "create_template" || action.kind === "update_template"
+              (action) => action.kind === "create_note" || action.kind === "update_note"
             );
 
-          if (isTemplateNoteActionReview || proposal.clarification) {
+          if (isChatNoteActionReview || proposal.clarification) {
+            const defaultReviewCopy =
+              "Here’s a proposed wiki note change. Review the diff and approve to save it to your vault.";
             const assistantMessage: MessageRecord = {
               id: crypto.randomUUID(),
               sessionId,
               role: "assistant",
-              content:
-                proposal.clarification ??
-                "Here’s a reusable template draft for your vault. Approve when it should be saved under wiki/templates.",
+              content: proposal.clarification ?? defaultReviewCopy,
               createdAt: Date.now(),
               tokens: null,
               ...(proposal.actions.length > 0 ? { noteActions: proposal.actions } : {})
@@ -794,27 +733,6 @@ export function Chat({
         }
       }
 
-      if (!targetMessageId) {
-        try {
-          baseMessages = await applyTemplateInstanceToMessages({
-            sessionId,
-            vaultId: sessionVaultId,
-            messages: baseMessages,
-            userMessageId: userMessage.id
-          });
-          userMessage =
-            baseMessages.find((message) => message.id === userMessage.id) ?? userMessage;
-        } catch (error) {
-          pushToast({
-            title:
-              error instanceof Error
-                ? error.message
-                : "Trellis couldn’t update that template instance.",
-            tone: "warning"
-          });
-        }
-      }
-
       let contextPacket: ChatContextPacket = {
         mode: settings.chat.privacyMode,
         references: [],
@@ -828,7 +746,10 @@ export function Chat({
             content: formatMessageForApi(message)
           })),
           sessionVaultId,
-          { currentSessionId: sessionId }
+          {
+            currentSessionId: sessionId,
+            ...(omitActiveNoteForFirstTurn ? { activeNoteSlug: null } : {})
+          }
         );
       } catch (error) {
         pushToast({
@@ -840,10 +761,26 @@ export function Chat({
         });
       }
 
+      if (settings.chat.privacyMode === "off") {
+        const userTextForIntent = formatMessageForApi(userMessage);
+        const likelyWantsVault =
+          messageLikelyExpectsVaultContextForChat(userTextForIntent) || pinnedWikiNotes.length > 0;
+
+        if (likelyWantsVault) {
+          pushToast({
+            title:
+              "Chat privacy is Off, so wiki excerpts and pinned notes are not sent to the cloud model. Replies may miss your vault. Set Chat privacy to Auto or Local in Settings when you want answers grounded in your notes.",
+            tone: "warning",
+            durationMs: 5200
+          });
+        }
+      }
+
       const streamResult = await streamAssistant(
         sessionId,
         baseMessages,
-        contextPacket.references as ChatNoteReference[]
+        contextPacket.references as ChatNoteReference[],
+        runModel
       );
 
       if (!streamResult.assistantMessage) {
@@ -863,11 +800,14 @@ export function Chat({
       } else {
         clearMessageMeta(userMessage.id);
       }
-      const assistantForPersistence: MessageRecord = userMessage.templateInstance
-        ? {
-            ...streamResult.assistantMessage,
-            templateInstance: userMessage.templateInstance
-          }
+      const replyContextForAssistant = buildChatReplyContext(
+        contextPacket,
+        pinnedWikiNotes.map((note) => note.slug),
+        { activeNoteSlug: omitActiveNoteForFirstTurn ? null : activeNoteSlug }
+      );
+
+      const assistantForPersistence: MessageRecord = replyContextForAssistant
+        ? { ...streamResult.assistantMessage, replyContext: replyContextForAssistant }
         : streamResult.assistantMessage;
       const nextMessages = [...baseMessages, assistantForPersistence];
       let persistedMessages = nextMessages;
@@ -879,6 +819,7 @@ export function Chat({
             phase: "post_response",
             vaultId: sessionVaultId,
             activeNoteSlug,
+            pinnedNoteSlugs: pinnedWikiNotes.map((note) => note.slug),
             messages: nextMessages.map((message) => ({
               id: message.id,
               role: message.role,
@@ -886,20 +827,19 @@ export function Chat({
             }))
           });
 
-          const isTemplateNoteActionReview =
+          const isPostWikiNoteActionReview =
             proposal.actions.length > 0 &&
             proposal.actions.every(
-              (action) =>
-                action.kind === "create_template" || action.kind === "update_template"
+              (action) => action.kind === "create_note" || action.kind === "update_note"
             );
 
-          if (isTemplateNoteActionReview) {
+          if (isPostWikiNoteActionReview) {
             persistedMessages = nextMessages.map((message) =>
               message.id === streamResult.assistantMessage?.id
                 ? {
                     ...message,
                     content:
-                      "I drafted that template and queued it for review. Make any final edits below, then approve to save it under wiki/templates.",
+                      "I drafted a wiki note update and queued it for review. Make any final edits below, then approve to save it to your vault.",
                     noteActions: proposal.actions
                   }
                 : message
@@ -962,10 +902,10 @@ export function Chat({
           );
           playback.finish();
         } catch (error: unknown) {
-          if (isReadAloudUserCancelError(error)) {
-            return;
+          if (!isReadAloudUserCancelError(error)) {
+            // Optional: ignore other auto read-aloud failures
           }
-          // Optional: ignore other auto read-aloud failures
+          // Do not return: persistence and background extraction must still run below.
         } finally {
           setReadAloudActiveMessageId((id) => (id === assistantId ? null : id));
           setReadAloudAwaitingFirstChunk(false);
@@ -1056,6 +996,9 @@ export function Chat({
         });
       }
     } finally {
+      if (ingestDrafts.length > 0 && sessionId && optimisticUserMessage) {
+        void flushComposerSourceIngest(ingestDrafts, sessionId, sessionVaultId);
+      }
       if (runStarted && sessionId) {
         const finishedInBackground =
           finishAttention !== null && useChatStore.getState().activeSessionId !== sessionId;
@@ -1083,6 +1026,7 @@ export function Chat({
 
   async function handleSubmit(value: string): Promise<void> {
     const trimmed = value.trim();
+    const ingestDrafts = collectIngestDrafts(pendingAttachments);
     const payload = toChatAttachments(pendingAttachments);
     const mediaFromImages: ChatMediaArtifact[] = pendingImageAttachments.map((item) => ({
       kind: "image" as const,
@@ -1114,11 +1058,11 @@ export function Chat({
 
     if (
       mediaFromImages.length > 0 &&
-      !getChatModelMediaCapabilities(activeModel).visionInput
+      !getChatModelMediaCapabilities(composerRoutedModel).visionInput
     ) {
       pushToast({
         title:
-          "This model does not accept images. Choose GPT-4o Mini, GPT-4o, or a Claude model with vision.",
+          "Images are not available for this composer state or plan. Remove images or adjust attachments.",
         tone: "warning"
       });
       return;
@@ -1130,13 +1074,13 @@ export function Chat({
         ? mediaFromImages
         : undefined;
 
-    await sendMessage(trimmed, editingMessageId ?? undefined, payload, mediaForSend);
+    await sendMessage(trimmed, editingMessageId ?? undefined, payload, mediaForSend, ingestDrafts);
   }
 
   async function handleAttachFile(): Promise<void> {
-    if (pendingAttachments.length + pendingImageAttachments.length >= 12) {
+    if (pendingAttachments.length + pendingImageAttachments.length >= maxChatComposerAttachments) {
       pushToast({
-        title: "You can attach up to 12 items per message.",
+        title: `You can attach up to ${maxChatComposerAttachments} items per message.`,
         tone: "warning"
       });
       return;
@@ -1155,7 +1099,8 @@ export function Chat({
           clientId: crypto.randomUUID(),
           kind: "file",
           label: result.name,
-          text: result.text
+          text: result.text,
+          ...(result.ingestDraft ? { ingestDraft: result.ingestDraft } : {})
         }
       ]);
     } catch (error) {
@@ -1167,9 +1112,9 @@ export function Chat({
   }
 
   async function clipPublicUrl(url: string): Promise<boolean> {
-    if (pendingAttachments.length + pendingImageAttachments.length >= 12) {
+    if (pendingAttachments.length + pendingImageAttachments.length >= maxChatComposerAttachments) {
       pushToast({
-        title: "You can attach up to 12 items per message.",
+        title: `You can attach up to ${maxChatComposerAttachments} items per message.`,
         tone: "warning"
       });
       return false;
@@ -1191,7 +1136,13 @@ export function Chat({
           kind: "url",
           label: clipped.title,
           text: clipped.content,
-          sourceUrl: clipped.sourcePath
+          sourceUrl: clipped.sourcePath,
+          ingestDraft: {
+            title: clipped.title,
+            content: clipped.content,
+            sourcePath: clipped.sourcePath,
+            sourceType: "web" as const
+          }
         }
       ]);
       return true;
@@ -1242,7 +1193,8 @@ export function Chat({
       message.content,
       messageId,
       message.attachments,
-      message.mediaArtifacts?.filter((artifact) => artifact.kind === "image")
+      message.mediaArtifacts?.filter((artifact) => artifact.kind === "image"),
+      []
     );
   }
 
@@ -1292,9 +1244,9 @@ export function Chat({
   }
 
   async function handlePasteImage(input: { base64: string; mimeType: string }): Promise<void> {
-    if (pendingAttachments.length + pendingImageAttachments.length >= 12) {
+    if (pendingAttachments.length + pendingImageAttachments.length >= maxChatComposerAttachments) {
       pushToast({
-        title: "You can attach up to 12 items per message.",
+        title: `You can attach up to ${maxChatComposerAttachments} items per message.`,
         tone: "warning"
       });
       return;
@@ -1320,9 +1272,9 @@ export function Chat({
   }
 
   async function handleAttachImage(): Promise<void> {
-    if (pendingAttachments.length + pendingImageAttachments.length >= 12) {
+    if (pendingAttachments.length + pendingImageAttachments.length >= maxChatComposerAttachments) {
       pushToast({
-        title: "You can attach up to 12 items per message.",
+        title: `You can attach up to ${maxChatComposerAttachments} items per message.`,
         tone: "warning"
       });
       return;
@@ -1362,9 +1314,15 @@ export function Chat({
       return false;
     }
 
-    if (!getChatModelMediaCapabilities(activeModel).imageGeneration) {
+    const imageRouteModel = selectChatModelForImageGeneration(
+      subscriptionTier,
+      providerKeys.statuses,
+      chatModelAccessOptions
+    );
+
+    if (!getChatModelMediaCapabilities(imageRouteModel).imageGeneration) {
       pushToast({
-        title: "Image generation uses OpenAI. Switch to the GPT-4o chat model first.",
+        title: "Image generation is not available for your current plan or provider setup.",
         tone: "warning"
       });
       return false;
@@ -1381,7 +1339,7 @@ export function Chat({
     if (!sessionId) {
       try {
         const session = await window.trellis.db.createSession({
-          model: activeModel,
+          model: imageRouteModel,
           vaultId: activeVault.id
         });
         sessionId = session.id;
@@ -1476,7 +1434,7 @@ export function Chat({
       await window.trellis.db.replaceMessages({ sessionId, messages: finalMessages });
       const updatedSession = await window.trellis.db.updateSession({
         id: sessionId,
-        model: activeModel
+        model: imageRouteModel
       });
       upsertSession(updatedSession);
       queueIdleExtractionWithToast(sessionId);
@@ -1490,58 +1448,6 @@ export function Chat({
       }
       pushToast({
         title: error instanceof Error ? error.message : "Could not generate that image.",
-        tone: "warning"
-      });
-      return false;
-    }
-  }
-
-  async function handleCreateTemplate(input: { title: string; content: string }): Promise<boolean> {
-    const title = input.title.trim();
-
-    if (!title) {
-      pushToast({
-        title: "Name the template before saving it.",
-        tone: "warning"
-      });
-      return false;
-    }
-
-    const vaultId = activeSession?.vaultId || activeVault.id;
-    const trimmedBody = input.content.trim();
-    const cleanedBody =
-      trimmedBody.length > 0 ? stripAssistantTemplateDraftMarkdown(trimmedBody).trim() : "";
-    const content =
-      cleanedBody.length > 0 ? cleanedBody : defaultNewTemplateMarkdown(title);
-
-    try {
-      const result = await window.trellis.vault.writeNote({
-        vaultId,
-        title,
-        folderPath: "templates",
-        content,
-        frontmatter: {
-          tags: [templateTag],
-          type: "concept",
-          sources: 0
-        }
-      });
-      const snapshot = await window.trellis.vault.listIndex(vaultId);
-      setNote(result.note);
-      replaceWikiIndex({
-        notes: snapshot.notes,
-        folders: snapshot.folders,
-        graph: snapshot.graph
-      });
-      pushToast({
-        title: `${title} saved as a template.`,
-        tone: "success",
-        noteLinks: [{ label: result.note.title, noteSlug: result.note.slug }]
-      });
-      return true;
-    } catch (error) {
-      pushToast({
-        title: error instanceof Error ? error.message : "Could not save that template.",
         tone: "warning"
       });
       return false;
@@ -1692,9 +1598,7 @@ export function Chat({
         {
           sessionId: activeSessionId,
           file: `${result.note.slug}.md`,
-          action: action.kind === "create_note" || action.kind === "create_template"
-            ? "create"
-            : "rewrite"
+          action: action.kind === "create_note" ? "create" : "rewrite"
         }
       ]);
       await persistPatchedNoteAction({
@@ -1833,11 +1737,13 @@ export function Chat({
             : "Sign in from Settings to start chatting with Trellis and grow what you know."}
         </div>
       )}
-      <div
-        ref={chatScrollContainerRef}
-        className="min-h-0 flex-1 overflow-y-auto"
-        onScroll={onChatScrollContainerScroll}
-      >
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        <div className="order-2 flex min-h-0 min-w-0 flex-1 flex-col lg:order-1">
+          <div
+            ref={chatScrollContainerRef}
+            className="min-h-0 flex-1 overflow-y-auto"
+            onScroll={onChatScrollContainerScroll}
+          >
         <MessageList
           messages={currentMessages}
           columnClassName={chatColumnClassName}
@@ -1920,8 +1826,8 @@ export function Chat({
           onNoteActionDraftChange={handleNoteActionDraftChange}
           busyNoteActionId={busyNoteActionId}
         />
-      </div>
-      <div className="trellis-overlay-surface border-t border-trellis-border px-5 pb-4 pt-2 backdrop-blur">
+          </div>
+          <div className="trellis-overlay-surface border-t border-trellis-border px-5 pb-4 pt-2 backdrop-blur">
         {editingMessage && (
           <div className={`mx-auto mb-4 w-full ${chatColumnClassName} rounded-field border border-trellis-accent/20 bg-trellis-surface px-4 py-3 text-sm text-trellis-text`}>
             Editing an earlier message will regenerate the conversation from that point.
@@ -1935,7 +1841,7 @@ export function Chat({
               disabled={chatDisabled}
               isStreaming={activeSessionRunning || composerBusyForLimit}
               busyReason={composerBusyReason}
-              model={activeModel}
+              routedModel={composerRoutedModel}
               subscriptionTier={subscriptionTier}
               providerKeys={providerKeys.statuses}
               notes={notes}
@@ -1943,7 +1849,6 @@ export function Chat({
               submitLabel={editingMessage ? "Save & retry" : "Send"}
               onChange={setDraft}
               onCancel={editingMessage ? cancelEditing : undefined}
-              onSelectModel={setActiveModel}
               onSubmit={handleSubmit}
               pendingAttachments={pendingAttachments}
               onRemoveAttachment={(clientId) => {
@@ -1962,10 +1867,10 @@ export function Chat({
                 );
               }}
               onAttachImage={() => {
-                if (!getChatModelMediaCapabilities(activeModel).visionInput) {
+                if (!getChatModelMediaCapabilities(composerRoutedModel).visionInput) {
                   pushToast({
                     title:
-                      "Choose a vision-capable model (for example GPT-4o Mini, GPT-4o, or Claude) to attach images to the chat.",
+                      "Images are not available for this composer state or plan. Try a shorter message or fewer attachments.",
                     tone: "warning"
                   });
                   return;
@@ -1987,16 +1892,18 @@ export function Chat({
                   return `${current}${separator}${text}`;
                 });
               }}
-              onCreateTemplate={handleCreateTemplate}
               onGenerateImageWithPrompt={(prompt) => handleGenerateImageWithPrompt(prompt)}
               privacyLocal={settings.chat.privacyMode === "local"}
               cloudMediaAllowed={!chatDisabled && settings.chat.privacyMode !== "local"}
-              visionAllowed={getChatModelMediaCapabilities(activeModel).visionInput}
-              speechAllowed={getChatModelMediaCapabilities(activeModel).speechToText}
-              imageGenAllowed={getChatModelMediaCapabilities(activeModel).imageGeneration}
+              visionAllowed={getChatModelMediaCapabilities(composerRoutedModel).visionInput}
+              speechAllowed={getChatModelMediaCapabilities(composerRoutedModel).speechToText}
+              imageGenAllowed={getChatModelMediaCapabilities(composerRoutedModel).imageGeneration}
               accessToken={accessToken}
               previewWorkspace={workspace.isPreview && isAdmin}
               isAdmin={isAdmin}
+              contextRetrievalEnabled={settings.chat.privacyMode !== "off"}
+              pinnedWikiNotes={pinnedWikiNotes}
+              onToggleWikiComposerPin={toggleWikiComposerPin}
             />
           </div>
           <div className="flex w-full max-w-[200px] shrink-0 flex-col gap-2 self-end sm:w-auto">
@@ -2014,46 +1921,6 @@ export function Chat({
                 onAddVault={handleAddVault}
               />
             )}
-            {features.localExtraction && activeSessionId ? (
-              <span
-                className={cn(
-                  "block w-full",
-                  (!canSaveChatToNote || manualNoteCaptureActive) && "cursor-not-allowed"
-                )}
-              >
-                <button
-                  type="button"
-                  data-testid="chat-save-to-note"
-                  disabled={!canSaveChatToNote || manualNoteCaptureActive}
-                  aria-busy={manualNoteCaptureActive}
-                  title={
-                    !canSaveChatToNote
-                      ? "Add at least one back-and-forth message before saving to your notes"
-                      : manualNoteCaptureActive
-                        ? "Processing this chat into notes in the background"
-                        : "Turn this conversation into wiki notes now (same as background capture)"
-                  }
-                  className={cn(
-                    "flex w-full shrink-0 items-center justify-center gap-2 rounded-full border px-3 py-2 text-center text-sm transition",
-                    canSaveChatToNote && !manualNoteCaptureActive
-                      ? "border-trellis-border bg-trellis-surface text-trellis-text hover:border-trellis-accent/35 hover:text-trellis-accent"
-                      : "border-trellis-border bg-trellis-surface text-trellis-faint"
-                  )}
-                  onClick={() => {
-                    void handleSaveChatToNote();
-                  }}
-                >
-                  <Sparkles
-                    className={cn(
-                      "h-4 w-4 shrink-0",
-                      manualNoteCaptureActive ? "text-trellis-faint" : "text-trellis-accent"
-                    )}
-                    aria-hidden
-                  />
-                  Save to note
-                </button>
-              </span>
-            ) : null}
             {activeSessionId && currentMessages.length > 0 ? (
               <button
                 type="button"
@@ -2105,6 +1972,21 @@ export function Chat({
             </p>
           </div>
         )}
+          </div>
+        </div>
+        {showChatContextGraph ? (
+          <ChatContextGraphPanel
+            workspaceId={workspace.id}
+            graph={chatContextSubgraph}
+            collapsed={contextGraphCollapsed}
+            onToggleCollapsed={() => {
+              setContextGraphCollapsed((current) => !current);
+            }}
+            onOpenNote={(slug) => {
+              void openReferencedNote(slug);
+            }}
+          />
+        ) : null}
       </div>
     </div>
   );

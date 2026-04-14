@@ -1,6 +1,5 @@
 /**
- * Removes common assistant chat framing from template markdown so saved templates
- * contain only the reusable structure (headings, tables, prompts).
+ * Removes common assistant chat framing from drafted markdown so merges target real headings/body.
  */
 
 const HR = "\n---\n";
@@ -9,13 +8,11 @@ function hasMarkdownHeading(text: string): boolean {
   return /^#{1,6}\s+\S/m.test(text);
 }
 
-/** True when the first non-empty line looks like assistant sign-off / upsell, not template body. */
 function firstLineLooksLikeAssistantChatter(line: string): boolean {
   const t = line.trim();
   if (t.length === 0) {
     return false;
   }
-  // Offer to extend, customize, or close the chat — not a section heading or table row.
   return (
     /^(If you want|Let me know|Would you like|I can (also|help|make)|Hope this|Feel free|That would|Tell me if|I'?m happy to|Anything else|Want me to|Need anything|Is there anything)/i.test(
       t
@@ -26,9 +23,6 @@ function firstLineLooksLikeAssistantChatter(line: string): boolean {
   );
 }
 
-/**
- * Drop intro paragraphs and horizontal rules that appear before the first markdown heading.
- */
 function stripLeadingBeforeFirstHeading(markdown: string): string {
   const lines = markdown.split("\n");
   let start = 0;
@@ -44,7 +38,6 @@ function stripLeadingBeforeFirstHeading(markdown: string): string {
     return markdown;
   }
 
-  // Avoid stripping huge paste jobs that never use headings.
   if (start > 40) {
     return markdown;
   }
@@ -52,9 +45,6 @@ function stripLeadingBeforeFirstHeading(markdown: string): string {
   return lines.slice(start).join("\n");
 }
 
-/**
- * Remove a trailing `---` block when everything after it has no headings and reads like chat wrap-up.
- */
 function stripTrailingAfterHorizontalRule(markdown: string): string {
   let idx = markdown.lastIndexOf(HR);
   if (idx === -1) {
@@ -74,9 +64,6 @@ function stripTrailingAfterHorizontalRule(markdown: string): string {
   return markdown.slice(0, idx).trimEnd();
 }
 
-/**
- * Remove a final paragraph that is clearly assistant chatter (no heading in that paragraph).
- */
 function stripTrailingChatterParagraph(markdown: string): string {
   const blocks = markdown.trimEnd().split(/\n{2,}/);
   if (blocks.length < 2) {
@@ -96,10 +83,7 @@ function stripTrailingChatterParagraph(markdown: string): string {
   return blocks.slice(0, -1).join("\n\n").trimEnd();
 }
 
-/**
- * Strips leading assistant intro and trailing offers / sign-offs from chat-produced template drafts.
- */
-export function stripAssistantTemplateDraftMarkdown(markdown: string): string {
+export function stripAssistantDraftMarkdown(markdown: string): string {
   let out = markdown.trim();
   if (out.length === 0) {
     return out;
@@ -108,7 +92,6 @@ export function stripAssistantTemplateDraftMarkdown(markdown: string): string {
   out = stripLeadingBeforeFirstHeading(out);
   out = stripTrailingAfterHorizontalRule(out);
   out = stripTrailingChatterParagraph(out);
-  // Second pass: model may nest another `---` + chatter after the first strip.
   out = stripTrailingAfterHorizontalRule(out);
   out = stripTrailingChatterParagraph(out);
 

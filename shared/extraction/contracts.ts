@@ -33,7 +33,6 @@ export interface ExtractionIndexEntry {
   /** Wiki subfolder path under `wiki/` (POSIX, no leading slash). Empty = root. */
   folderPath?: string;
   isPlaceholder?: boolean;
-  isTemplate?: boolean;
 }
 
 export interface ExtractionEvidence {

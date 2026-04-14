@@ -5,7 +5,7 @@ import type {
   ChatContextReference,
   NoteSummary
 } from "../../ipc/types";
-import { buildSnapshot, resolveVault } from "../../ipc/vault";
+import { buildSnapshot, readNoteOrCreateIfMissing, resolveVault } from "../../ipc/vault";
 import { listRecentSessionNoteLinks } from "../database";
 import { searchRelevantNotes } from "../retrieval/index";
 import { searchMemoryItems } from "./memory";
@@ -15,10 +15,24 @@ import {
   normalizeTitleKey,
   slugifyExtractionTitle
 } from "../../../shared/extraction/wikiLinks";
+import { relatedNotesRetrievalDefaultLimit } from "@shared/extraction/config";
 import { hasVaultOrganizeIntent } from "./vaultOrganize";
+import {
+  buildWikiNoteIndexContent,
+  WIKI_NOTE_INDEX_MEMORY_TITLE
+} from "../../../shared/chat/vaultIndex";
 
-const maxContextRefs = 5;
-const maxContextChars = 6_500;
+const maxContextRefs = 8;
+const maxContextChars = 18_000;
+
+function asksForStructuralWikiStats(messages: Array<{ content: string }>): boolean {
+  const latestUser = [...messages].reverse().find((message) => message.content.trim().length > 0);
+  const content = latestUser?.content ?? "";
+
+  return /\b(backlink|backlinks|incoming|inbound|most\s+linked|most\s+popular|popular\s+note|hub\s+note|well[- ]linked|graph\s+of|link\s+count)\b/i.test(
+    content
+  );
+}
 
 function asksForRecentChats(messages: Array<{ content: string }>): boolean {
   const latestUser = [...messages].reverse().find((message) => message.content.trim().length > 0);
@@ -168,7 +182,11 @@ export async function buildChatContextPacket(
     input.activeNoteSlug
       ? snapshot.notes.find((note) => note.slug === input.activeNoteSlug)?.title ?? null
       : null;
-  const explicitSlugs = resolveExplicitSlugs(input.messages, snapshot.notes);
+  const wikiLinkSlugs = resolveExplicitSlugs(input.messages, snapshot.notes);
+  const pinnedSlugs = (input.pinnedNoteSlugs ?? []).filter(
+    (slug) => typeof slug === "string" && slug.length > 0
+  );
+  const explicitSlugs = [...new Set([...wikiLinkSlugs, ...pinnedSlugs])];
   const recentSessionLinks = asksForRecentChats(input.messages)
     ? await listRecentSessionNoteLinks(3, input.currentSessionId ?? null)
     : [];
@@ -178,15 +196,38 @@ export async function buildChatContextPacket(
       .filter((slug) => snapshot.notes.some((note) => note.slug === slug))
   );
   const preferredSlugs = [
-    ...new Set([input.activeNoteSlug ?? "", ...explicitSlugs, ...recentSessionSlugs].filter(Boolean))
+    ...new Set(
+      [...pinnedSlugs, input.activeNoteSlug ?? "", ...explicitSlugs, ...recentSessionSlugs].filter(Boolean)
+    )
   ];
   const query = buildQuery(input, explicitSlugs, activeNoteTitle);
+
+  const notesEligibleForCloud =
+    input.mode === "local"
+      ? snapshot.notes
+      : snapshot.notes.filter(
+          (note) => !note.tags.some((tag) => tag.trim().toLowerCase() === "local-only")
+        );
+
+  const priorityInboundSlugs = asksForStructuralWikiStats(input.messages)
+    ? [...notesEligibleForCloud]
+        .sort((a, b) =>
+          b.inboundCount !== a.inboundCount
+            ? b.inboundCount - a.inboundCount
+            : a.title.localeCompare(b.title)
+        )
+        .slice(0, 12)
+        .map((note) => note.slug)
+    : [];
+
   const noteCandidates = await searchRelevantNotes({
     vaultId: vault.id,
     query,
     explicitSlugs: [...new Set([...explicitSlugs, ...recentSessionSlugs])],
-    limit: 6
+    prioritySlugs: priorityInboundSlugs,
+    limit: relatedNotesRetrievalDefaultLimit
   });
+  const priorityInboundSlugSet = new Set(priorityInboundSlugs);
   const memoryCandidates = await searchMemoryItems({
     vaultId: vault.id,
     query,
@@ -208,9 +249,41 @@ export async function buildChatContextPacket(
         content: candidate.content,
         tags: candidate.tags,
         headingPath: candidate.headingPath,
-        isExplicitMatch: candidate.isExplicitMatch
+        isExplicitMatch: candidate.isExplicitMatch || priorityInboundSlugSet.has(candidate.slug)
       })
     );
+  }
+
+  const pinnedSlugSet = new Set(pinnedSlugs);
+  const slugsFromNoteCandidates = new Set(
+    noteCandidates.map((candidate) => candidate.slug).filter((slug) => slug.length > 0)
+  );
+
+  for (const slug of pinnedSlugSet) {
+    if (slugsFromNoteCandidates.has(slug)) {
+      continue;
+    }
+
+    const noteMeta = snapshot.notes.find((note) => note.slug === slug);
+    if (!noteMeta || !noteAllowedForMode(noteMeta.tags, input.mode)) {
+      continue;
+    }
+
+    try {
+      const wiki = await readNoteOrCreateIfMissing(vault.path, slug);
+      references.push(
+        buildNoteReference({
+          slug: wiki.slug,
+          title: wiki.title,
+          content: wiki.content,
+          tags: wiki.tags,
+          headingPath: undefined,
+          isExplicitMatch: true
+        })
+      );
+    } catch {
+      // Skip notes that fail to load (deleted vault paths, etc.).
+    }
   }
 
   let recentChatsReference: ChatContextReference | null = null;
@@ -264,6 +337,26 @@ export async function buildChatContextPacket(
     );
   }
 
+  const wikiIndexReference: ChatContextReference | null =
+    notesEligibleForCloud.length === 0
+      ? null
+      : buildMemoryReference({
+          title: WIKI_NOTE_INDEX_MEMORY_TITLE,
+          content: buildWikiNoteIndexContent(
+            notesEligibleForCloud.map((note) => ({
+              slug: note.slug,
+              title: note.title,
+              tags: note.tags,
+              folderPath: note.folderPath,
+              inboundCount: note.inboundCount,
+              excerpt: note.excerpt
+            })),
+            { maxChars: 10_500 }
+          ),
+          linkedNoteSlug: null,
+          contentMaxChars: 12_000
+        });
+
   const ranked = references
     .map((reference) => ({
       reference,
@@ -274,10 +367,28 @@ export async function buildChatContextPacket(
           ? 18
           : 0)
     }))
-    .sort((left, right) => right.score - left.score);
+    .sort((left, right) => {
+      const leftPin =
+        left.reference.type === "note" &&
+        left.reference.slug &&
+        pinnedSlugSet.has(left.reference.slug);
+      const rightPin =
+        right.reference.type === "note" &&
+        right.reference.slug &&
+        pinnedSlugSet.has(right.reference.slug);
+      if (leftPin !== rightPin) {
+        return leftPin ? -1 : 1;
+      }
+      return right.score - left.score;
+    });
 
   const selected: ChatContextReference[] = [];
   let charCount = 0;
+
+  if (wikiIndexReference) {
+    selected.push(wikiIndexReference);
+    charCount += referenceCharBudget(wikiIndexReference);
+  }
 
   if (recentChatsReference) {
     selected.push(recentChatsReference);
@@ -330,8 +441,14 @@ export async function buildChatContextPacket(
   }
 
   const sourceLabels = [
+    wikiIndexReference ? "Wiki index" : null,
     selected.some((reference) => reference.type === "note") ? "Saved notes" : null,
-    selected.some((reference) => reference.type === "memory") ? "Private memory" : null
+    selected.some(
+      (reference) =>
+        reference.type === "memory" && reference.title !== WIKI_NOTE_INDEX_MEMORY_TITLE
+    )
+      ? "Private memory"
+      : null
   ].filter((value): value is string => Boolean(value));
 
   return {

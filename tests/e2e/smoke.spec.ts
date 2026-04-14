@@ -8,11 +8,11 @@ test("boots and navigates the core routes", async ({ page }) => {
   await page.getByTestId("sidebar-nav-notes").click();
   await expect(page.getByTestId("route-notes")).toBeVisible();
 
+  await page.getByTestId("sidebar-nav-thoughts").click();
+  await expect(page.getByTestId("route-thoughts")).toBeVisible();
+
   await page.getByTestId("sidebar-nav-graph").click();
   await expect(page.getByTestId("route-graph")).toBeVisible();
-
-  await page.getByTestId("sidebar-nav-ingest").click();
-  await expect(page.getByTestId("route-ingest")).toBeVisible();
 
   await page.getByTestId("sidebar-nav-settings").click();
   await expect(page.getByTestId("route-settings")).toBeVisible();

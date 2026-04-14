@@ -117,19 +117,19 @@ test("returns null for invalid JSON responses", () => {
   assert.equal(result.issues[0].message, "Extraction payload was not valid JSON.");
 });
 
-test("extraction prompt marks template notes distinctly", () => {
+test("extraction prompt marks placeholder targets", () => {
   const message = buildExtractionUserMessage({
-    transcript: [{ role: "user", content: "Use my daily reflection template." }],
+    transcript: [{ role: "user", content: "Continue the outline note." }],
     index: [
       {
-        slug: "daily-reflection-template",
-        title: "Daily Reflection Template",
-        tags: ["template"],
-        isTemplate: true
+        slug: "outline-draft",
+        title: "Outline Draft",
+        tags: ["draft"],
+        isPlaceholder: true
       }
     ]
   });
 
-  assert.match(message, /Daily Reflection Template/);
-  assert.match(message, /\{template\}/);
+  assert.match(message, /Outline Draft/);
+  assert.match(message, /\{placeholder target\}/);
 });

@@ -47,7 +47,7 @@ export function CommandPalette({
         <Command label="Command palette" className="bg-transparent">
           <Command.Input
             className="w-full border-b border-trellis-border bg-transparent px-4 py-4 text-sm text-trellis-text outline-none"
-            placeholder="Search notes, views, and actions…"
+            placeholder="Search Strands, views, and actions…"
             autoFocus
           />
           <Command.List className="max-h-[420px] overflow-y-auto px-2 py-2">
@@ -75,19 +75,19 @@ export function CommandPalette({
                 className="rounded-field px-3 py-2 text-sm text-trellis-text aria-selected:bg-trellis-surface"
                 onSelect={() => {
                   setOpen(false);
-                  navigate("/graph");
+                  navigate("/thoughts");
                 }}
               >
-                Go to graph
+                Capture a thought
               </Command.Item>
               <Command.Item
                 className="rounded-field px-3 py-2 text-sm text-trellis-text aria-selected:bg-trellis-surface"
                 onSelect={() => {
                   setOpen(false);
-                  navigate("/ingest");
+                  navigate("/graph");
                 }}
               >
-                Import file
+                Go to graph
               </Command.Item>
               <Command.Item
                 className="rounded-field px-3 py-2 text-sm text-trellis-text aria-selected:bg-trellis-surface"
@@ -108,7 +108,7 @@ export function CommandPalette({
                         title:
                           error instanceof Error
                             ? error.message
-                            : "Could not copy the current note.",
+                            : "Could not copy the current Strand.",
                         tone: "warning"
                       });
                     });
@@ -116,7 +116,7 @@ export function CommandPalette({
                   setOpen(false);
                 }}
               >
-                Copy note as markdown
+                Copy Strand as markdown
               </Command.Item>
             </Command.Group>
 
@@ -153,7 +153,7 @@ export function CommandPalette({
 
             <Command.Separator className="my-2 h-px bg-trellis-border" />
 
-            <Command.Group heading="Open note" className="px-2 py-1 text-xs text-trellis-faint">
+            <Command.Group heading="Open Strand" className="px-2 py-1 text-xs text-trellis-faint">
               {noteCommands.map((note) => (
                 <Command.Item
                   key={note.slug}

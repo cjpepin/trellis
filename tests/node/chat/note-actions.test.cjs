@@ -5,12 +5,9 @@ const path = require("node:path");
 const test = require("node:test");
 const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
-const {
-  hasDirectNoteActionIntent,
-  hasTemplateCreationReviewIntent,
-  isCombinedTemplateDraftAndSaveRequest,
-  proposeChatNoteActions
-} = require(fromRepoRoot("electron", "lib", "chat", "noteActions.ts"));
+const { hasDirectNoteActionIntent, proposeChatNoteActions } = require(
+  fromRepoRoot("electron", "lib", "chat", "noteActions.ts")
+);
 
 function makeMessage(role, content) {
   return {
@@ -42,241 +39,17 @@ function makeSettings(vaultPath) {
   };
 }
 
-test("direct note action intent ignores template drafting but catches explicit save", () => {
-  assert.equal(
-    hasDirectNoteActionIntent(
-      "Help me create a reusable Trellis template for a daily reflection."
-    ),
-    false
-  );
-  assert.equal(
-    hasDirectNoteActionIntent("I like that, save it as a reusable template"),
-    true
-  );
+test("hasDirectNoteActionIntent detects explicit save to vault", () => {
+  assert.equal(hasDirectNoteActionIntent("Save this takeaway to my wiki"), true);
+  assert.equal(hasDirectNoteActionIntent("Just brainstorming ideas"), false);
 });
 
-test("proposeChatNoteActions creates a pending reusable template proposal without writing", async () => {
-  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-"));
-
-  try {
-    const userRequest = makeMessage("user", "Help me draft a daily reflection template.");
-    const assistant = makeMessage(
-      "assistant",
-      [
-        "# Daily Reflection",
-        "",
-        "## Mood",
-        "- How did you feel overall today?",
-        "",
-        "## Energy",
-        "- What was your energy level?"
-      ].join("\n")
-    );
-    const user = makeMessage("user", "I like that, save it as a reusable template");
-    const result = await proposeChatNoteActions(
-      () => makeSettings(vaultPath),
-      {
-        mode: "local",
-        vaultId: "vault-1",
-        messages: [userRequest, assistant, user]
-      }
-    );
-
-    assert.equal(result.clarification, null);
-    assert.equal(result.actions.length, 1);
-    assert.equal(result.actions[0].kind, "create_template");
-    assert.equal(result.actions[0].status, "pending");
-    assert.equal(result.actions[0].targetTitle, "Daily Reflection Template");
-    assert.equal(result.actions[0].targetSlug, "daily-reflection-template");
-    assert.equal(result.actions[0].targetFolderPath, "templates");
-    assert.deepEqual(result.actions[0].frontmatter.tags, ["template"]);
-    assert.match(result.actions[0].afterMarkdown, /## Mood/);
-    assert.equal(
-      fs.existsSync(path.join(vaultPath, "wiki", "templates", "daily-reflection-template.md")),
-      false
-    );
-  } finally {
-    fs.rmSync(vaultPath, { recursive: true, force: true });
-  }
+test("hasDirectNoteActionIntent does not treat bare affirmations as save intent", () => {
+  assert.equal(hasDirectNoteActionIntent("yes"), false);
 });
 
-test("proposeChatNoteActions proposes create_template when user says please do after a drafted template", async () => {
-  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-please-do-"));
-
-  try {
-    const userRequest = makeMessage(
-      "user",
-      [
-        "Help me create a reusable Trellis template for a daily log.",
-        "Include a clear markdown structure and the prompts you should ask me when I use it, so Trellis can save it as a reusable template note."
-      ].join("\n")
-    );
-    const assistant = makeMessage(
-      "assistant",
-      [
-        "Here's a reusable daily log template:",
-        "",
-        "```markdown",
-        "# Daily Log - [Date]",
-        "",
-        "## Sleep",
-        "- Hours slept?",
-        "",
-        "## Vibe",
-        "- Mood today?",
-        "```"
-      ].join("\n")
-    );
-    const user = makeMessage("user", "please do!");
-    const result = await proposeChatNoteActions(
-      () => makeSettings(vaultPath),
-      {
-        mode: "local",
-        vaultId: "vault-1",
-        messages: [userRequest, assistant, user]
-      }
-    );
-
-    assert.equal(result.clarification, null);
-    assert.equal(result.actions.length, 1);
-    assert.equal(result.actions[0].kind, "create_template");
-    assert.equal(result.actions[0].targetSlug, "daily-log-date-template");
-    assert.match(result.actions[0].afterMarkdown, /## Sleep/);
-  } finally {
-    fs.rmSync(vaultPath, { recursive: true, force: true });
-  }
-});
-
-test("proposeChatNoteActions skips pre-LLM template save when the user still needs a draft", async () => {
-  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-combined-"));
-
-  try {
-    const seededAssistant = makeMessage(
-      "assistant",
-      "Yes: new users understand what to do within minutes, important conversations turn into useful notes without cleanup, and people trust where their context lives when cloud features or providers are unavailable."
-    );
-    const user = makeMessage(
-      "user",
-      [
-        "Help me create a reusable Trellis template for a daily log to track sleep, vibe, and goals.",
-        "Include a clear markdown structure and the prompts you should ask me when I use it, so Trellis can save it as a reusable template note."
-      ].join("\n")
-    );
-    const result = await proposeChatNoteActions(
-      () => makeSettings(vaultPath),
-      {
-        mode: "local",
-        vaultId: "vault-1",
-        messages: [seededAssistant, user]
-      }
-    );
-
-    assert.equal(result.actions.length, 0);
-    assert.ok(isCombinedTemplateDraftAndSaveRequest(user.content));
-  } finally {
-    fs.rmSync(vaultPath, { recursive: true, force: true });
-  }
-});
-
-test("proposeChatNoteActions creates a review after a combined template request is drafted", async () => {
-  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-post-draft-"));
-
-  try {
-    const user = makeMessage(
-      "user",
-      [
-        "Create a reusable template for a daily reflection and save it as a template.",
-        "It should track feelings, wins, challenges, learning, and improvements."
-      ].join(" ")
-    );
-    const assistant = makeMessage(
-      "assistant",
-      [
-        "Great! I'll create a reusable template note in your vault called Daily Reflection (template) with the content below:",
-        "",
-        "# Daily Reflection - {{date}}",
-        "",
-        "## How did I feel today?",
-        "- ",
-        "",
-        "## What went well today?",
-        "- ",
-        "",
-        "I'm adding this as Daily Reflection (template) under your templates. You can now instantiate it whenever you want."
-      ].join("\n")
-    );
-    const result = await proposeChatNoteActions(
-      () => makeSettings(vaultPath),
-      {
-        mode: "local",
-        phase: "post_response",
-        vaultId: "vault-1",
-        messages: [user, assistant]
-      }
-    );
-
-    assert.equal(result.clarification, null);
-    assert.equal(result.actions.length, 1);
-    assert.equal(result.actions[0].kind, "create_template");
-    assert.equal(result.actions[0].status, "pending");
-    assert.equal(result.actions[0].targetTitle, "Daily Reflection Template");
-    assert.equal(result.actions[0].targetSlug, "daily-reflection-template");
-    assert.equal(result.actions[0].targetFolderPath, "templates");
-    assert.match(result.actions[0].afterMarkdown, /^# Daily Reflection - \{\{date\}\}/);
-    assert.ok(!result.actions[0].afterMarkdown.includes("I'm adding this"));
-    assert.equal(
-      fs.existsSync(path.join(vaultPath, "wiki", "templates", "daily-reflection-template.md")),
-      false
-    );
-  } finally {
-    fs.rmSync(vaultPath, { recursive: true, force: true });
-  }
-});
-
-test("proposeChatNoteActions creates a review after a draft-only template request is answered", async () => {
-  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-draft-only-"));
-
-  try {
-    const user = makeMessage("user", "Let's create a simple daily log template.");
-    const assistant = makeMessage(
-      "assistant",
-      [
-        "# Daily Log - {{date}}",
-        "",
-        "## Tasks",
-        "- [ ] ",
-        "",
-        "## Notes",
-        "- "
-      ].join("\n")
-    );
-    const result = await proposeChatNoteActions(
-      () => makeSettings(vaultPath),
-      {
-        mode: "local",
-        phase: "post_response",
-        vaultId: "vault-1",
-        messages: [user, assistant]
-      }
-    );
-
-    assert.equal(result.clarification, null);
-    assert.equal(result.actions.length, 1);
-    assert.equal(result.actions[0].kind, "create_template");
-    assert.equal(result.actions[0].targetFolderPath, "templates");
-    assert.deepEqual(result.actions[0].frontmatter.tags, ["template"]);
-  } finally {
-    fs.rmSync(vaultPath, { recursive: true, force: true });
-  }
-});
-
-test("hasTemplateCreationReviewIntent only when saving a template", () => {
-  assert.equal(hasTemplateCreationReviewIntent("Update [[Roadmap]] to include template approvals."), false);
-  assert.equal(hasTemplateCreationReviewIntent("I like that, save it as a reusable template"), true);
-});
-
-test("proposeChatNoteActions does not propose vault diffs for ordinary note updates", async () => {
-  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-"));
+test("proposeChatNoteActions merges assistant draft into pinned note", async () => {
+  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-pinned-"));
 
   try {
     const wikiPath = path.join(vaultPath, "wiki");
@@ -300,7 +73,103 @@ test("proposeChatNoteActions does not propose vault diffs for ordinary note upda
       "utf8"
     );
 
-    const user = makeMessage("user", "Update [[Roadmap]] to include template approvals.");
+    const opener = makeMessage("user", "Add a section to Roadmap from our chat.");
+    const assistant = makeMessage(
+      "assistant",
+      ["## New section from chat", "", "- Capture decisions quickly."].join("\n")
+    );
+    const user = makeMessage("user", "Save that into my wiki note please");
+    const result = await proposeChatNoteActions(
+      () => makeSettings(vaultPath),
+      {
+        mode: "local",
+        vaultId: "vault-1",
+        pinnedNoteSlugs: ["roadmap"],
+        messages: [opener, assistant, user]
+      }
+    );
+
+    assert.equal(result.clarification, null);
+    assert.equal(result.actions.length, 1);
+    assert.equal(result.actions[0].kind, "update_note");
+    assert.equal(result.actions[0].targetSlug, "roadmap");
+    assert.match(result.actions[0].afterMarkdown, /New section from chat/);
+  } finally {
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
+});
+
+test("proposeChatNoteActions proposes update for active note when user says this note", async () => {
+  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-active-"));
+
+  try {
+    const wikiPath = path.join(vaultPath, "wiki");
+    fs.mkdirSync(wikiPath, { recursive: true });
+    fs.writeFileSync(
+      path.join(wikiPath, "focus.md"),
+      [
+        "---",
+        "title: Focus",
+        "created: 2026-04-10",
+        "updated: 2026-04-10",
+        "sources: 0",
+        "tags: []",
+        "type: concept",
+        "---",
+        "",
+        "Original."
+      ].join("\n"),
+      "utf8"
+    );
+
+    const opener = makeMessage("user", "Let's extend the Focus note.");
+    const assistant = makeMessage("assistant", "## Addendum\n\nMore from the thread.");
+    const user = makeMessage("user", "Save changes to the active note");
+    const result = await proposeChatNoteActions(
+      () => makeSettings(vaultPath),
+      {
+        mode: "local",
+        vaultId: "vault-1",
+        activeNoteSlug: "focus",
+        messages: [opener, assistant, user]
+      }
+    );
+
+    assert.equal(result.actions.length, 1);
+    assert.equal(result.actions[0].kind, "update_note");
+    assert.equal(result.actions[0].targetSlug, "focus");
+  } finally {
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
+});
+
+test("proposeChatNoteActions returns no actions without pins or active-note targeting", async () => {
+  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-none-"));
+
+  try {
+    const opener = makeMessage("user", "Draft something.");
+    const assistant = makeMessage("assistant", "## Draft\n\nHello.");
+    const user = makeMessage("user", "Save that to a note");
+    const result = await proposeChatNoteActions(
+      () => makeSettings(vaultPath),
+      {
+        mode: "local",
+        vaultId: "vault-1",
+        messages: [opener, assistant, user]
+      }
+    );
+
+    assert.equal(result.actions.length, 0);
+  } finally {
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
+});
+
+test("proposeChatNoteActions does not propose without paired assistant draft", async () => {
+  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-solo-"));
+
+  try {
+    const user = makeMessage("user", "Update [[Roadmap]] to include approvals.");
     const result = await proposeChatNoteActions(
       () => makeSettings(vaultPath),
       {
@@ -310,56 +179,7 @@ test("proposeChatNoteActions does not propose vault diffs for ordinary note upda
       }
     );
 
-    assert.equal(result.clarification, null);
     assert.equal(result.actions.length, 0);
-  } finally {
-    fs.rmSync(vaultPath, { recursive: true, force: true });
-  }
-});
-
-test("proposeChatNoteActions proposes update_template when a matching template file already exists", async () => {
-  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-update-template-"));
-
-  try {
-    const templatesDir = path.join(vaultPath, "wiki", "templates");
-    fs.mkdirSync(templatesDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(templatesDir, "daily-reflection-template.md"),
-      [
-        "---",
-        "title: Daily Reflection Template",
-        "created: 2026-04-10",
-        "updated: 2026-04-10",
-        "sources: 0",
-        "tags: [template]",
-        "type: concept",
-        "---",
-        "",
-        "## Old"
-      ].join("\n"),
-      "utf8"
-    );
-
-    const userRequest = makeMessage("user", "Draft a daily reflection template.");
-    const assistant = makeMessage(
-      "assistant",
-      ["# Daily Reflection", "", "## Mood", "- Prompt"].join("\n")
-    );
-    const user = makeMessage("user", "Save it as a reusable template");
-    const result = await proposeChatNoteActions(
-      () => makeSettings(vaultPath),
-      {
-        mode: "local",
-        vaultId: "vault-1",
-        messages: [userRequest, assistant, user]
-      }
-    );
-
-    assert.equal(result.clarification, null);
-    assert.equal(result.actions.length, 1);
-    assert.equal(result.actions[0].kind, "update_template");
-    assert.equal(result.actions[0].targetSlug, "daily-reflection-template");
-    assert.match(result.actions[0].afterMarkdown, /## Mood/);
   } finally {
     fs.rmSync(vaultPath, { recursive: true, force: true });
   }
