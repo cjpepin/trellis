@@ -53,7 +53,11 @@ import type {
   ExtractionUpdate
 } from "@shared/extraction/contracts";
 import { extractionJobRelatedNotesLimit } from "@shared/extraction/config";
-import { buildManualSaveFallbackResponse } from "./manualSaveFallback";
+import {
+  buildAutomaticChatCaptureFallbackResponse,
+  buildManualSaveFallbackResponse,
+  shouldAutoCaptureStrandFromTranscript
+} from "./manualSaveFallback";
 
 interface CreateExtractionOrchestratorOptions {
   getSettings: () => AppSettings;
@@ -551,6 +555,31 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       if (job.trigger === "manual" && applied.appliedUpdateCount === 0) {
         const existingSlugs = new Set(index.map((entry) => entry.slug));
         const fallbackResponse = buildManualSaveFallbackResponse({
+          transcript,
+          session,
+          suggestedSessionTitle: extraction.response.sessionTitle ?? "",
+          existingSlugs
+        });
+        applied = await applyExtractionResponseLocally(
+          vault,
+          fallbackResponse,
+          job.sessionId,
+          index
+        );
+      }
+
+      if (
+        applied.appliedUpdateCount === 0 &&
+        (job.trigger === "idle" ||
+          job.trigger === "session-switch" ||
+          job.trigger === "startup") &&
+        shouldAutoCaptureStrandFromTranscript(transcript)
+      ) {
+        const existingSlugs = new Set([
+          ...index.map((entry) => entry.slug),
+          ...applied.appliedNotes.map((note) => note.slug)
+        ]);
+        const fallbackResponse = buildAutomaticChatCaptureFallbackResponse({
           transcript,
           session,
           suggestedSessionTitle: extraction.response.sessionTitle ?? "",

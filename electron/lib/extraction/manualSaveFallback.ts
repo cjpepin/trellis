@@ -213,6 +213,42 @@ function combineAssistantBodies(
   return parts.join("\n\n").trim();
 }
 
+function combineUserBodies(
+  transcript: Array<{ role: "user" | "assistant"; content: string }>
+): string {
+  return transcript
+    .filter((m) => m.role === "user")
+    .map((m) => normalizeContent(m.content))
+    .join("\n\n")
+    .trim();
+}
+
+/** Minimum assistant prose before we auto-materialize a Strand without explicit "save" language. */
+const minAssistantCharsAutoCapture = 120;
+/** Typical real question / context from the user; short follow-ups allowed when the assistant reply is long. */
+const minUserCharsAutoCapture = 12;
+const longAssistantBypassUserMin = 360;
+
+/**
+ * True when idle/session extraction should still write a capture Strand if the model returned no wiki updates.
+ * Keeps trivial chats from creating empty captures.
+ */
+export function shouldAutoCaptureStrandFromTranscript(
+  transcript: Array<{ role: "user" | "assistant"; content: string }>
+): boolean {
+  const assistantNorm = normalizeContent(combineAssistantBodies(transcript));
+  if (assistantNorm.length < minAssistantCharsAutoCapture) {
+    return false;
+  }
+
+  const userNorm = combineUserBodies(transcript);
+  if (userNorm.length < minUserCharsAutoCapture && assistantNorm.length < longAssistantBypassUserMin) {
+    return false;
+  }
+
+  return true;
+}
+
 /**
  * Standalone note body: assistant substance only (no user prompt quotes), medium depth.
  */
@@ -277,6 +313,58 @@ export function buildManualSaveFallbackResponse(input: {
         ref: "manual_save_fallback",
         summary:
           "User requested Save to note; model returned no applied wiki updates, so Trellis wrote formatted working notes."
+      }
+    ],
+    confidence: 1
+  };
+
+  return {
+    updates: [synthetic],
+    sessionTitle
+  };
+}
+
+/**
+ * Same shaped capture as {@link buildManualSaveFallbackResponse}, but for automatic idle extraction when
+ * the on-device curator returns nothing applicable — aligns with "always extract durable substance" without
+ * requiring the user to say "save".
+ */
+export function buildAutomaticChatCaptureFallbackResponse(input: {
+  transcript: Array<{ role: "user" | "assistant"; content: string }>;
+  session: ChatSessionSummary;
+  suggestedSessionTitle: string;
+  existingSlugs: Set<string>;
+  now?: Date;
+}): ExtractionResponse {
+  const now = input.now ?? new Date();
+  const targetTitle = resolveFallbackTargetTitle({
+    transcript: input.transcript,
+    session: input.session,
+    suggestedSessionTitle: input.suggestedSessionTitle,
+    now
+  });
+  const body = buildManualFallbackBody(input.transcript, now, targetTitle);
+  let baseSlug = slugifyExtractionTitle(targetTitle);
+  baseSlug = ensureUniqueSlug(baseSlug, input.existingSlugs);
+
+  const sessionTitle = clampSessionTitleWords(targetTitle, 6) || "Chat capture";
+
+  const synthetic: ExtractionUpdate = {
+    operation: "create",
+    targetSlug: baseSlug,
+    targetTitle,
+    targetType: "synthesis",
+    summary: "Auto-saved from chat: on-device extraction proposed no wiki updates for this slice",
+    body,
+    folderPath: "captures",
+    tags: ["chat-capture", "auto"],
+    links: [],
+    evidence: [
+      {
+        kind: "transcript",
+        ref: "automatic_extraction_fallback",
+        summary:
+          "Local extraction completed with no applied wiki updates; Trellis saved assistant substance under captures/."
       }
     ],
     confidence: 1

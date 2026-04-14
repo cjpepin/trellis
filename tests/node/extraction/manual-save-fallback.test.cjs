@@ -5,9 +5,11 @@ const { fromRepoRoot } = require("../support/repo-paths.cjs");
 const { prepareExtractionWrite } = require(
   fromRepoRoot("electron", "lib", "extraction", "guardrails.ts")
 );
-const { buildManualSaveFallbackResponse } = require(
-  fromRepoRoot("electron", "lib", "extraction", "manualSaveFallback.ts")
-);
+const {
+  buildAutomaticChatCaptureFallbackResponse,
+  buildManualSaveFallbackResponse,
+  shouldAutoCaptureStrandFromTranscript
+} = require(fromRepoRoot("electron", "lib", "extraction", "manualSaveFallback.ts"));
 
 test("manual save fallback body passes extraction guardrails", () => {
   const response = buildManualSaveFallbackResponse({
@@ -79,4 +81,41 @@ test("fallback title avoids raw user-style session titles", () => {
   assert.ok(u);
   assert.ok(!/^can you /i.test(u.targetTitle));
   assert.ok(!u.body.includes("Can you make a volleyball"));
+});
+
+test("automatic idle fallback body passes guardrails and lands under captures/", () => {
+  const longAssistant = `${"Week 1: base miles. ".repeat(25)}Add strides on Wednesdays.`;
+  assert.equal(shouldAutoCaptureStrandFromTranscript([{ role: "user", content: "Plan my marathon build." }, { role: "assistant", content: longAssistant }]), true);
+  assert.equal(shouldAutoCaptureStrandFromTranscript([{ role: "user", content: "Hi" }, { role: "assistant", content: "Hello!" }]), false);
+
+  const response = buildAutomaticChatCaptureFallbackResponse({
+    transcript: [
+      { role: "user", content: "Plan my marathon build." },
+      { role: "assistant", content: longAssistant }
+    ],
+    session: {
+      id: "session-3",
+      title: "Marathon training program",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      model: "gpt-4o-mini",
+      messageCount: 2,
+      vaultId: "vault-1"
+    },
+    suggestedSessionTitle: "",
+    existingSlugs: new Set(),
+    now: new Date("2026-04-11T12:00:00.000Z")
+  });
+
+  assert.equal(response.updates.length, 1);
+  const u = response.updates[0];
+  assert.equal(u.folderPath, "captures");
+  const prepared = prepareExtractionWrite({
+    update: u,
+    existingNote: null,
+    index: []
+  });
+  assert.ok(prepared);
+  assert.equal(prepared.folderPath, "captures");
+  assert.ok(prepared.content.includes("Week 1"));
 });
