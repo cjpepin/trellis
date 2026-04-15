@@ -1,5 +1,6 @@
 import type { MessageRecord, NoteSummary } from "@electron/ipc/types";
 import type { MessageMeta } from "@/store/chatStore";
+import type { TranscriptFindMatch } from "@/lib/chatTranscriptFind";
 import { MessageBubble } from "./MessageBubble";
 
 interface Props {
@@ -27,6 +28,8 @@ interface Props {
     afterMarkdown: string
   ) => void;
   busyNoteActionId?: string | null;
+  /** Active Cmd/Ctrl+F transcript find match (highlights in rendered markdown when possible). */
+  transcriptFindActive?: TranscriptFindMatch | null;
 }
 
 export function MessageList({
@@ -48,7 +51,8 @@ export function MessageList({
   onApproveNoteAction,
   onRejectNoteAction,
   onNoteActionDraftChange,
-  busyNoteActionId
+  busyNoteActionId,
+  transcriptFindActive = null
 }: Props) {
   if (messages.length === 0) {
     return (
@@ -70,6 +74,9 @@ export function MessageList({
         <MessageBubble
           key={message.id}
           message={message}
+          transcriptFindHighlight={
+            transcriptFindActive?.messageId === message.id ? transcriptFindActive : null
+          }
           existingSlugs={existingSlugs}
           vaultId={vaultId}
           notes={notes}

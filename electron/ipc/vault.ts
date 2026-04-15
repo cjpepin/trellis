@@ -611,6 +611,17 @@ export async function readNoteOrCreateIfMissing(vaultPath: string, slug: string)
   return parseNote(vaultPath, targetPath);
 }
 
+export async function readNoteIfExists(vaultPath: string, slug: string): Promise<WikiNote | null> {
+  await ensureVaultLayout(vaultPath);
+  const existingPath = await findNotePathBySlug(vaultPath, slug);
+
+  if (!existingPath) {
+    return null;
+  }
+
+  return parseNote(vaultPath, existingPath);
+}
+
 async function parseNote(vaultPath: string, filePath: string): Promise<WikiNote> {
   const file = await fs.readFile(filePath, "utf8");
   const parsed = matter(file);

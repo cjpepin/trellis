@@ -69,6 +69,79 @@ test("normalizes legacy extraction output and merges duplicate targets", () => {
   assert.deepEqual(update.tags, ["product", "roadmap"]);
 });
 
+test("remaps a mismatched targetSlug to the vault slug when the title matches an index note", () => {
+  const result = validateExtractionResponse(
+    {
+      sessionTitle: "Strategy Thread",
+      updates: [
+        {
+          targetSlug: "product-strategy-follow-up",
+          operation: "create",
+          targetTitle: "Product Strategy",
+          targetType: "concept",
+          summary: "Adds to the existing strategy note.",
+          body: "## Summary\n\nWe aligned on retention-first positioning for the next quarter.",
+          tags: ["product"],
+          confidence: 0.85,
+          evidence: [{ kind: "transcript", ref: "turn-2" }]
+        }
+      ]
+    },
+    {
+      index: [
+        {
+          slug: "product-strategy",
+          title: "Product Strategy",
+          tags: ["product"]
+        }
+      ]
+    }
+  );
+
+  assert.ok(result.value);
+  assert.equal(result.value.updates.length, 1);
+
+  const [update] = result.value.updates;
+
+  assert.equal(update.targetSlug, "product-strategy");
+  assert.equal(update.operation, "append");
+});
+
+test("remaps update-qualified duplicate targets to the existing vault note", () => {
+  const result = validateExtractionResponse(
+    {
+      sessionTitle: "Strategy Thread",
+      updates: [
+        {
+          targetSlug: "product-strategy-copy",
+          operation: "create",
+          targetTitle: "Product Strategy Updated",
+          targetType: "concept",
+          summary: "Refreshes the existing strategy note.",
+          body: "## Summary\n\nRetention-first positioning should guide the next roadmap pass.",
+          tags: ["product"],
+          confidence: 0.82,
+          evidence: [{ kind: "transcript", ref: "turn-4" }]
+        }
+      ]
+    },
+    {
+      index: [
+        {
+          slug: "product-strategy",
+          title: "Product Strategy",
+          tags: ["product"]
+        }
+      ]
+    }
+  );
+
+  assert.ok(result.value);
+  assert.equal(result.value.updates.length, 1);
+  assert.equal(result.value.updates[0].targetSlug, "product-strategy");
+  assert.equal(result.value.updates[0].operation, "append");
+});
+
 test("downgrades low-confidence rewrite attempts to append for existing notes", () => {
   const result = validateExtractionResponse(
     {

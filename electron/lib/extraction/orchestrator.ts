@@ -25,7 +25,7 @@ import {
 import { searchRelevantNotes } from "../retrieval/index";
 import {
   buildSnapshot,
-  readNoteOrCreateIfMissing,
+  readNoteIfExists,
   resolveVault,
   writeNoteFile
 } from "../../ipc/vault";
@@ -40,7 +40,7 @@ import {
   resolveExtractionExecutionStrategy
 } from "./jobs";
 import { logExtraction } from "./extractionLog";
-import { prepareExtractionWrite } from "./guardrails";
+import { prepareExtractionWrite, skipIfDuplicatePreparedExtractionContent } from "./guardrails";
 import {
   buildRequestedProviderOrder,
   createExtractionDebugRun,
@@ -118,13 +118,14 @@ async function applyExtractionResponseLocally(
   const appliedOps: Array<{ file: string; action: "create" | "append" | "rewrite" }> = [];
   const appliedNotes: Array<{ slug: string; title: string }> = [];
   let appliedUpdateCount = 0;
+  const seenPreparedBodies = new Set<string>();
 
   for (const rawUpdate of appliedUpdates) {
     const update = rawUpdate;
     let existingNote: WikiNote | null = null;
 
     try {
-      existingNote = await readNoteOrCreateIfMissing(vault.path, update.targetSlug);
+      existingNote = await readNoteIfExists(vault.path, update.targetSlug);
     } catch {
       existingNote = null;
     }
@@ -136,6 +137,14 @@ async function applyExtractionResponseLocally(
     });
 
     if (!preparedWrite) {
+      continue;
+    }
+
+    if (skipIfDuplicatePreparedExtractionContent(seenPreparedBodies, preparedWrite.content)) {
+      logExtraction("applyExtractionResponseLocally.skipDuplicateBody", {
+        slug: preparedWrite.slug,
+        title: preparedWrite.title
+      });
       continue;
     }
 

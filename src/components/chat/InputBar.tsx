@@ -610,51 +610,79 @@ export function InputBar({
               </div>
             </div>
           ) : (
-            <textarea
-              ref={textareaRef}
-              value={value}
-              disabled={disabled}
-              placeholder="What are you thinking about?"
-              className="min-h-[42px] w-full resize-none bg-transparent py-1 text-left text-[15px] leading-6 text-trellis-text outline-none placeholder:text-trellis-faint"
-              onPaste={(event) => {
-                void handlePasteClipboardImages(event);
-              }}
-              onChange={(event) => {
-                onChange(event.target.value);
-                setCursor(event.target.selectionStart ?? event.target.value.length);
-              }}
-              onClick={syncCursor}
-              onKeyUp={syncCursor}
-              onSelect={syncCursor}
-              onKeyDown={(event) => {
-                if (noteLinkCommand) {
-                  if (event.key === "ArrowDown" && slashSuggestions.length > 0) {
-                    event.preventDefault();
-                    setActiveCommandIndex((current) => (current + 1) % slashSuggestions.length);
-                    return;
+            <div className="relative">
+              <textarea
+                ref={textareaRef}
+                value={value}
+                disabled={disabled}
+                placeholder="What are you thinking about?"
+                className="min-h-[42px] w-full resize-none bg-transparent py-1 pb-7 pr-10 text-left text-[15px] leading-6 text-trellis-text outline-none placeholder:text-trellis-faint"
+                onPaste={(event) => {
+                  void handlePasteClipboardImages(event);
+                }}
+                onChange={(event) => {
+                  onChange(event.target.value);
+                  setCursor(event.target.selectionStart ?? event.target.value.length);
+                }}
+                onClick={syncCursor}
+                onKeyUp={syncCursor}
+                onSelect={syncCursor}
+                onKeyDown={(event) => {
+                  if (noteLinkCommand) {
+                    if (event.key === "ArrowDown" && slashSuggestions.length > 0) {
+                      event.preventDefault();
+                      setActiveCommandIndex((current) => (current + 1) % slashSuggestions.length);
+                      return;
+                    }
+
+                    if (event.key === "ArrowUp" && slashSuggestions.length > 0) {
+                      event.preventDefault();
+                      setActiveCommandIndex(
+                        (current) => (current - 1 + slashSuggestions.length) % slashSuggestions.length
+                      );
+                      return;
+                    }
+
+                    if ((event.key === "Enter" || event.key === "Tab") && slashSuggestions.length > 0) {
+                      event.preventDefault();
+                      selectNoteLinkSuggestion(activeCommandIndex);
+                      return;
+                    }
                   }
 
-                  if (event.key === "ArrowUp" && slashSuggestions.length > 0) {
+                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                     event.preventDefault();
-                    setActiveCommandIndex(
-                      (current) => (current - 1 + slashSuggestions.length) % slashSuggestions.length
-                    );
-                    return;
+                    void handleSubmit();
                   }
-
-                  if ((event.key === "Enter" || event.key === "Tab") && slashSuggestions.length > 0) {
-                    event.preventDefault();
-                    selectNoteLinkSuggestion(activeCommandIndex);
-                    return;
-                  }
-                }
-
-                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                  event.preventDefault();
-                  void handleSubmit();
-                }
-              }}
-            />
+                }}
+              />
+              <div className="group absolute bottom-1 right-1 z-10 inline-flex items-center">
+                <button
+                  type="button"
+                  className="rounded-full border border-transparent p-1 text-trellis-muted outline-none ring-trellis-accent/40 transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text focus-visible:ring-2"
+                  aria-label="Composer help: type slash or at-sign to link notes; pin for priority; clip, files, and images add more context; Enter sends; Shift+Enter newline."
+                >
+                  <CircleHelp className="h-4 w-4" aria-hidden />
+                </button>
+                <div
+                  className={cn(
+                    "trellis-elevated invisible absolute bottom-full right-0 z-40 mb-1.5 w-[min(100vw-2rem,340px)]",
+                    "rounded-field border border-trellis-border bg-trellis-surface px-3 py-2 shadow-lg",
+                    "text-xs leading-5 text-trellis-text",
+                    "opacity-0 transition-opacity motion-reduce:transition-none",
+                    "group-hover:visible group-hover:opacity-100",
+                    "group-focus-within:visible group-focus-within:opacity-100"
+                  )}
+                  role="tooltip"
+                >
+                  Type{" "}
+                  <code className="rounded border border-trellis-border/50 px-1 py-px font-mono text-[0.95em]">/</code> or{" "}
+                  <code className="rounded border border-trellis-border/50 px-1 py-px font-mono text-[0.95em]">@</code> to link
+                  notes · pin
+                  for priority · clip, files, and images add more context. Enter sends · Shift+Enter newline.
+                </div>
+              </div>
+            </div>
           )}
           {!activeInputTool && noteLinkCommand && (
             <div className="trellis-elevated absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden">
@@ -956,32 +984,6 @@ export function InputBar({
             >
               <Wand2 className="h-4 w-4" aria-hidden />
             </ComposerIconButton>
-          </div>
-          <div className="group relative inline-flex shrink-0 items-center">
-            <button
-              type="button"
-              className="rounded-full border border-transparent p-1 text-trellis-muted outline-none ring-trellis-accent/40 transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text focus-visible:ring-2"
-              aria-label="Composer help: type slash or at-sign to link notes; pin for priority; clip, files, and images add more context; Enter sends; Shift+Enter newline."
-            >
-              <CircleHelp className="h-4 w-4" aria-hidden />
-            </button>
-            <div
-              className={cn(
-                "trellis-elevated invisible absolute left-0 top-full z-40 mt-1.5 w-[min(100vw-2rem,340px)]",
-                "rounded-field border border-trellis-border bg-trellis-surface px-3 py-2 shadow-lg",
-                "text-xs leading-5 text-trellis-text",
-                "opacity-0 transition-opacity motion-reduce:transition-none",
-                "group-hover:visible group-hover:opacity-100",
-                "group-focus-within:visible group-focus-within:opacity-100"
-              )}
-              role="tooltip"
-            >
-              Type{" "}
-              <code className="rounded border border-trellis-border/50 px-1 py-px font-mono text-[0.95em]">/</code> or{" "}
-              <code className="rounded border border-trellis-border/50 px-1 py-px font-mono text-[0.95em]">@</code> to link
-              notes · pin
-              for priority · clip, files, and images add more context. Enter sends · Shift+Enter newline.
-            </div>
           </div>
           {onCancel && (
             <button

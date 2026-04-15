@@ -224,6 +224,68 @@ function normalizeWhitespace(body: string): string {
     .trim();
 }
 
+/** First paragraph only: strip common assistant chat preambles from captured notes. */
+function stripLeadingAssistantHedge(paragraph: string): string {
+  let t = paragraph.trim();
+
+  t = t.replace(/^(?:Absolutely|Sure|Of course|Certainly)\s*[—–\-:]\s*/i, "");
+  t = t.replace(
+    /^(?:Great question|Good question|Happy to help)\b[^.!?\n]{0,220}[.!?:—\-]\s*/i,
+    ""
+  );
+  t = t.replace(
+    /^Here(?:'|’)?s\s+(?:a|an|the)\s+(?:structured|detailed|complete|comprehensive|brief|quick|helpful|overview)\b[\s\S]{0,1200}?[.!?]\s*/i,
+    ""
+  );
+  t = t.replace(/^I(?:'|’)?d\s+be\s+happy\s+to[^.!?\n]*[.:—\-]\s*/i, "");
+  t = t.replace(/^Let me\s+(?:know|help)[^.!?\n]*[.:—\-]\s*/i, "");
+
+  return t.trim();
+}
+
+function stripAssistantFillersFromSummarySection(body: string): string {
+  const re = /(##\s+Summary\s*\n+)([\s\S]*?)(?=\n##[^#]|\n#\s[^#]|$)/;
+  return body.replace(re, (_match, heading, sectionContent) => {
+    const parts = sectionContent.split(/\n\n+/);
+
+    if (parts.length === 0 || !parts[0]) {
+      return `${heading}${sectionContent}`;
+    }
+
+    parts[0] = stripLeadingAssistantHedge(parts[0].trim());
+    return `${heading}${parts.join("\n\n")}`;
+  });
+}
+
+function stripOpeningAssistantHedgesFromBody(body: string): string {
+  const paragraphs = body.split(/\n\n+/);
+
+  if (paragraphs.length === 0) {
+    return body;
+  }
+
+  paragraphs[0] = stripLeadingAssistantHedge(paragraphs[0] ?? "");
+  return paragraphs.join("\n\n");
+}
+
+/**
+ * Within one extraction response, skip writing a second file whose body is identical
+ * to an already-applied prepared write (different slugs/titles, same distilled content).
+ */
+export function skipIfDuplicatePreparedExtractionContent(
+  seenNormalizedBodies: Set<string>,
+  content: string
+): boolean {
+  const key = normalizeWhitespace(content).replace(/\s+/g, " ").trim().toLowerCase();
+
+  if (seenNormalizedBodies.has(key)) {
+    return true;
+  }
+
+  seenNormalizedBodies.add(key);
+  return false;
+}
+
 function appendBeforeConnectedNotes(existingContent: string, nextBody: string): string {
   const existing = existingContent.trim();
   const next = nextBody.trim();
@@ -325,6 +387,9 @@ function prepareNoteBody(
   body = stripTranscriptLikeLines(body);
   body = normalizeBulletLines(body);
   body = stripRedundantTitleHeading(body, update.targetTitle);
+  body = normalizeWhitespace(body);
+  body = stripAssistantFillersFromSummarySection(body);
+  body = stripOpeningAssistantHedgesFromBody(body);
   body = normalizeWhitespace(body);
 
   if (body.length === 0) {

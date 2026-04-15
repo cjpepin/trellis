@@ -19,6 +19,7 @@ import {
   type MessageRecord,
   type NoteSummary
 } from "@electron/ipc/types";
+import { markdownWithTranscriptFindMark, type TranscriptFindMatch } from "@/lib/chatTranscriptFind";
 import { cn } from "@/lib/utils";
 import type { MessageMeta } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
@@ -53,6 +54,8 @@ interface Props {
     afterMarkdown: string
   ) => void;
   busyNoteActionId?: string | null;
+  /** When set, wraps this range in the rendered markdown for transcript find. */
+  transcriptFindHighlight?: TranscriptFindMatch | null;
 }
 
 function GeneratedImageSkeleton() {
@@ -91,7 +94,8 @@ export function MessageBubble({
   onApproveNoteAction,
   onRejectNoteAction,
   onNoteActionDraftChange,
-  busyNoteActionId = null
+  busyNoteActionId = null,
+  transcriptFindHighlight = null
 }: Props) {
   const isUser = message.role === "user";
   const isFailed = meta?.status === "failed";
@@ -198,9 +202,17 @@ export function MessageBubble({
   const collapsibleGeneratedImageCaption =
     !isUser && hasCompletedGeneratedImage && hasRenderableText;
 
+  const markdownForDisplay = markdownWithTranscriptFindMark(
+    message.content,
+    transcriptFindHighlight
+  );
+
   return (
     <div className={cn("flex w-full animate-fade-rise", isUser ? "justify-end" : "justify-start")}>
-      <article className={cn("flex w-full flex-col gap-3", isUser ? "items-end" : "items-start")}>
+      <article
+        data-chat-message-id={message.id}
+        className={cn("flex w-full flex-col gap-3", isUser ? "items-end" : "items-start")}
+      >
         <div
           className={cn(
             `flex w-full ${contentWidthClassName} items-center gap-3 text-[10px] uppercase tracking-[0.22em]`,
@@ -489,7 +501,7 @@ export function MessageBubble({
               {generatedImageCaptionOpen ? (
                 <div className="mt-2">
                   <RichTextRenderer
-                    markdown={message.content}
+                    markdown={markdownForDisplay}
                     existingSlugs={existingSlugs}
                     className={cn("trellis-chat-copy", "text-left")}
                     onOpenNote={onOpenNote}
@@ -499,7 +511,7 @@ export function MessageBubble({
             </div>
           ) : hasRenderableText ? (
             <RichTextRenderer
-              markdown={message.content}
+              markdown={markdownForDisplay}
               existingSlugs={existingSlugs}
               className={cn("trellis-chat-copy", isUser ? "text-right" : "text-left")}
               onOpenNote={onOpenNote}

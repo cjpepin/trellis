@@ -1,5 +1,8 @@
 import { useCallback } from "react";
-import { prepareExtractionWrite } from "@electron/lib/extraction/guardrails";
+import {
+  prepareExtractionWrite,
+  skipIfDuplicatePreparedExtractionContent
+} from "@electron/lib/extraction/guardrails";
 import { buildExtractionIndex } from "@/lib/extractionIndex";
 import { useChatStore } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
@@ -34,14 +37,18 @@ export function useApplyExtraction() {
       const appliedNotes: Array<{ slug: string; title: string }> = [];
       const extractionIndex = buildExtractionIndex(graph);
       let appliedUpdateCount = 0;
+      const seenPreparedBodies = new Set<string>();
 
       for (const update of appliedUpdates) {
         let existingNote: Awaited<ReturnType<typeof window.trellis.vault.readNote>> | null = null;
+        const indexEntry = extractionIndex.find((entry) => entry.slug === update.targetSlug);
 
-        try {
-          existingNote = await window.trellis.vault.readNote(update.targetSlug, options.vaultId);
-        } catch {
-          existingNote = null;
+        if (indexEntry && !indexEntry.isPlaceholder) {
+          try {
+            existingNote = await window.trellis.vault.readNote(update.targetSlug, options.vaultId);
+          } catch {
+            existingNote = null;
+          }
         }
 
         const preparedWrite = prepareExtractionWrite({
@@ -51,6 +58,10 @@ export function useApplyExtraction() {
         });
 
         if (!preparedWrite) {
+          continue;
+        }
+
+        if (skipIfDuplicatePreparedExtractionContent(seenPreparedBodies, preparedWrite.content)) {
           continue;
         }
 

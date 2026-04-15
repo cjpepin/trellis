@@ -741,6 +741,13 @@
     @apply text-lg;
   }
 
+  .trellis-chat-copy .trellis-transcript-find-mark {
+    border-radius: 0.2em;
+    background: color-mix(in srgb, var(--trellis-accent) 38%, transparent);
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+
   /* Keep list markers readable when the bubble uses right alignment */
   .trellis-chat-copy.text-right .trellis-rich-text :is(ul, ol) {
     @apply ml-auto inline-block text-left;

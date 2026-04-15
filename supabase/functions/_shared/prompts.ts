@@ -167,17 +167,21 @@ TITLES:
 - Good: "Mobile App MVP for Habit Tracking", "React vs Vue Comparison"
 - Bad: "Want", "App Create", "Discussion"
 - Never use the user's raw chat prompt as the note title (e.g. questions like "Can you make a…"). Name the topic instead (e.g. "Volleyball rotations (seven players)").
+- When updating an existing note, copy its exact targetSlug and targetTitle from the notes index. Do not make sibling titles like "X Update", "Updated X", or "X Copy".
 
 CONTENT:
 - For "create" and "rewrite", write the note as if you are documenting the idea for your future self.
+- Notes are living documents: when updating an existing note, merge new facts into the right sections and refresh outdated bullets instead of stacking redundant "## Summary" blocks or repeating the same overview.
 - For "append", write only the new markdown section(s) that should be added to the note. Do not repeat the note title as a top-level "# Heading" when appending.
 - For "rewrite", produce the whole cleaned-up note body. Preserve valuable existing details from the provided note excerpt, fold in the new conversation, remove duplication, and keep the note readable instead of tacking new content onto the end.
 - Synthesize — do NOT paste the transcript. Distill the key insight, decision, plan, or concept.
-- The note must be useful on its own: include the substantive facts, steps, lists, tables, or reasoning from the assistant's answer—enough detail to act on later (typically a few short paragraphs or structured sections). Rewrite for clarity; avoid copying the user's question verbatim and avoid giant unbroken paste of the assistant reply—prefer structured markdown.
+- The note must be useful on its own: include substantive facts, steps, lists, tables, schedules, constraints, and reasoning drawn from the **full** thread (user goals, limits, numbers, and milestones—not only the assistant's opening paragraph). Enough detail to act on later (typically a few short paragraphs or structured sections). Rewrite for clarity; avoid copying the user's question verbatim and avoid giant unbroken paste of the assistant reply—prefer structured markdown.
+- Never open a "## Summary" (or the note's first paragraph) with chat filler or assistant preamble: no "Absolutely", "Sure", "Here's", "I'd be happy to", "Great question", or similar. The summary states topic, scope, and outcome in plain declarative sentences. If you cannot write a substantive summary line, omit the Summary heading and start with the first real section (e.g. "## Plan" or "## Key details").
 - Never format note bodies as labeled chat turns (e.g. "User:" / "Assistant:") or as a copy of the conversation; write clean markdown a person would keep in a notebook.
-- Use markdown structure: a brief summary paragraph, then sections like "## Key Decisions", "## Open Questions", "## Next Steps" as appropriate.
+- Use markdown structure: an optional tight "## Summary" (only if non-filler), then sections like "## Key details", "## Plan", "## Key Decisions", "## Open Questions", "## Next Steps" as appropriate.
 - Include note links as [[Note Title]] to connect to related existing notes from the index.
 - Every title listed in "links" must also appear in the note body as an exact [[Note Title]] match.
+- In a single response, do not emit two creates/rewrites whose bodies would be the same note with different titles; merge into one update or split into clearly different substance.
 
 LINKING:
 - Link to existing notes when the concept is genuinely related — shared domain, builds on, contradicts, or extends.
@@ -275,4 +279,3 @@ Rules:
 - No preamble. Start with headings or content as appropriate.
 - Obey the user's structure and formatting request (tables, bold, lists, spans for color/size).
 - Use [[Note Title]] only when the user explicitly asked for links to notes they named; do not invent links.`;
-

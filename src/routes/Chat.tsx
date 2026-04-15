@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardCopy } from "lucide-react";
+import { ClipboardCopy, LoaderCircle, MessageSquarePlus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   type AppFeatureFlags,
@@ -10,6 +10,7 @@ import {
   type ChatMediaArtifact,
   type ChatModel,
   type ChatNoteActionProposal,
+  type ExtractionJobNotification,
   type IngestedDraft,
   type MessageRecord,
   type QueueSessionExtractionResult
@@ -20,6 +21,7 @@ import { buildChatReplyContext } from "@shared/chat/replyContext";
 import { normalizeReadAloudSpeedTier } from "@shared/media/readAloudSpeed";
 import { ChatContextGraphPanel } from "@/components/chat/ChatContextGraphPanel";
 import { ChatVaultSelect } from "@/components/chat/ChatVaultSelect";
+import { ChatTranscriptFindBar } from "@/components/chat/ChatTranscriptFindBar";
 import { InputBar } from "@/components/chat/InputBar";
 import { MessageList } from "@/components/chat/MessageList";
 import { useApplyExtraction } from "@/hooks/useApplyExtraction";
@@ -38,6 +40,7 @@ import {
   type PendingChatAttachment,
   type PendingImageAttachment
 } from "@/lib/chatAttachments";
+import { buildTranscriptFindMatches } from "@/lib/chatTranscriptFind";
 import { buildExtractionIndex } from "@/lib/extractionIndex";
 import { relatedNotesRetrievalDefaultLimit } from "@shared/extraction/config";
 import { useChatScrollFollow } from "@/hooks/useChatScrollFollow";
@@ -84,6 +87,24 @@ function isReadAloudUserCancelError(error: unknown): boolean {
   return false;
 }
 
+function formatExtractionJobStatus(job: ExtractionJobNotification): string {
+  return job.status === "pending" ? "Queued" : "Adding";
+}
+
+function formatExtractionJobTrigger(job: ExtractionJobNotification): string {
+  switch (job.trigger) {
+    case "manual":
+      return "Manual save";
+    case "session-switch":
+      return "Session switch";
+    case "startup":
+      return "Resumed";
+    case "idle":
+    default:
+      return "Background sync";
+  }
+}
+
 interface Props {
   settings: AppSettings;
   features: AppFeatureFlags;
@@ -115,6 +136,13 @@ export function Chat({
   const readAloudPlaybackRef = useRef<PcmStreamPlayback | null>(null);
   const readAloudStreamGenRef = useRef(0);
   const [busyNoteActionId, setBusyNoteActionId] = useState<string | null>(null);
+  const [extractionJobsBySession, setExtractionJobsBySession] = useState<
+    Record<string, ExtractionJobNotification>
+  >({});
+  const [extractionQueueOpen, setExtractionQueueOpen] = useState(false);
+  const [transcriptFindOpen, setTranscriptFindOpen] = useState(false);
+  const [transcriptFindQuery, setTranscriptFindQuery] = useState("");
+  const [transcriptFindMatchIdx, setTranscriptFindMatchIdx] = useState(0);
   const accessToken = useAuthStore((state) => state.accessToken);
   const authStatus = useAuthStore((state) => state.status);
   const subscriptionTier = useAuthStore((state) => state.subscriptionTier);
@@ -174,6 +202,23 @@ export function Chat({
   );
   const activeSessionChatRun = activeSessionId ? chatRunsBySession[activeSessionId] ?? null : null;
   const activeSessionRunning = Boolean(activeSessionChatRun);
+  const activeExtractionJobs = useMemo(
+    () =>
+      Object.values(extractionJobsBySession)
+        .filter((job) => job.status === "pending" || job.status === "running")
+        .sort((left, right) => left.createdAt - right.createdAt),
+    [extractionJobsBySession]
+  );
+  const extractionSessionTitleById = useMemo(
+    () => new Map(sessions.map((session) => [session.id, session.title] as const)),
+    [sessions]
+  );
+  const extractionQueueTooltip =
+    activeExtractionJobs.length > 1
+      ? `${activeExtractionJobs.length} Strand jobs active`
+      : activeExtractionJobs[0]?.status === "pending"
+        ? "Queued for Strands"
+        : "Adding to Strands";
   const awaitingFirstToken = Boolean(activeSessionChatRun?.awaitingFirstToken);
   const runningChatCount = Object.keys(chatRunsBySession).length;
   const parallelChatLimitReached = runningChatCount >= maxParallelChatRuns;
@@ -200,6 +245,101 @@ export function Chat({
     setPinnedWikiNotes([]);
     setContextGraphCollapsed(true);
   }, [activeSessionId]);
+
+  useEffect(() => {
+    if (activeExtractionJobs.length === 0) {
+      setExtractionQueueOpen(false);
+    }
+  }, [activeExtractionJobs.length]);
+
+  useEffect(() => {
+    setTranscriptFindOpen(false);
+    setTranscriptFindQuery("");
+    setTranscriptFindMatchIdx(0);
+  }, [activeSessionId]);
+
+  const transcriptFindMatches = useMemo(
+    () => buildTranscriptFindMatches(currentMessages, transcriptFindQuery),
+    [currentMessages, transcriptFindQuery]
+  );
+
+  const transcriptFindSafeIdx =
+    transcriptFindMatches.length === 0
+      ? 0
+      : Math.min(transcriptFindMatchIdx, transcriptFindMatches.length - 1);
+
+  const transcriptFindActive =
+    transcriptFindMatches.length > 0 ? transcriptFindMatches[transcriptFindSafeIdx] : null;
+
+  useEffect(() => {
+    if (transcriptFindMatches.length === 0) {
+      return;
+    }
+    if (transcriptFindMatchIdx > transcriptFindMatches.length - 1) {
+      setTranscriptFindMatchIdx(transcriptFindMatches.length - 1);
+    }
+  }, [transcriptFindMatchIdx, transcriptFindMatches.length]);
+
+  useEffect(() => {
+    if (!transcriptFindOpen || !transcriptFindActive) {
+      return;
+    }
+
+    const el = document.querySelector(
+      `[data-chat-message-id="${CSS.escape(transcriptFindActive.messageId)}"]`
+    );
+
+    if (!(el instanceof HTMLElement)) {
+      return;
+    }
+
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+  }, [
+    transcriptFindOpen,
+    transcriptFindActive?.messageId,
+    transcriptFindActive?.start,
+    transcriptFindActive?.end
+  ]);
+
+  useEffect(() => {
+    function onGlobalKeyDown(e: KeyboardEvent) {
+      const mod = e.metaKey || e.ctrlKey;
+
+      if (mod && e.key === "f") {
+        e.preventDefault();
+        setTranscriptFindOpen(true);
+        return;
+      }
+
+      if (e.key === "Escape" && transcriptFindOpen) {
+        e.preventDefault();
+        setTranscriptFindOpen(false);
+        return;
+      }
+
+      if (transcriptFindOpen && mod && e.key === "g") {
+        e.preventDefault();
+        if (transcriptFindMatches.length === 0) {
+          return;
+        }
+        setTranscriptFindMatchIdx((current) => {
+          if (transcriptFindMatches.length === 0) {
+            return 0;
+          }
+          if (e.shiftKey) {
+            return (current - 1 + transcriptFindMatches.length) % transcriptFindMatches.length;
+          }
+          return (current + 1) % transcriptFindMatches.length;
+        });
+      }
+    }
+
+    window.addEventListener("keydown", onGlobalKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onGlobalKeyDown);
+    };
+  }, [transcriptFindOpen, transcriptFindMatches]);
 
   const chatContextNoteSlugs = useMemo(
     () =>
@@ -294,6 +434,22 @@ export function Chat({
     [chatModelAccessOptions, composerRoutingSignals, providerKeys.statuses, subscriptionTier]
   );
 
+  useEffect(() => {
+    return window.trellis.extraction.onJobUpdate((notification) => {
+      setExtractionJobsBySession((current) => {
+        if (notification.status === "pending" || notification.status === "running") {
+          return {
+            ...current,
+            [notification.sessionId]: notification
+          };
+        }
+
+        const { [notification.sessionId]: _done, ...rest } = current;
+        return rest;
+      });
+    });
+  }, []);
+
   const queueExtraction = useCallback(
     async (
       sessionId: string,
@@ -301,13 +457,27 @@ export function Chat({
       options?: { force?: boolean }
     ): Promise<QueueSessionExtractionResult | null> => {
       try {
-        return await window.trellis.extraction.queueSession({
+        const result = await window.trellis.extraction.queueSession({
           sessionId,
           trigger,
           mode: resolveExtractionModeForSubscription(settings.extraction.mode, subscriptionTier),
           preferredLocalModelId: settings.extraction.preferredLocalModelId ?? undefined,
           force: options?.force ?? false
         });
+
+        const queuedJob = result.job;
+
+        if (
+          queuedJob &&
+          (queuedJob.status === "pending" || queuedJob.status === "running")
+        ) {
+          setExtractionJobsBySession((current) => ({
+            ...current,
+            [queuedJob.sessionId]: queuedJob
+          }));
+        }
+
+        return result;
       } catch (error) {
         pushToast({
           title:
@@ -1739,6 +1909,34 @@ export function Chat({
       )}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <div className="order-2 flex min-h-0 min-w-0 flex-1 flex-col lg:order-1">
+          <ChatTranscriptFindBar
+            open={transcriptFindOpen}
+            columnClassName={chatColumnClassName}
+            query={transcriptFindQuery}
+            onQueryChange={(value) => {
+              setTranscriptFindQuery(value);
+              setTranscriptFindMatchIdx(0);
+            }}
+            onClose={() => {
+              setTranscriptFindOpen(false);
+            }}
+            matchIndex={transcriptFindSafeIdx}
+            matchCount={transcriptFindMatches.length}
+            onNext={() => {
+              if (transcriptFindMatches.length === 0) {
+                return;
+              }
+              setTranscriptFindMatchIdx((i) => (i + 1) % transcriptFindMatches.length);
+            }}
+            onPrevious={() => {
+              if (transcriptFindMatches.length === 0) {
+                return;
+              }
+              setTranscriptFindMatchIdx(
+                (i) => (i - 1 + transcriptFindMatches.length) % transcriptFindMatches.length
+              );
+            }}
+          />
           <div
             ref={chatScrollContainerRef}
             className="min-h-0 flex-1 overflow-y-auto"
@@ -1825,6 +2023,7 @@ export function Chat({
           onRejectNoteAction={handleRejectNoteAction}
           onNoteActionDraftChange={handleNoteActionDraftChange}
           busyNoteActionId={busyNoteActionId}
+          transcriptFindActive={transcriptFindOpen ? transcriptFindActive : null}
         />
           </div>
           <div className="trellis-overlay-surface border-t border-trellis-border px-5 pb-4 pt-2 backdrop-blur">
@@ -1906,7 +2105,7 @@ export function Chat({
               onToggleWikiComposerPin={toggleWikiComposerPin}
             />
           </div>
-          <div className="flex w-full max-w-[200px] shrink-0 flex-col gap-2 self-end sm:w-auto">
+          <div className="flex w-full shrink-0 flex-col gap-2 self-end sm:w-auto">
             {!activeSessionId && (
               <ChatVaultSelect
                 vaults={settings.vaults}
@@ -1921,40 +2120,105 @@ export function Chat({
                 onAddVault={handleAddVault}
               />
             )}
-            {activeSessionId && currentMessages.length > 0 ? (
-              <button
-                type="button"
-                data-testid="chat-copy-clipboard"
-                title="Copy this conversation as plain text"
-                className="flex w-full shrink-0 items-center justify-center gap-2 rounded-full border border-trellis-border bg-trellis-surface px-3 py-2 text-center text-sm text-trellis-text transition hover:border-trellis-accent/35 hover:text-trellis-accent"
-                onClick={() => {
-                  void handleCopyChatToClipboard();
-                }}
+            <div className="relative flex shrink-0 items-center justify-end gap-1.5 self-end">
+              {activeExtractionJobs.length > 0 ? (
+                <div className="relative inline-flex">
+                  <button
+                    type="button"
+                    title={extractionQueueTooltip}
+                    aria-label={extractionQueueTooltip}
+                    aria-expanded={extractionQueueOpen}
+                    data-testid="chat-extraction-sync-indicator"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-trellis-border bg-trellis-surface text-trellis-accent outline-none ring-trellis-accent/40 transition hover:border-trellis-accent/35 hover:text-trellis-text focus-visible:ring-2"
+                    onClick={() => {
+                      setExtractionQueueOpen((open) => !open);
+                    }}
+                  >
+                    <LoaderCircle className="h-4 w-4 motion-safe:animate-spin" aria-hidden />
+                  </button>
+                  {extractionQueueOpen ? (
+                    <div
+                      className="trellis-elevated absolute bottom-full right-0 z-50 mb-2 w-[min(100vw-2rem,320px)] rounded-field border border-trellis-border bg-trellis-surface p-2 text-left shadow-lg"
+                      role="dialog"
+                      aria-label="Strand sync queue"
+                    >
+                      <p className="px-2 pb-1 text-[10px] uppercase tracking-[0.18em] text-trellis-faint">
+                        Strands queue
+                      </p>
+                      <div className="max-h-48 overflow-y-auto">
+                        {activeExtractionJobs.map((job) => {
+                          const title = extractionSessionTitleById.get(job.sessionId) ?? "Untitled chat";
+                          const turnCount = Math.max(
+                            0,
+                            job.transcriptEndIndex - job.transcriptStartIndex
+                          );
+
+                          return (
+                            <div
+                              key={job.id}
+                              className="rounded-field px-2 py-2 text-xs text-trellis-text"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="min-w-0 truncate font-medium">{title}</span>
+                                <span className="shrink-0 text-trellis-accent">
+                                  {formatExtractionJobStatus(job)}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-[11px] text-trellis-muted">
+                                {formatExtractionJobTrigger(job)}
+                                {turnCount > 0 ? ` · ${turnCount} turns` : ""}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {activeSessionId && currentMessages.length > 0 ? (
+                <button
+                  type="button"
+                  data-testid="chat-copy-clipboard"
+                  title="Copy this conversation as plain text"
+                  aria-label="Copy this conversation as plain text"
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-trellis-border bg-trellis-surface text-trellis-text transition hover:border-trellis-accent/35 hover:text-trellis-accent"
+                  onClick={() => {
+                    void handleCopyChatToClipboard();
+                  }}
+                >
+                  <ClipboardCopy className="h-4 w-4" aria-hidden />
+                </button>
+              ) : null}
+              <span
+                title={newChatDisabled ? parallelChatLimitMessage : undefined}
+                className={cn("inline-flex", newChatDisabled && "cursor-not-allowed")}
               >
-                <ClipboardCopy className="h-4 w-4 shrink-0" aria-hidden />
-                Copy chat
-              </button>
-            ) : null}
-            <button
-              type="button"
-              disabled={newChatDisabled}
-              title={newChatDisabled ? parallelChatLimitMessage : "Start a new chat"}
-              data-testid="chat-new-chat"
-              className={cn(
-                "w-full shrink-0 rounded-full border border-trellis-border bg-trellis-surface px-3 py-2 text-center text-sm transition",
-                newChatDisabled
-                  ? "cursor-not-allowed text-trellis-faint"
-                  : "text-trellis-text hover:border-trellis-accent/35 hover:text-trellis-accent"
-              )}
-              onClick={() => {
-                if (newChatDisabled) {
-                  return;
-                }
-                handleStartNewChat();
-              }}
-            >
-              New chat
-            </button>
+                <button
+                  type="button"
+                  disabled={newChatDisabled}
+                  title={newChatDisabled ? parallelChatLimitMessage : "Start a new chat"}
+                  aria-label={
+                    newChatDisabled ? parallelChatLimitMessage : "Start a new chat"
+                  }
+                  data-testid="chat-new-chat"
+                  className={cn(
+                    "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-trellis-border bg-trellis-surface transition",
+                    newChatDisabled
+                      ? "text-trellis-faint"
+                      : "text-trellis-text hover:border-trellis-accent/35 hover:text-trellis-accent"
+                  )}
+                  onClick={() => {
+                    if (newChatDisabled) {
+                      return;
+                    }
+                    handleStartNewChat();
+                  }}
+                >
+                  <MessageSquarePlus className="h-4 w-4" aria-hidden />
+                </button>
+              </span>
+            </div>
           </div>
         </div>
         {sessions.length > 0 && currentMessages.length > 0 && (

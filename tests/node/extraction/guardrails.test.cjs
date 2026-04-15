@@ -2,9 +2,10 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
-const { prepareExtractionWrite } = require(
-  fromRepoRoot("electron", "lib", "extraction", "guardrails.ts")
-);
+const {
+  prepareExtractionWrite,
+  skipIfDuplicatePreparedExtractionContent
+} = require(fromRepoRoot("electron", "lib", "extraction", "guardrails.ts"));
 
 function createUpdate(overrides = {}) {
   return {
@@ -133,4 +134,41 @@ test("prepareExtractionWrite rejects weak bodies after cleanup", () => {
   });
 
   assert.equal(prepared, null);
+});
+
+test("prepareExtractionWrite strips assistant preamble from Summary and opening", () => {
+  const prepared = prepareExtractionWrite({
+    update: createUpdate({
+      operation: "create",
+      targetSlug: "marathon-plan",
+      targetTitle: "Marathon Training Plan",
+      body: [
+        "## Summary",
+        "",
+        "Absolutely — here's a structured marathon training program built for someone with a decent fitness base.",
+        "",
+        "## Weekly structure",
+        "",
+        "- Base phase: easy miles before intensity."
+      ].join("\n")
+    }),
+    existingNote: null,
+    index: []
+  });
+
+  assert.ok(prepared);
+  assert.ok(!prepared.content.toLowerCase().includes("absolutely"));
+  assert.ok(!prepared.content.toLowerCase().includes("here's a structured"));
+  assert.match(prepared.content, /Weekly structure/);
+  assert.match(prepared.content, /Base phase/);
+});
+
+test("skipIfDuplicatePreparedExtractionContent detects duplicate normalized bodies", () => {
+  const seen = new Set();
+  const body =
+    "## Plan\n\n- Run three times per week.\n\n## Connected Notes\n\n- [[Habit Loop]]";
+
+  assert.equal(skipIfDuplicatePreparedExtractionContent(seen, body), false);
+  assert.equal(skipIfDuplicatePreparedExtractionContent(seen, body), true);
+  assert.equal(skipIfDuplicatePreparedExtractionContent(seen, `\n\n${body}\n`), true);
 });

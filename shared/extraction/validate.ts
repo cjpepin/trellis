@@ -14,7 +14,11 @@ import {
   type ExtractionValidationOptions,
   type ExtractionValidationResult
 } from "./contracts.ts";
-import { extractWikiLinkTitles, normalizeTitleKey, slugifyExtractionTitle } from "./wikiLinks.ts";
+import {
+  extractWikiLinkTitles,
+  normalizeTitleKey,
+  slugifyExtractionTitle
+} from "./wikiLinks.ts";
 import { normalizeWikiFolderPath } from "../vault/folderPath.ts";
 
 const noteTypeSet = new Set<string>(extractionNoteTypeValues);
@@ -25,6 +29,7 @@ const connectedNotesHeading = "## Connected Notes";
 interface IndexLookups {
   bySlug: Map<string, ExtractionIndexEntry>;
   titleByKey: Map<string, string>;
+  slugByTitleSlugKey: Map<string, string>;
   existingSlugs: Set<string>;
 }
 
@@ -39,11 +44,13 @@ function uniqueStrings(values: string[]): string[] {
 function buildIndexLookups(index: ExtractionIndexEntry[]): IndexLookups {
   const bySlug = new Map<string, ExtractionIndexEntry>();
   const titleByKey = new Map<string, string>();
+  const slugByTitleSlugKey = new Map<string, string>();
   const existingSlugs = new Set<string>();
 
   for (const note of index) {
     bySlug.set(note.slug, note);
     titleByKey.set(normalizeTitleKey(note.title), note.title);
+    slugByTitleSlugKey.set(slugifyExtractionTitle(note.title), note.slug);
 
     if (!note.isPlaceholder) {
       existingSlugs.add(note.slug);
@@ -53,8 +60,104 @@ function buildIndexLookups(index: ExtractionIndexEntry[]): IndexLookups {
   return {
     bySlug,
     titleByKey,
+    slugByTitleSlugKey,
     existingSlugs
   };
+}
+
+function updateQualifierStrippedSlugCandidates(value: string): string[] {
+  const base = slugifyExtractionTitle(value);
+  const candidates: string[] = [];
+  const suffixes = [
+    "update",
+    "updates",
+    "updated",
+    "revision",
+    "revisions",
+    "revised",
+    "copy",
+    "duplicate",
+    "duplicated"
+  ];
+  const prefixes = ["updated", "revised", "copy", "duplicate", "duplicated"];
+  const push = (candidate: string): void => {
+    const trimmed = candidate.replace(/^-+|-+$/g, "");
+
+    if (trimmed && trimmed !== base && !candidates.includes(trimmed)) {
+      candidates.push(trimmed);
+    }
+  };
+
+  for (const suffix of suffixes) {
+    if (base.endsWith(`-${suffix}`)) {
+      push(base.slice(0, -suffix.length - 1));
+    }
+  }
+
+  for (const prefix of prefixes) {
+    if (base.startsWith(`${prefix}-`)) {
+      push(base.slice(prefix.length + 1));
+    }
+  }
+
+  if (base.startsWith("copy-of-")) {
+    push(base.slice("copy-of-".length));
+  }
+
+  return candidates;
+}
+
+function resolveSlugCandidate(lookups: IndexLookups, candidate: string): string | null {
+  if (lookups.bySlug.has(candidate)) {
+    return candidate;
+  }
+
+  return lookups.slugByTitleSlugKey.get(candidate) ?? null;
+}
+
+/**
+ * When the model invents a sibling slug while the title matches an existing note, prefer the
+ * vault slug so we append/rewrite instead of creating a duplicate file.
+ */
+function resolveCanonicalTargetSlug(
+  lookups: IndexLookups,
+  initialSlug: string,
+  rawTitle: string | null
+): string {
+  if (lookups.bySlug.size === 0) {
+    return initialSlug;
+  }
+
+  const titleKey = rawTitle ? normalizeTitleKey(rawTitle) : "";
+
+  if (titleKey.length > 0) {
+    for (const note of lookups.bySlug.values()) {
+      if (normalizeTitleKey(note.title) === titleKey) {
+        return note.slug;
+      }
+    }
+  }
+
+  const slugFromTitle = rawTitle ? slugifyExtractionTitle(rawTitle) : "";
+
+  if (slugFromTitle && lookups.bySlug.has(slugFromTitle)) {
+    return slugFromTitle;
+  }
+
+  const strippedCandidates = [
+    ...(rawTitle ? updateQualifierStrippedSlugCandidates(rawTitle) : []),
+    ...updateQualifierStrippedSlugCandidates(initialSlug)
+  ];
+
+  for (const candidate of strippedCandidates) {
+    const resolved = resolveSlugCandidate(lookups, candidate);
+
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return initialSlug;
 }
 
 function summarizeMarkdown(value: string): string {
@@ -343,7 +446,7 @@ function normalizeUpdate(
     };
   }
 
-  const targetSlug = normalizeSlug(raw);
+  let targetSlug = normalizeSlug(raw);
 
   if (!targetSlug) {
     return {
@@ -357,8 +460,10 @@ function normalizeUpdate(
     };
   }
 
-  const matchedIndexNote = lookups.bySlug.get(targetSlug);
   const rawTitle = readNonEmptyString(raw.targetTitle) ?? readNonEmptyString(raw.title);
+  targetSlug = resolveCanonicalTargetSlug(lookups, targetSlug, rawTitle);
+
+  const matchedIndexNote = lookups.bySlug.get(targetSlug);
   const targetTitle = matchedIndexNote?.title ?? rawTitle ?? humanizeSlug(targetSlug);
   const rawBody = readNonEmptyString(raw.body) ?? readNonEmptyString(raw.content) ?? "";
   const normalizedLinks = normalizeLinks(raw.links ?? raw.linkedTo, lookups);
