@@ -21,7 +21,10 @@ import {
   type LlamaGrammar,
   type LlamaModel
 } from "node-llama-cpp";
-import { extractionPrompt } from "../supabase/functions/_shared/prompts";
+import {
+  extractionPrompt,
+  extractionRetryThoroughSuffix
+} from "../supabase/functions/_shared/prompts";
 
 interface ExtractRequestMessage {
   type: "extract";
@@ -110,15 +113,10 @@ async function runExtract(request: ExtractRequestMessage): Promise<OutgoingMessa
     autoDisposeSequence: true
   });
 
-  const retrySuffix = request.retryThorough
-    ? "\n\n## Second pass\n" +
-      "The previous extraction pass returned no durable note operations. Re-read the transcript above. " +
-      "If it contains any concrete takeaway, decision, definition, preference, plan, named entity, or technical detail someone might search for later, return one concise synthesis or concept note. " +
-      "Prefer updating or creating a real note over noop. Only return an empty updates array if the thread is purely social, empty, or content-free.\n"
-    : "";
-
   try {
-    const userMessage = buildExtractionUserMessage(request.input) + retrySuffix;
+    const userMessage =
+      buildExtractionUserMessage(request.input) +
+      (request.retryThorough ? extractionRetryThoroughSuffix : "");
     const content = (
       await session.prompt(userMessage, {
         grammar: grammar!,

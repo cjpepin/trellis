@@ -287,36 +287,32 @@ test("resolveExtractionExecutionStrategy skips cloud when no provider is runnabl
   assert.match(strategy.reason ?? "", /No API key/);
 });
 
-test("foldIncrementalCreatesOntoSessionAnchor folds incremental creates onto the single strand slug", () => {
+test("foldIncrementalCreatesOntoSessionAnchor keeps a new create when only one prior strand exists but titles differ", () => {
+  const response = {
+    updates: [
+      {
+        operation: "create",
+        targetSlug: "topic-b",
+        targetTitle: "Topic B",
+        targetType: "concept",
+        summary: "x",
+        body: "More on the same thread.",
+        tags: [],
+        links: [],
+        evidence: [{ kind: "transcript", ref: "t", summary: "x" }],
+        confidence: 0.8
+      }
+    ],
+    sessionTitle: "Chat"
+  };
   const noteTitleBySlug = new Map([["topic-a", "Topic A"]]);
-  const folded = foldIncrementalCreatesOntoSessionAnchor(
-    {
-      updates: [
-        {
-          operation: "create",
-          targetSlug: "topic-b",
-          targetTitle: "Topic B",
-          targetType: "concept",
-          summary: "x",
-          body: "More on the same thread.",
-          tags: [],
-          links: [],
-          evidence: [{ kind: "transcript", ref: "t", summary: "x" }],
-          confidence: 0.8
-        }
-      ],
-      sessionTitle: "Chat"
-    },
-    {
-      transcriptStartIndex: 4,
-      priorSessionSlugs: ["topic-a"],
-      noteTitleBySlug
-    }
-  );
+  const folded = foldIncrementalCreatesOntoSessionAnchor(response, {
+    transcriptStartIndex: 4,
+    priorSessionSlugs: ["topic-a"],
+    noteTitleBySlug
+  });
 
-  assert.equal(folded.updates[0].operation, "append");
-  assert.equal(folded.updates[0].targetSlug, "topic-a");
-  assert.equal(folded.updates[0].targetTitle, "Topic A");
+  assert.deepEqual(folded, response);
 });
 
 test("foldIncrementalCreatesOntoSessionAnchor is a no-op when multiple session notes exist and no title matches", () => {

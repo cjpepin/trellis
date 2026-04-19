@@ -4,7 +4,10 @@ import {
 } from "../../../../shared/extraction/config";
 import { buildExtractionUserMessage } from "../../../../shared/extraction/buildPrompt";
 import { parseExtractionResponseJson } from "../../../../shared/extraction/validate";
-import { extractionPrompt } from "../../../../supabase/functions/_shared/prompts";
+import {
+  extractionPrompt,
+  extractionRetryThoroughSuffix
+} from "../../../../supabase/functions/_shared/prompts";
 import type { ChatProvider, ExtractionProviderId } from "../../../ipc/types";
 import { fetchSafeHttpsPost } from "../../fetchSafe";
 import { ExtractionValidationError } from "../debug";
@@ -23,20 +26,13 @@ function mapHttpError(status: number): string {
   return `Cloud note processing failed (HTTP ${status}).`;
 }
 
-function retrySuffix(retryThorough: boolean | undefined): string {
-  return retryThorough
-    ? "\n\n## Second pass\n" +
-        "The previous extraction pass returned no durable note operations. Re-read the transcript above. " +
-        "If it contains any concrete takeaway, decision, definition, preference, plan, named entity, or technical detail someone might search for later, return one concise synthesis or concept note. " +
-        "Prefer updating or creating a real note over noop. Only return an empty updates array if the thread is purely social, empty, or content-free.\n"
-    : "";
-}
-
 async function extractOpenAi(
   apiKey: string,
   input: Parameters<ExtractionProvider["extract"]>[0]
 ): Promise<{ content: string }> {
-  const userMessage = buildExtractionUserMessage(input, { maxCorpusChars: 40_000 }) + retrySuffix(input.retryThorough);
+  const userMessage =
+    buildExtractionUserMessage(input, { maxCorpusChars: 40_000 }) +
+    (input.retryThorough ? extractionRetryThoroughSuffix : "");
   const body = JSON.stringify({
     model: cloudExtractionModels.openai,
     temperature: input.retryThorough ? 0.42 : 0.22,
@@ -81,7 +77,9 @@ async function extractAnthropic(
   apiKey: string,
   input: Parameters<ExtractionProvider["extract"]>[0]
 ): Promise<{ content: string }> {
-  const userMessage = buildExtractionUserMessage(input, { maxCorpusChars: 40_000 }) + retrySuffix(input.retryThorough);
+  const userMessage =
+    buildExtractionUserMessage(input, { maxCorpusChars: 40_000 }) +
+    (input.retryThorough ? extractionRetryThoroughSuffix : "");
   const body = JSON.stringify({
     model: cloudExtractionModels.anthropic,
     max_tokens: cloudExtractionMaxOutputTokens,

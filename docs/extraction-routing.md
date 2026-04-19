@@ -34,7 +34,7 @@ To see **where time goes**, use **Settings → Developer / Extraction debug runs
 - **Cloud path**: enable `TRELLIS_FEATURE_CLOUD_EXTRACTION`, set API keys, use a GPT or Claude chat model. Expect prep + one cloud round-trip; no second “retry thorough” pass when the winning provider is cloud.
 - **Local-only**: disable cloud flag or use a session model that maps to local-only; expect embedded timing and possible retry pass.
 - **Fallback**: cloud enabled but invalid key or airplane mode; expect cloud attempt failure then embedded (wall time can **add** both attempts).
-- **Retrieval**: large vault with `note_embeddings` populated — ensure `ollama serve` is up if you rely on semantic scores; otherwise retrieval degrades to lexical-only after a short timeout.
+- **Retrieval**: large vault with `note_embeddings` populated — ensure `ollama serve` is up if you rely on semantic scores; otherwise retrieval degrades to lexical-only after a short timeout. After embedding hits are chosen, the main process **merges lexical matches** (`electron/lib/extraction/relatedNotesLexical.ts`) between the retrieval query and note titles/slugs/tags so a secondary topic (e.g. a second schedule mentioned in the same chat) can still appear in “Relevant Existing Notes” for multi-note updates.
 
 ## Manual / idle chat capture fallbacks
 

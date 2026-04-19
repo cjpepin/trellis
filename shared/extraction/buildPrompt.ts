@@ -74,10 +74,21 @@ export function buildExtractionUserMessage(
             })
             .join("\n"),
           "",
-          "When the new transcript continues the same topic as one of these, prefer **rewrite** or **append** on that note. Use **create** only when the thread clearly moves to a separate, independently useful topic.",
+          "When the **new** transcript material continues the **same** subject as one of these strand notes, prefer **rewrite** or **append** on that note. When the user **switches** to a different subject (new theme, project, or domain—not a follow-up on the strand's topic), use **create** for a new note (or update an existing index page if it is clearly the right home). Do not fold an unrelated topic into a strand just because it appeared earlier in the chat.",
+          "",
+          "If the transcript also changes **other** indexed pages (not only these strand notes), include **additional** updates for those existing slugs — one update per affected page.",
           ""
         ].join("\n")
       : "";
+
+  const multiNoteHint =
+    sessionStrandBlock.length > 0
+      ? ""
+      : [
+          "## Multi-topic updates",
+          "When the user adjusts or records facts for more than one existing wiki page in this thread, return **one update per affected page** (merge, rewrite, or append). When the transcript introduces **additional** substantive topics that need new pages, you may emit more than one **create**—but avoid duplicate or overlapping new notes.",
+          ""
+        ].join("\n");
 
   return [
     "## Current Notes Index",
@@ -87,6 +98,7 @@ export function buildExtractionUserMessage(
     relatedNotesBlock,
     "",
     sessionStrandBlock,
+    multiNoteHint,
     input.sourceType ? `## Source (${input.sourceType})` : "## Conversation Transcript",
     input.sourceTitle ? `Title: ${input.sourceTitle}` : "",
     input.sourcePath ? `Path: ${input.sourcePath}` : "",

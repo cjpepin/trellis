@@ -65,6 +65,7 @@ import {
   buildManualSaveFallbackResponse,
   shouldAutoCaptureStrandFromTranscript
 } from "./manualSaveFallback";
+import { mergeRelatedNotesWithLexicalAugmentation } from "./relatedNotesLexical";
 
 function formatAttemptedProvidersSummary(attempts: ExtractionDebugProviderAttempt[] | undefined): string {
   if (!attempts || attempts.length === 0) {
@@ -563,12 +564,19 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       const bracketSlugs = findExplicitReferenceSlugs(sourceMessages, snapshot.notes);
       const explicitSlugs = [...new Set([...priorSessionSlugs, ...bracketSlugs])];
       const retrievalQuery = buildExtractionRetrievalQuery(transcript);
-      const relatedNotes = await searchRelevantNotes({
+      let relatedNotes = await searchRelevantNotes({
         vaultId: vault.id,
         query: retrievalQuery,
         explicitSlugs,
         limit: extractionJobRelatedNotesLimit
       });
+      relatedNotes = await mergeRelatedNotesWithLexicalAugmentation(
+        vault.path,
+        snapshot.notes,
+        retrievalQuery,
+        relatedNotes,
+        extractionJobRelatedNotesLimit
+      );
       logExtraction("processJob.retrieval", {
         jobId: job.id.slice(0, 8),
         relatedNoteCount: relatedNotes.length,
@@ -577,12 +585,10 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         queryChars: retrievalQuery.length
       });
 
-      const enrichedNotes = isCloud
-        ? await enrichTopRelatedNotes(vault.path, relatedNotes, {
-            topN: 3,
-            maxFullBodyChars: 6000
-          })
-        : relatedNotes;
+      const enrichedNotes = await enrichTopRelatedNotes(vault.path, relatedNotes, {
+        topN: 6,
+        maxFullBodyChars: 6000
+      });
       const noteUpdatedMap = new Map(snapshot.notes.map((n) => [n.slug, n.updated]));
       const notesForExtraction: ExtractionContextNote[] = enrichedNotes.map((note) => ({
         ...note,

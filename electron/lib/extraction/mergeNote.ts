@@ -2,6 +2,75 @@ import type { ExtractionSectionPatch } from "../../../shared/extraction/contract
 
 const connectedNotesHeading = "## Connected Notes";
 
+/** GitHub-style pipe table row (header or data). */
+function isGfmPipeTableRowLine(line: string): boolean {
+  const t = line.trim();
+  return t.length >= 2 && t.startsWith("|") && t.lastIndexOf("|") > 0;
+}
+
+/** Separator row like `| --- | --- |` */
+function isGfmPipeTableSeparatorLine(line: string): boolean {
+  const t = line.trim();
+  if (!t.startsWith("|")) {
+    return false;
+  }
+  return /^\|(?:\s*:?-+:?\s*\|)+\s*$/.test(t);
+}
+
+/**
+ * Returns [startLine, endLine) indexes into `lines` for each contiguous GFM pipe table
+ * (header + separator + optional data rows; stops at first non-row line).
+ */
+function findGfmPipeTableLineRanges(lines: string[]): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    if (
+      isGfmPipeTableRowLine(lines[i] ?? "") &&
+      i + 1 < lines.length &&
+      isGfmPipeTableSeparatorLine(lines[i + 1] ?? "")
+    ) {
+      let j = i + 2;
+      while (j < lines.length && isGfmPipeTableRowLine(lines[j] ?? "")) {
+        j += 1;
+      }
+      ranges.push([i, j]);
+      i = j;
+      continue;
+    }
+    i += 1;
+  }
+
+  return ranges;
+}
+
+/** True if markdown contains at least one GFM pipe table. */
+export function containsGfmPipeTable(body: string): boolean {
+  const lines = body.replace(/\r\n?/g, "\n").split("\n");
+  return findGfmPipeTableLineRanges(lines).length > 0;
+}
+
+/** Removes all GFM pipe table blocks (used when an append supersedes schedule-style tables). */
+export function stripGfmPipeTables(body: string): string {
+  const lines = body.replace(/\r\n?/g, "\n").split("\n");
+  const ranges = findGfmPipeTableLineRanges(lines);
+  if (ranges.length === 0) {
+    return body.trimEnd();
+  }
+
+  let out = [...lines];
+  for (const [start, end] of [...ranges].reverse()) {
+    out.splice(start, end - start);
+  }
+
+  return out
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+$/gm, "")
+    .trimEnd();
+}
+
 /** Lowercase, trim, strip # prefix and wiki links, collapse whitespace — for heading equality. */
 export function normalizeHeadingForMatch(heading: string | null | undefined): string {
   if (!heading) {

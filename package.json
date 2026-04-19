@@ -28,6 +28,7 @@
     "test:contracts": "node scripts/run-node-tests.mjs tests/node/extraction/contract.test.cjs",
     "test:debug": "node scripts/run-node-tests.mjs tests/node/extraction/debug.test.cjs",
     "test:guardrails": "node scripts/run-node-tests.mjs tests/node/extraction/guardrails.test.cjs",
+    "test:extraction-note-write": "node scripts/run-node-tests.mjs tests/node/extraction/note-write-regression.test.cjs",
     "test:jobs": "node scripts/run-node-tests.mjs tests/node/extraction/jobs.test.cjs",
     "test:preview-seed": "node scripts/run-node-tests.mjs tests/node/preview/seed.test.cjs",
     "test:providers": "node scripts/run-node-tests.mjs tests/node/extraction/provider.test.cjs",

@@ -4,12 +4,14 @@ const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
 const {
   applyMerge,
+  containsGfmPipeTable,
   mergeBulletLists,
   normalizeHeadingForMatch,
   parseNoteSections,
   reconcileNoteContent,
   renderNoteSections,
-  splitConnectedNotesFromBody
+  splitConnectedNotesFromBody,
+  stripGfmPipeTables
 } = require(fromRepoRoot("electron", "lib", "extraction", "mergeNote.ts"));
 
 test("parseNoteSections round-trips simple headings", () => {
@@ -81,4 +83,13 @@ test("reconcileNoteContent collapses duplicate kv bullets keeping last", () => {
   const out = reconcileNoteContent(["## S", "", "- k: 1", "- k: 2"].join("\n"));
   assert.ok(!out.includes("k: 1"));
   assert.match(out, /k: 2/);
+});
+
+test("containsGfmPipeTable and stripGfmPipeTables detect/remove pipe tables", () => {
+  const md = ["## T", "", "| Week | Run |", "| --- | --- |", "| 1 | easy |"].join("\n");
+  assert.equal(containsGfmPipeTable(md), true);
+  assert.equal(containsGfmPipeTable("## T\n\nJust text."), false);
+  const stripped = stripGfmPipeTables(md);
+  assert.ok(!stripped.includes("| Week |"));
+  assert.match(stripped, /## T/);
 });

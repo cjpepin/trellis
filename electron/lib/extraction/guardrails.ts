@@ -5,9 +5,11 @@ import type {
 import {
   applyKeyValueBulletSupersession,
   applyMerge,
+  containsGfmPipeTable,
   inferAppendSectionPatches,
   reconcileNoteContent,
-  splitConnectedNotesFromBody
+  splitConnectedNotesFromBody,
+  stripGfmPipeTables
 } from "./mergeNote";
 import { extractionThresholds } from "../../../shared/extraction/config";
 import {
@@ -102,12 +104,17 @@ function stripRedundantTitleHeading(body: string, title: string): string {
   return lines.join("\n").trim();
 }
 
-function normalizeBodyLinks(body: string, index: ExtractionIndexEntry[]): {
+function normalizeBodyLinks(
+  body: string,
+  index: ExtractionIndexEntry[],
+  noteTitle?: string | null
+): {
   body: string;
   links: string[];
 } {
   const lookups = buildIndexLookups(index);
   const resolvedLinks: string[] = [];
+  const selfKey = noteTitle ? normalizeTitleKey(noteTitle) : "";
 
   const normalizedBody = body.replace(/\[\[([^[\]]+)\]\]/g, (_match, rawTitle: string) => {
     const trimmedTitle = rawTitle.trim();
@@ -115,6 +122,10 @@ function normalizeBodyLinks(body: string, index: ExtractionIndexEntry[]): {
 
     if (!matchedTitle) {
       return trimmedTitle;
+    }
+
+    if (selfKey.length > 0 && normalizeTitleKey(matchedTitle) === selfKey) {
+      return matchedTitle;
     }
 
     resolvedLinks.push(matchedTitle);
@@ -135,6 +146,16 @@ function normalizeLinkTitles(links: string[], index: ExtractionIndexEntry[]): st
       .map((link) => lookups.titleByKey.get(normalizeTitleKey(link)) ?? null)
       .filter((link): link is string => Boolean(link))
   );
+}
+
+function excludeSelfNoteLinks(links: string[], noteTitle: string): string[] {
+  const selfKey = normalizeTitleKey(noteTitle);
+
+  if (selfKey.length === 0) {
+    return links;
+  }
+
+  return links.filter((title) => normalizeTitleKey(title) !== selfKey);
 }
 
 function dedupeParagraphsAgainstExisting(existingContent: string, nextBody: string): string {
@@ -198,29 +219,6 @@ function demoteDuplicateHeadings(
       return `**${headingTitle}**`;
     })
     .join("\n");
-}
-
-function ensureConnectedNotesSection(body: string, links: string[]): string {
-  if (links.length === 0) {
-    return body.trim();
-  }
-
-  const presentLinks = new Set(
-    extractWikiLinkTitles(body).map((title) => normalizeTitleKey(title))
-  );
-  const missingLinks = links.filter((title) => !presentLinks.has(normalizeTitleKey(title)));
-
-  if (missingLinks.length === 0) {
-    return body.trim();
-  }
-
-  const sectionLines = missingLinks.map((title) => `- [[${title}]]`).join("\n");
-
-  if (body.includes(connectedNotesHeading)) {
-    return `${body.trim()}\n${sectionLines}`.trim();
-  }
-
-  return [body.trim(), connectedNotesHeading, "", sectionLines].filter(Boolean).join("\n\n");
 }
 
 function normalizeWhitespace(body: string): string {
@@ -503,10 +501,10 @@ function prepareNoteBody(
     return null;
   }
 
-  const normalizedBodyLinks = normalizeBodyLinks(body, index);
-  const resolvedLinks = normalizeLinkTitles(
-    [...update.links, ...normalizedBodyLinks.links],
-    index
+  const normalizedBodyLinks = normalizeBodyLinks(body, index, update.targetTitle);
+  const resolvedLinks = excludeSelfNoteLinks(
+    normalizeLinkTitles([...update.links, ...normalizedBodyLinks.links], index),
+    update.targetTitle
   );
   body = normalizedBodyLinks.body;
 
@@ -517,7 +515,6 @@ function prepareNoteBody(
     body = demoteDuplicateHeadings(body, "", update.targetTitle);
   }
 
-  body = ensureConnectedNotesSection(body, resolvedLinks);
   body = normalizeWhitespace(body);
 
   if (!hasEnoughDurableContent(body)) {
@@ -533,7 +530,6 @@ function prepareNoteBody(
 function buildAppendMergedContent(
   existingContent: string,
   preparedFragment: string,
-  resolvedLinks: string[],
   noteTitle: string,
   index: ExtractionIndexEntry[]
 ): string {
@@ -541,8 +537,20 @@ function buildAppendMergedContent(
     splitConnectedNotesFromBody(existingContent);
   const { main: fragMain } = splitConnectedNotesFromBody(preparedFragment);
 
-  const kvMain = applyKeyValueBulletSupersession(existingMain, fragMain);
-  const { patches, residual } = inferAppendSectionPatches(kvMain, fragMain);
+  let kvMain = applyKeyValueBulletSupersession(existingMain, fragMain);
+  let { patches, residual } = inferAppendSectionPatches(kvMain, fragMain);
+
+  /** When headings differ but both sides have a schedule-style pipe table, strip old tables and re-infer. */
+  let attemptedPipeTableSupersede = false;
+  if (
+    containsGfmPipeTable(kvMain) &&
+    containsGfmPipeTable(fragMain) &&
+    patches.length === 0
+  ) {
+    attemptedPipeTableSupersede = true;
+    kvMain = stripGfmPipeTables(kvMain);
+    ({ patches, residual } = inferAppendSectionPatches(kvMain, fragMain));
+  }
 
   const sanitizedPatches = patches.map((patch) => ({
     ...patch,
@@ -551,7 +559,17 @@ function buildAppendMergedContent(
 
   let merged: string;
 
-  if (sanitizedPatches.length > 0 || residual.trim().length > 0) {
+  const usePipeTableFragmentFallback =
+    attemptedPipeTableSupersede &&
+    sanitizedPatches.length === 0 &&
+    residual.trim().length > 0 &&
+    containsGfmPipeTable(residual);
+
+  if (usePipeTableFragmentFallback) {
+    const syntheticExisting =
+      kvMain + (existingConn.length > 0 ? `\n\n${existingConn}` : "");
+    merged = appendBeforeConnectedNotes(syntheticExisting, fragMain);
+  } else if (sanitizedPatches.length > 0 || residual.trim().length > 0) {
     const existingForMerge =
       kvMain + (existingConn.length > 0 ? `\n\n${existingConn}` : "");
     merged = applyMerge(existingForMerge, sanitizedPatches, residual.trim() || undefined).content;
@@ -561,9 +579,8 @@ function buildAppendMergedContent(
     merged = appendBeforeConnectedNotes(existingContent, demoted);
   }
 
-  const normalizedBodyLinks = normalizeBodyLinks(merged, index);
+  const normalizedBodyLinks = normalizeBodyLinks(merged, index, noteTitle);
   merged = normalizedBodyLinks.body;
-  merged = ensureConnectedNotesSection(merged, resolvedLinks);
   merged = reconcileNoteContent(normalizeWhitespace(merged));
   return merged;
 }
@@ -582,13 +599,12 @@ function buildMergeWriteContent(
     update.residualBody !== undefined ? sanitizeMarkdownFragment(update.residualBody, update) : undefined;
 
   const { content: merged } = applyMerge(existingContent, sanitizedPatches, residual);
-  const normalizedBodyLinks = normalizeBodyLinks(merged, index);
+  const normalizedBodyLinks = normalizeBodyLinks(merged, index, update.targetTitle);
   let body = normalizedBodyLinks.body;
-  const resolvedLinks = normalizeLinkTitles(
-    [...update.links, ...normalizedBodyLinks.links],
-    index
+  const resolvedLinks = excludeSelfNoteLinks(
+    normalizeLinkTitles([...update.links, ...normalizedBodyLinks.links], index),
+    update.targetTitle
   );
-  body = ensureConnectedNotesSection(body, resolvedLinks);
   body = reconcileNoteContent(normalizeWhitespace(body));
 
   if (!hasEnoughDurableContent(body)) {
@@ -636,7 +652,6 @@ export function prepareExtractionWrite(
     nextContent = buildAppendMergedContent(
       input.existingNote.content,
       preparedBody.nextBody,
-      preparedBody.links,
       input.existingNote.title,
       input.index
     );

@@ -2,12 +2,12 @@ import type { ExtractionResponse, ExtractionUpdate } from "./contracts";
 import { normalizeTitleKey } from "./wikiLinks";
 
 /**
- * Enforces at most one new strand `create` per chat session:
+ * Dedupes redundant `create` ops and keeps strand writes consistent with session history:
  * - With no prior session notes: the first `create` in this response is the anchor; later
- *   `create` ops in the same response become `append` to that anchor.
- * - With exactly one prior strand note: extra `create` ops targeting other slugs fold onto it.
- * - With multiple prior session notes: `create` ops whose title matches an existing strand
- *   title fold onto that slug; otherwise left unchanged.
+ *   `create` ops in the same response become `append` to that anchor (one new file per batch).
+ * - With one or more prior session notes: a `create` whose **targetTitle** matches an existing
+ *   strand note title (normalized) becomes `append` to that slug; other `create` ops are kept so
+ *   a new substantive topic in the same chat can become a new strand note.
  *
  * `transcriptStartIndex` is retained for call-site compatibility only.
  */
@@ -39,31 +39,6 @@ export function foldIncrementalCreatesOntoSessionAnchor(
           operation: "append",
           targetSlug: anchorSlug,
           targetTitle: anchorTitle ?? u.targetTitle
-        });
-        continue;
-      }
-      updates.push(u);
-    }
-
-    return { ...response, updates };
-  }
-
-  if (input.priorSessionSlugs.length === 1) {
-    const anchorSlug = input.priorSessionSlugs[0];
-    if (!anchorSlug) {
-      return response;
-    }
-
-    const anchorTitle = input.noteTitleBySlug.get(anchorSlug) ?? anchorSlug;
-    const updates: ExtractionUpdate[] = [];
-
-    for (const u of response.updates) {
-      if (u.operation === "create" && u.targetSlug !== anchorSlug) {
-        updates.push({
-          ...u,
-          operation: "append",
-          targetSlug: anchorSlug,
-          targetTitle: anchorTitle
         });
         continue;
       }

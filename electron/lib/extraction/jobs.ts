@@ -183,10 +183,6 @@ export function findExplicitReferenceSlugs(
   const explicitSlugs = new Set<string>();
 
   for (const message of messages) {
-    if (message.role !== "user") {
-      continue;
-    }
-
     for (const title of extractWikiLinkTitles(message.content)) {
       const matchedSlug = titleToSlug.get(normalizeTitleKey(title));
 
@@ -196,7 +192,7 @@ export function findExplicitReferenceSlugs(
     }
   }
 
-  return [...explicitSlugs].slice(0, 6);
+  return [...explicitSlugs].slice(0, 12);
 }
 
 export function resolveExtractionExecutionStrategy(

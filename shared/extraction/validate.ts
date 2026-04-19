@@ -23,8 +23,6 @@ import { normalizeWikiFolderPath } from "../vault/folderPath.ts";
 const noteTypeSet = new Set<string>(extractionNoteTypeValues);
 const evidenceKindSet = new Set<string>(extractionEvidenceKindValues);
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const connectedNotesHeading = "## Connected Notes";
-
 interface IndexLookups {
   bySlug: Map<string, ExtractionIndexEntry>;
   titleByKey: Map<string, string>;
@@ -349,7 +347,16 @@ function normalizeLinks(raw: unknown, lookups: IndexLookups): string[] {
   return uniqueStrings(normalized);
 }
 
-function sanitizeBodyLinks(body: string, lookups: IndexLookups): string {
+function sanitizeBodyLinks(
+  body: string,
+  lookups: IndexLookups,
+  selfNoteTitle?: string | null
+): string {
+  const selfKey =
+    selfNoteTitle && selfNoteTitle.trim().length > 0
+      ? normalizeTitleKey(selfNoteTitle)
+      : "";
+
   return body.replace(/\[\[([^[\]]+)\]\]/g, (_match, rawTitle: string) => {
     const title = rawTitle.trim();
     const matchedTitle = lookups.titleByKey.get(normalizeTitleKey(title));
@@ -358,31 +365,30 @@ function sanitizeBodyLinks(body: string, lookups: IndexLookups): string {
       return title;
     }
 
+    if (selfKey.length > 0 && normalizeTitleKey(matchedTitle) === selfKey) {
+      return matchedTitle;
+    }
+
     return `[[${matchedTitle}]]`;
   });
 }
 
-function ensureDeclaredLinksInBody(body: string, links: string[]): string {
-  if (links.length === 0) {
-    return body.trim();
-  }
-
-  const presentLinkKeys = new Set(
+/** Keeps only index-backed links that appear as wikilinks in the body; drops self-links. */
+function filterDeclaredLinksToBodyAndSelf(
+  body: string,
+  links: string[],
+  noteTitle: string
+): string[] {
+  const presentKeys = new Set(
     extractWikiLinkTitles(body).map((title) => normalizeTitleKey(title))
   );
-  const missingLinks = links.filter((title) => !presentLinkKeys.has(normalizeTitleKey(title)));
+  const selfKey = normalizeTitleKey(noteTitle);
 
-  if (missingLinks.length === 0) {
-    return body.trim();
-  }
-
-  const lines = missingLinks.map((title) => `- [[${title}]]`).join("\n");
-
-  if (body.includes(connectedNotesHeading)) {
-    return `${body.trim()}\n${lines}`;
-  }
-
-  return [body.trim(), connectedNotesHeading, "", lines].filter(Boolean).join("\n\n");
+  return links.filter(
+    (title) =>
+      presentKeys.has(normalizeTitleKey(title)) &&
+      (selfKey.length === 0 || normalizeTitleKey(title) !== selfKey)
+  );
 }
 
 function normalizeEvidence(
@@ -663,10 +669,7 @@ function normalizeUpdate(
     operation === "merge" && !mergeEnabled ? "append" : operation;
 
   const normalizedLinks = normalizeLinks(raw.links ?? raw.linkedTo, lookups);
-  const sanitizedBody = ensureDeclaredLinksInBody(
-    sanitizeBodyLinks(rawBody, lookups),
-    normalizedLinks
-  );
+  let sanitizedBody = sanitizeBodyLinks(rawBody, lookups).trim();
 
   const summary =
     readNonEmptyString(raw.summary)?.slice(0, 240) ??
@@ -683,6 +686,9 @@ function normalizeUpdate(
       targetTitle = refined;
     }
   }
+
+  sanitizedBody = sanitizeBodyLinks(sanitizedBody, lookups, targetTitle).trim();
+  const bodyLinks = filterDeclaredLinksToBodyAndSelf(sanitizedBody, normalizedLinks, targetTitle);
 
   const fallbackKind: ExtractionEvidenceKind = options.sourceType ? "source" : "transcript";
   const fallbackEvidence: ExtractionEvidence = {
@@ -775,7 +781,7 @@ function normalizeUpdate(
       summary,
       body: sanitizedBody.trim(),
       tags,
-      links: normalizedLinks,
+      links: bodyLinks,
       evidence,
       confidence,
       ...(resolvedFolderPath !== undefined ? { folderPath: resolvedFolderPath } : {}),
@@ -888,12 +894,16 @@ function mergeDuplicateUpdates(
     const operation = mergeOperations(group);
     const latest = group[group.length - 1] ?? first;
     const mergedLinks = uniqueStrings(group.flatMap((update) => update.links));
-    const mergedBody = ensureDeclaredLinksInBody(
-      sanitizeBodyLinks(mergeBodies(group), lookups),
-      mergedLinks
+    const mergedRaw = mergeBodies(group);
+    let mergedBody = sanitizeBodyLinks(mergedRaw, lookups).trim();
+    mergedBody = sanitizeBodyLinks(mergedBody, lookups, latest.targetTitle).trim();
+    const mergedBodyLinks = filterDeclaredLinksToBodyAndSelf(
+      mergedBody,
+      mergedLinks,
+      latest.targetTitle
     );
 
-    if (operation !== "noop" && mergedBody.trim().length < extractionThresholds.minValidatedBodyChars) {
+    if (operation !== "noop" && mergedBody.length < extractionThresholds.minValidatedBodyChars) {
       continue;
     }
 
@@ -906,12 +916,12 @@ function mergeDuplicateUpdates(
       targetTitle: latest.targetTitle,
       targetType: latest.targetType,
       summary: latest.summary || summarizeMarkdown(mergedBody),
-      body: mergedBody.trim(),
+      body: mergedBody,
       tags: uniqueStrings(group.flatMap((update) => update.tags)).slice(
         0,
         extractionThresholds.maxTagsPerNote
       ),
-      links: mergedLinks,
+      links: mergedBodyLinks,
       evidence: uniqueEvidence(group.flatMap((update) => update.evidence)),
       confidence: Math.max(...group.map((update) => update.confidence)),
       ...(mergedFolderPath !== undefined ? { folderPath: mergedFolderPath } : {}),

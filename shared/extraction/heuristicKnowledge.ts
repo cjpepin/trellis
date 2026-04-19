@@ -227,9 +227,13 @@ export function extractKnowledgeHeuristic(input: {
   const noteType = input.sourceType ? "source-summary" : "concept";
   const summary = splitSentences(corpus).slice(0, 2).join(" ");
   const tags = [...new Set(keywords.filter((keyword) => keyword !== "template"))].slice(0, 4);
-  const titleForLinks = linkedTo
-    .map((title) => `- [[${title}]]`)
-    .join("\n");
+  const keyPointLines =
+    linkedTo.length > 0
+      ? [
+          `- Related notes: ${linkedTo.map((title) => `[[${title}]]`).join(", ")}.`,
+          ...bullets.map((bullet) => `- ${bullet}`)
+        ]
+      : bullets.map((bullet) => `- ${bullet}`);
 
   const primaryContent = [
     existing
@@ -241,10 +245,7 @@ export function extractKnowledgeHeuristic(input: {
     existing ? "" : summary || corpus.slice(0, 400),
     "## Key Points",
     "",
-    ...bullets.map((bullet) => `- ${bullet}`),
-    linkedTo.length > 0 ? "" : "",
-    linkedTo.length > 0 ? "## Connected Notes" : "",
-    linkedTo.length > 0 ? titleForLinks : "",
+    ...keyPointLines,
     input.sourcePath ? "" : "",
     input.sourcePath ? `Source: ${input.sourcePath}` : ""
   ]

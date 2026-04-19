@@ -31,7 +31,8 @@ test("normalizes legacy extraction output and merges duplicate targets", () => {
         operation: "append",
         targetTitle: "Habit Tracker",
         targetType: "entity",
-        body: "## Next Steps\n\n- Ship onboarding for the first beta users next.",
+        body:
+          "## Next Steps\n\n- Ship onboarding for the first beta users next; aligns with [[Product Strategy]].",
         tags: ["roadmap"],
         links: ["Product Strategy"],
         confidence: 0.7,

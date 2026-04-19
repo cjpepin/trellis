@@ -285,6 +285,63 @@ test("prepareExtractionWrite strips 'I hope this helps' and 'Overall' closing pa
   assert.match(prepared.content, /embedded GGUF/);
 });
 
+test("prepareExtractionWrite superseding append drops prior pipe table when headings differ", () => {
+  const prepared = prepareExtractionWrite({
+    update: createUpdate({
+      body: [
+        "## 12-week calendar",
+        "",
+        "| Phase | Focus |",
+        "| --- | --- |",
+        "| Base | Miles |"
+      ].join("\n"),
+      links: []
+    }),
+    existingNote: {
+      title: "Product Strategy",
+      folderPath: "",
+      content: [
+        "## Weekly plan",
+        "",
+        "| Week | Load |",
+        "| --- | --- |",
+        "| 1 | Low |",
+        "",
+        "## Decisions",
+        "",
+        "Keep onboarding calm."
+      ].join("\n"),
+      tags: ["strategy"],
+      sources: 1,
+      type: "concept"
+    },
+    index
+  });
+
+  assert.ok(prepared);
+  assert.ok(!prepared.content.includes("| Week | Load |"));
+  assert.match(prepared.content, /\| Phase \| Focus \|/);
+  assert.match(prepared.content, /Keep onboarding calm/);
+});
+
+test("prepareExtractionWrite strips wikilinks that point at the note itself", () => {
+  const prepared = prepareExtractionWrite({
+    update: createUpdate({
+      operation: "create",
+      targetSlug: "product-strategy",
+      targetTitle: "Product Strategy",
+      body: "See [[product strategy]] for the north star.",
+      links: ["Product Strategy"]
+    }),
+    existingNote: null,
+    index
+  });
+
+  assert.ok(prepared);
+  assert.match(prepared.content, /See Product Strategy for the north star/);
+  assert.ok(!prepared.content.includes("[["));
+});
+
 test("skipIfDuplicatePreparedExtractionContent detects duplicate normalized bodies", () => {
   const seen = new Set();
   const body =
