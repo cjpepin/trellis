@@ -10,6 +10,7 @@ import type {
 } from "../../ipc/types";
 import {
   createExtractionJob,
+  getEarliestPendingRunAt,
   getExtractionJob,
   getExtractionJobConfig,
   getLatestCompletedExtractionJob,
@@ -52,7 +53,11 @@ import type {
   ExtractionResponse,
   ExtractionUpdate
 } from "@shared/extraction/contracts";
-import { extractionJobRelatedNotesLimit } from "@shared/extraction/config";
+import {
+  extractionJobRelatedNotesLimit,
+  extractionManualTriggerPriority,
+  extractionRetryDelayMs
+} from "@shared/extraction/config";
 import {
   buildAutomaticChatCaptureFallbackResponse,
   buildManualSaveFallbackResponse,
@@ -79,6 +84,7 @@ type ExtractionIndexItem = {
 };
 
 const activeSessionIds = new Set<string>();
+const sessionWakeupTimers = new Map<string, NodeJS.Timeout>();
 
 function isWritableUpdate(
   update: ExtractionUpdate
@@ -525,12 +531,7 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         nonNoopUpdates: modelUpdateCount
       });
 
-      if (
-        modelUpdateCount === 0 &&
-        (job.trigger === "idle" ||
-          job.trigger === "session-switch" ||
-          job.trigger === "manual")
-      ) {
+      if (modelUpdateCount === 0 && job.trigger === "manual") {
         logExtraction("processJob.retry_thorough_begin", {
           jobId: job.id.slice(0, 8),
           trigger: job.trigger
@@ -635,26 +636,55 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         appliedNotes: applied.appliedNotes
       });
     } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Trellis couldn’t finish extracting notes for that session.";
+      const latest = await getExtractionJob(job.id);
+      const attemptCount = latest?.attemptCount ?? job.attemptCount;
+      const maxAttempts = latest?.maxAttempts ?? job.maxAttempts ?? 3;
+
+      if (attemptCount < maxAttempts) {
+        const nextRunAt = Date.now() + extractionRetryDelayMs(attemptCount);
+        const deferredJob = await updateExtractionJob({
+          id: job.id,
+          status: "pending",
+          errorMessage,
+          startedAt: null,
+          nextRunAt
+        });
+        updateExtractionDebugRun(debugRun.id, {
+          status: "failed",
+          finishedAt: Date.now(),
+          errorMessage
+        });
+        logExtraction("processJob.deferred", {
+          jobId: job.id.slice(0, 8),
+          attemptCount,
+          maxAttempts,
+          nextRunAt,
+          error: errorMessage.slice(0, 200)
+        });
+        options.notifyJobUpdate(deferredJob);
+        return;
+      }
+
       updateExtractionDebugRun(debugRun.id, {
         status: "failed",
         finishedAt: Date.now(),
-        errorMessage:
-          error instanceof Error
-            ? error.message
-            : "Trellis couldn’t finish extracting notes for that session."
+        errorMessage
       });
       const failedJob = await updateExtractionJob({
         id: job.id,
         status: "failed",
-        errorMessage:
-          error instanceof Error
-            ? error.message
-            : "Trellis couldn’t finish extracting notes for that session.",
+        errorMessage,
         finishedAt: Date.now()
       });
       logExtraction("processJob.failed", {
         jobId: job.id.slice(0, 8),
-        error: error instanceof Error ? error.message.slice(0, 200) : "unknown"
+        attemptCount,
+        maxAttempts,
+        error: errorMessage.slice(0, 200)
       });
       options.notifyJobUpdate(failedJob);
     }
@@ -665,9 +695,14 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       return;
     }
 
-    const nextJob = await getNextPendingExtractionJob(sessionId);
+    const now = Date.now();
+    const nextJob = await getNextPendingExtractionJob(sessionId, now);
 
     if (!nextJob) {
+      const earliest = await getEarliestPendingRunAt(sessionId);
+      if (earliest !== null) {
+        armSessionWakeup(sessionId, Math.max(0, earliest - now));
+      }
       return;
     }
 
@@ -677,6 +712,21 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       activeSessionIds.delete(sessionId);
       await scheduleSessionQueue(sessionId);
     });
+  }
+
+  function armSessionWakeup(sessionId: string, delayMs: number): void {
+    const existing = sessionWakeupTimers.get(sessionId);
+    if (existing) {
+      clearTimeout(existing);
+    }
+    const timer = setTimeout(() => {
+      sessionWakeupTimers.delete(sessionId);
+      void scheduleSessionQueue(sessionId);
+    }, delayMs);
+    if (typeof timer.unref === "function") {
+      timer.unref();
+    }
+    sessionWakeupTimers.set(sessionId, timer);
   }
 
   return {
@@ -729,17 +779,19 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         };
       }
 
+      const resolvedTrigger = input.trigger ?? "manual";
       const job = await createExtractionJob({
         sessionId: session.id,
         vaultId: session.vaultId,
-        trigger: input.trigger ?? "manual",
+        trigger: resolvedTrigger,
         mode: resolveExtractionMode(input.mode),
         transcriptStartIndex: plan.transcriptStartIndex,
         transcriptEndIndex: plan.transcriptEndIndex,
         transcriptDigest: plan.transcriptDigest,
         cloudFunctionsBaseUrl: null,
         cloudPublishableKey: null,
-        preferredLocalModelId: input.preferredLocalModelId ?? null
+        preferredLocalModelId: input.preferredLocalModelId ?? null,
+        priority: resolvedTrigger === "manual" ? extractionManualTriggerPriority : 0
       });
 
       logExtraction("queueSession.queued", {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardCopy, LoaderCircle, MessageSquarePlus } from "lucide-react";
+import { ClipboardCopy, LoaderCircle, MessageSquarePlus, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   type AppFeatureFlags,
@@ -88,7 +88,56 @@ function isReadAloudUserCancelError(error: unknown): boolean {
 }
 
 function formatExtractionJobStatus(job: ExtractionJobNotification): string {
-  return job.status === "pending" ? "Queued" : "Adding";
+  switch (job.status) {
+    case "pending":
+      return job.nextRunAt && job.nextRunAt > Date.now() ? "Retrying soon" : "Queued";
+    case "running":
+      return "Processing";
+    case "completed":
+      return job.appliedUpdateCount > 0
+        ? `Added ${job.appliedUpdateCount} note${job.appliedUpdateCount === 1 ? "" : "s"}`
+        : "No new notes";
+    case "failed":
+      return "Failed";
+    case "skipped":
+      return "Skipped";
+    default:
+      return "Adding";
+  }
+}
+
+function extractionJobStatusDotClass(job: ExtractionJobNotification): string {
+  switch (job.status) {
+    case "running":
+      return "bg-trellis-accent motion-safe:animate-pulse";
+    case "pending":
+      return "bg-trellis-accent/60";
+    case "completed":
+      return job.appliedUpdateCount > 0 ? "bg-emerald-500" : "bg-trellis-faint";
+    case "failed":
+      return "bg-rose-500";
+    case "skipped":
+      return "bg-trellis-faint";
+    default:
+      return "bg-trellis-muted";
+  }
+}
+
+function formatExtractionJobElapsed(job: ExtractionJobNotification, now: number): string {
+  const end = job.finishedAt ?? now;
+  const start = job.startedAt ?? job.createdAt;
+  const ms = Math.max(0, end - start);
+
+  if (ms < 1000) {
+    return "<1s";
+  }
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rem = seconds % 60;
+  return rem === 0 ? `${minutes}m` : `${minutes}m ${rem}s`;
 }
 
 function formatExtractionJobTrigger(job: ExtractionJobNotification): string {
@@ -104,6 +153,8 @@ function formatExtractionJobTrigger(job: ExtractionJobNotification): string {
       return "Background sync";
   }
 }
+
+const extractionJobLingerMs = 6000;
 
 interface Props {
   settings: AppSettings;
@@ -136,9 +187,12 @@ export function Chat({
   const readAloudPlaybackRef = useRef<PcmStreamPlayback | null>(null);
   const readAloudStreamGenRef = useRef(0);
   const [busyNoteActionId, setBusyNoteActionId] = useState<string | null>(null);
-  const [extractionJobsBySession, setExtractionJobsBySession] = useState<
+  const [extractionJobsById, setExtractionJobsById] = useState<
     Record<string, ExtractionJobNotification>
   >({});
+  const extractionJobDismissTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map()
+  );
   const [extractionQueueOpen, setExtractionQueueOpen] = useState(false);
   const [transcriptFindOpen, setTranscriptFindOpen] = useState(false);
   const [transcriptFindQuery, setTranscriptFindQuery] = useState("");
@@ -204,21 +258,30 @@ export function Chat({
   const activeSessionRunning = Boolean(activeSessionChatRun);
   const activeExtractionJobs = useMemo(
     () =>
-      Object.values(extractionJobsBySession)
-        .filter((job) => job.status === "pending" || job.status === "running")
-        .sort((left, right) => left.createdAt - right.createdAt),
-    [extractionJobsBySession]
+      Object.values(extractionJobsById).sort(
+        (left, right) => right.createdAt - left.createdAt
+      ),
+    [extractionJobsById]
   );
   const extractionSessionTitleById = useMemo(
     () => new Map(sessions.map((session) => [session.id, session.title] as const)),
     [sessions]
   );
+  const inflightExtractionJobCount = useMemo(
+    () =>
+      activeExtractionJobs.filter(
+        (job) => job.status === "pending" || job.status === "running"
+      ).length,
+    [activeExtractionJobs]
+  );
   const extractionQueueTooltip =
-    activeExtractionJobs.length > 1
-      ? `${activeExtractionJobs.length} Strand jobs active`
-      : activeExtractionJobs[0]?.status === "pending"
-        ? "Queued for Strands"
-        : "Adding to Strands";
+    inflightExtractionJobCount > 1
+      ? `${inflightExtractionJobCount} Strand jobs in progress`
+      : inflightExtractionJobCount === 1
+        ? activeExtractionJobs.find((job) => job.status === "running")
+          ? "Adding to Strands"
+          : "Queued for Strands"
+        : "Recent Strand activity";
   const awaitingFirstToken = Boolean(activeSessionChatRun?.awaitingFirstToken);
   const runningChatCount = Object.keys(chatRunsBySession).length;
   const parallelChatLimitReached = runningChatCount >= maxParallelChatRuns;
@@ -251,6 +314,15 @@ export function Chat({
       setExtractionQueueOpen(false);
     }
   }, [activeExtractionJobs.length]);
+
+  const [extractionNowTick, setExtractionNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!extractionQueueOpen || inflightExtractionJobCount === 0) {
+      return;
+    }
+    const id = setInterval(() => setExtractionNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [extractionQueueOpen, inflightExtractionJobCount]);
 
   useEffect(() => {
     setTranscriptFindOpen(false);
@@ -435,19 +507,45 @@ export function Chat({
   );
 
   useEffect(() => {
-    return window.trellis.extraction.onJobUpdate((notification) => {
-      setExtractionJobsBySession((current) => {
-        if (notification.status === "pending" || notification.status === "running") {
-          return {
-            ...current,
-            [notification.sessionId]: notification
-          };
-        }
+    const timers = extractionJobDismissTimersRef.current;
+    const clearTimer = (jobId: string) => {
+      const timer = timers.get(jobId);
+      if (timer) {
+        clearTimeout(timer);
+        timers.delete(jobId);
+      }
+    };
 
-        const { [notification.sessionId]: _done, ...rest } = current;
-        return rest;
-      });
+    const unsubscribe = window.trellis.extraction.onJobUpdate((notification) => {
+      clearTimer(notification.id);
+
+      setExtractionJobsById((current) => ({
+        ...current,
+        [notification.id]: notification
+      }));
+
+      if (notification.status !== "pending" && notification.status !== "running") {
+        const timer = setTimeout(() => {
+          timers.delete(notification.id);
+          setExtractionJobsById((current) => {
+            if (!current[notification.id]) {
+              return current;
+            }
+            const { [notification.id]: _done, ...rest } = current;
+            return rest;
+          });
+        }, extractionJobLingerMs);
+        timers.set(notification.id, timer);
+      }
     });
+
+    return () => {
+      unsubscribe();
+      for (const timer of timers.values()) {
+        clearTimeout(timer);
+      }
+      timers.clear();
+    };
   }, []);
 
   const queueExtraction = useCallback(
@@ -471,9 +569,9 @@ export function Chat({
           queuedJob &&
           (queuedJob.status === "pending" || queuedJob.status === "running")
         ) {
-          setExtractionJobsBySession((current) => ({
+          setExtractionJobsById((current) => ({
             ...current,
-            [queuedJob.sessionId]: queuedJob
+            [queuedJob.id]: queuedJob
           }));
         }
 
@@ -2134,40 +2232,62 @@ export function Chat({
                       setExtractionQueueOpen((open) => !open);
                     }}
                   >
-                    <LoaderCircle className="h-4 w-4 motion-safe:animate-spin" aria-hidden />
+                    {inflightExtractionJobCount > 0 ? (
+                      <LoaderCircle className="h-4 w-4 motion-safe:animate-spin" aria-hidden />
+                    ) : (
+                      <Sparkles className="h-4 w-4" aria-hidden />
+                    )}
                   </button>
                   {extractionQueueOpen ? (
                     <div
-                      className="trellis-elevated absolute bottom-full right-0 z-50 mb-2 w-[min(100vw-2rem,320px)] rounded-field border border-trellis-border bg-trellis-surface p-2 text-left shadow-lg"
+                      className="trellis-elevated absolute bottom-full right-0 z-50 mb-2 w-[min(100vw-2rem,340px)] rounded-field border border-trellis-border bg-trellis-surface py-2 text-left shadow-lg"
                       role="dialog"
                       aria-label="Strand sync queue"
                     >
-                      <p className="px-2 pb-1 text-[10px] uppercase tracking-[0.18em] text-trellis-faint">
-                        Strands queue
+                      <p className="px-3 pb-1.5 text-[10px] uppercase tracking-[0.18em] text-trellis-faint">
+                        Strands
                       </p>
-                      <div className="max-h-48 overflow-y-auto">
+                      <div className="max-h-56 overflow-y-auto px-1">
                         {activeExtractionJobs.map((job) => {
-                          const title = extractionSessionTitleById.get(job.sessionId) ?? "Untitled chat";
-                          const turnCount = Math.max(
-                            0,
-                            job.transcriptEndIndex - job.transcriptStartIndex
-                          );
+                          const title =
+                            extractionSessionTitleById.get(job.sessionId) ?? "Untitled chat";
+                          const elapsed = formatExtractionJobElapsed(job, extractionNowTick);
+                          const appliedNotes = job.appliedNotes ?? [];
+                          const detail =
+                            job.status === "failed" && job.errorMessage
+                              ? job.errorMessage
+                              : appliedNotes.length > 0
+                                ? appliedNotes.map((note) => note.title).join(" · ")
+                                : formatExtractionJobTrigger(job);
 
                           return (
                             <div
                               key={job.id}
-                              className="rounded-field px-2 py-2 text-xs text-trellis-text"
+                              className="flex items-start gap-2.5 rounded-field px-2 py-1.5 text-xs text-trellis-text"
                             >
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="min-w-0 truncate font-medium">{title}</span>
-                                <span className="shrink-0 text-trellis-accent">
-                                  {formatExtractionJobStatus(job)}
-                                </span>
+                              <span
+                                className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${extractionJobStatusDotClass(job)}`}
+                                aria-hidden
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <span className="min-w-0 truncate font-medium">{title}</span>
+                                  <span className="shrink-0 tabular-nums text-[11px] text-trellis-faint">
+                                    {elapsed}
+                                  </span>
+                                </div>
+                                <p className="mt-0.5 truncate text-[11px] text-trellis-muted">
+                                  <span className="text-trellis-accent/80">
+                                    {formatExtractionJobStatus(job)}
+                                  </span>
+                                  {detail ? (
+                                    <>
+                                      <span className="mx-1 text-trellis-faint">·</span>
+                                      <span>{detail}</span>
+                                    </>
+                                  ) : null}
+                                </p>
                               </div>
-                              <p className="mt-1 text-[11px] text-trellis-muted">
-                                {formatExtractionJobTrigger(job)}
-                                {turnCount > 0 ? ` · ${turnCount} turns` : ""}
-                              </p>
                             </div>
                           );
                         })}

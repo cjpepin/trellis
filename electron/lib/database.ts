@@ -89,6 +89,9 @@ interface ExtractionJobRow {
   cloud_functions_base_url: string | null;
   cloud_publishable_key: string | null;
   preferred_local_model_id: string | null;
+  priority: string | null;
+  max_attempts: string | null;
+  next_run_at: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -181,6 +184,10 @@ export interface CreateExtractionJobInput {
   cloudFunctionsBaseUrl?: string | null;
   cloudPublishableKey?: string | null;
   preferredLocalModelId?: string | null;
+  /** Higher priority runs first. User-initiated ("manual") triggers should pass a positive value. */
+  priority?: number;
+  /** Defaults to extractionDefaultMaxAttempts. After this many failed attempts the job is marked failed. */
+  maxAttempts?: number;
 }
 
 export interface SeedSessionInput {
@@ -211,6 +218,9 @@ export interface UpdateExtractionJobInput {
   errorMessage?: string | null;
   startedAt?: number | null;
   finishedAt?: number | null;
+  priority?: number;
+  maxAttempts?: number;
+  nextRunAt?: number | null;
 }
 
 function placeholders(count: number): string {
@@ -471,6 +481,12 @@ function mapExtractionJob(row: ExtractionJobRow): ExtractionJobSnapshot {
     appliedUpdateCount: Number(row.applied_update_count),
     sessionTitle: row.session_title,
     errorMessage: row.error_message,
+    priority: row.priority !== null && row.priority !== undefined ? Number(row.priority) : 0,
+    maxAttempts:
+      row.max_attempts !== null && row.max_attempts !== undefined
+        ? Number(row.max_attempts)
+        : 3,
+    nextRunAt: row.next_run_at !== null && row.next_run_at !== undefined ? Number(row.next_run_at) : null,
     createdAt: Number(row.created_at),
     startedAt: row.started_at !== null ? Number(row.started_at) : null,
     finishedAt: row.finished_at !== null ? Number(row.finished_at) : null
@@ -625,6 +641,9 @@ function ensureSchema(db: Sqlite.Database): void {
       cloud_functions_base_url TEXT,
       cloud_publishable_key TEXT,
       preferred_local_model_id TEXT,
+      priority INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      next_run_at BIGINT,
       created_at BIGINT NOT NULL,
       started_at BIGINT,
       finished_at BIGINT
@@ -635,6 +654,9 @@ function ensureSchema(db: Sqlite.Database): void {
 
     CREATE INDEX IF NOT EXISTS extraction_jobs_status_idx
       ON extraction_jobs (status, created_at);
+
+    CREATE INDEX IF NOT EXISTS extraction_jobs_pending_order_idx
+      ON extraction_jobs (session_id, status, priority DESC, next_run_at, created_at);
   `);
 }
 
@@ -743,6 +765,42 @@ function migrateMessagesComposerPinsColumn(db: Sqlite.Database): void {
 /** PGlite-era migration; SQLite ships the full CHECK in ensureSchema. No-op. */
 function migrateExtractionJobProviderConstraint(_db: Sqlite.Database): void {}
 
+function addColumnIfMissing(db: Sqlite.Database, sql: string): void {
+  try {
+    db.exec(sql);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (
+      !message.includes("duplicate column") &&
+      !message.includes("already exists") &&
+      !message.includes("Duplicate column")
+    ) {
+      throw error;
+    }
+  }
+}
+
+function migrateExtractionJobsAddSchedulingColumns(db: Sqlite.Database): void {
+  addColumnIfMissing(
+    db,
+    `ALTER TABLE extraction_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`
+  );
+  addColumnIfMissing(
+    db,
+    `ALTER TABLE extraction_jobs ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3`
+  );
+  addColumnIfMissing(db, `ALTER TABLE extraction_jobs ADD COLUMN next_run_at BIGINT`);
+  try {
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS extraction_jobs_pending_order_idx
+         ON extraction_jobs (session_id, status, priority DESC, next_run_at, created_at)`
+    );
+  } catch {
+    // index creation is best-effort for migration
+  }
+}
+
 function ensureParentDir(filePath: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 }
@@ -757,6 +815,7 @@ export async function initializeDatabase(databaseFilePath: string): Promise<Sqli
     migrateMessagesReplyContextColumn(database);
     migrateMessagesComposerPinsColumn(database);
     migrateExtractionJobProviderConstraint(database);
+    migrateExtractionJobsAddSchedulingColumns(database);
     return database;
   }
 
@@ -1619,6 +1678,13 @@ export async function deleteMissingNoteEmbeddings(
   );
 }
 
+const extractionJobSelectColumns = `id, session_id, vault_id, status, trigger, mode, provider, model,
+            transcript_start_index, transcript_end_index, transcript_digest,
+            attempt_count, applied_update_count, session_title, error_message,
+            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
+            priority, max_attempts, next_run_at,
+            created_at, started_at, finished_at`;
+
 export async function createExtractionJob(
   input: CreateExtractionJobInput
 ): Promise<ExtractionJobSnapshot> {
@@ -1641,14 +1707,12 @@ export async function createExtractionJob(
        cloud_functions_base_url,
        cloud_publishable_key,
        preferred_local_model_id,
+       priority,
+       max_attempts,
        created_at
      )
-     VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     RETURNING id, session_id, vault_id, status, trigger, mode, provider, model,
-               transcript_start_index, transcript_end_index, transcript_digest,
-               attempt_count, applied_update_count, session_title, error_message,
-               cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
-               created_at, started_at, finished_at`,
+     VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     RETURNING ${extractionJobSelectColumns}`,
     [
       id,
       input.sessionId,
@@ -1661,6 +1725,8 @@ export async function createExtractionJob(
       input.cloudFunctionsBaseUrl ?? null,
       input.cloudPublishableKey ?? null,
       input.preferredLocalModelId ?? null,
+      input.priority ?? 0,
+      input.maxAttempts ?? 3,
       now
     ]
   );
@@ -1676,11 +1742,7 @@ export async function getExtractionJob(jobId: string): Promise<ExtractionJobSnap
   const db = getDatabase();
   const row = firstRow<ExtractionJobRow>(
     db,
-    `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
-            transcript_start_index, transcript_end_index, transcript_digest,
-            attempt_count, applied_update_count, session_title, error_message,
-            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
-            created_at, started_at, finished_at
+    `SELECT ${extractionJobSelectColumns}
      FROM extraction_jobs
      WHERE id = ?`,
     [jobId]
@@ -1695,11 +1757,7 @@ export async function updateExtractionJob(
   const db = getDatabase();
   const row = firstRow<ExtractionJobRow>(
     db,
-    `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
-            transcript_start_index, transcript_end_index, transcript_digest,
-            attempt_count, applied_update_count, session_title, error_message,
-            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
-            created_at, started_at, finished_at
+    `SELECT ${extractionJobSelectColumns}
      FROM extraction_jobs
      WHERE id = ?`,
     [input.id]
@@ -1722,14 +1780,13 @@ export async function updateExtractionJob(
          applied_update_count = ?,
          session_title = ?,
          error_message = ?,
+         priority = ?,
+         max_attempts = ?,
+         next_run_at = ?,
          started_at = ?,
          finished_at = ?
      WHERE id = ?
-     RETURNING id, session_id, vault_id, status, trigger, mode, provider, model,
-               transcript_start_index, transcript_end_index, transcript_digest,
-               attempt_count, applied_update_count, session_title, error_message,
-               cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
-               created_at, started_at, finished_at`,
+     RETURNING ${extractionJobSelectColumns}`,
     [
       input.status ?? row.status,
       input.provider === undefined ? row.provider : input.provider,
@@ -1741,6 +1798,11 @@ export async function updateExtractionJob(
       input.appliedUpdateCount ?? Number(row.applied_update_count),
       input.sessionTitle === undefined ? row.session_title : input.sessionTitle,
       input.errorMessage === undefined ? row.error_message : input.errorMessage,
+      input.priority ?? (row.priority !== null ? Number(row.priority) : 0),
+      input.maxAttempts ?? (row.max_attempts !== null ? Number(row.max_attempts) : 3),
+      input.nextRunAt === undefined
+        ? (row.next_run_at !== null ? Number(row.next_run_at) : null)
+        : input.nextRunAt,
       input.startedAt === undefined ? (row.started_at !== null ? Number(row.started_at) : null) : input.startedAt,
       input.finishedAt === undefined ? (row.finished_at !== null ? Number(row.finished_at) : null) : input.finishedAt,
       input.id
@@ -1760,11 +1822,7 @@ export async function getLatestCompletedExtractionJob(
   const db = getDatabase();
   const row = firstRow<ExtractionJobRow>(
     db,
-    `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
-            transcript_start_index, transcript_end_index, transcript_digest,
-            attempt_count, applied_update_count, session_title, error_message,
-            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
-            created_at, started_at, finished_at
+    `SELECT ${extractionJobSelectColumns}
      FROM extraction_jobs
      WHERE session_id = ? AND status = 'completed'
      ORDER BY finished_at DESC, created_at DESC
@@ -1781,14 +1839,10 @@ export async function listQueuedExtractionJobsBySession(
   const db = getDatabase();
   const rows = allRows<ExtractionJobRow>(
     db,
-    `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
-            transcript_start_index, transcript_end_index, transcript_digest,
-            attempt_count, applied_update_count, session_title, error_message,
-            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
-            created_at, started_at, finished_at
+    `SELECT ${extractionJobSelectColumns}
      FROM extraction_jobs
      WHERE session_id = ? AND status IN ('pending', 'running')
-     ORDER BY created_at ASC`,
+     ORDER BY priority DESC, created_at ASC`,
     [sessionId]
   );
 
@@ -1796,38 +1850,65 @@ export async function listQueuedExtractionJobsBySession(
 }
 
 export async function getNextPendingExtractionJob(
-  sessionId: string
+  sessionId: string,
+  now: number = Date.now()
 ): Promise<ExtractionJobSnapshot | null> {
   const db = getDatabase();
   const row = firstRow<ExtractionJobRow>(
     db,
-    `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
-            transcript_start_index, transcript_end_index, transcript_digest,
-            attempt_count, applied_update_count, session_title, error_message,
-            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
-            created_at, started_at, finished_at
+    `SELECT ${extractionJobSelectColumns}
      FROM extraction_jobs
      WHERE session_id = ? AND status = 'pending'
-     ORDER BY created_at ASC
+       AND (next_run_at IS NULL OR next_run_at <= ?)
+     ORDER BY priority DESC, created_at ASC
+     LIMIT 1`,
+    [sessionId, now]
+  );
+
+  return row ? mapExtractionJob(row) : null;
+}
+
+export async function getEarliestPendingRunAt(sessionId: string): Promise<number | null> {
+  const db = getDatabase();
+  const row = firstRow<{ next_run_at: string | null }>(
+    db,
+    `SELECT next_run_at FROM extraction_jobs
+     WHERE session_id = ? AND status = 'pending' AND next_run_at IS NOT NULL
+     ORDER BY next_run_at ASC
      LIMIT 1`,
     [sessionId]
   );
 
-  return row ? mapExtractionJob(row) : null;
+  if (!row || row.next_run_at === null || row.next_run_at === undefined) {
+    return null;
+  }
+
+  return Number(row.next_run_at);
 }
 
 export async function listResumableExtractionJobs(): Promise<ExtractionJobSnapshot[]> {
   const db = getDatabase();
   const rows = allRows<ExtractionJobRow>(
     db,
-    `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
-            transcript_start_index, transcript_end_index, transcript_digest,
-            attempt_count, applied_update_count, session_title, error_message,
-            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
-            created_at, started_at, finished_at
+    `SELECT ${extractionJobSelectColumns}
      FROM extraction_jobs
      WHERE status IN ('pending', 'running')
-     ORDER BY created_at ASC`
+     ORDER BY priority DESC, created_at ASC`
+  );
+
+  return rows.map(mapExtractionJob);
+}
+
+export async function listRecentExtractionJobs(limit = 20): Promise<ExtractionJobSnapshot[]> {
+  const db = getDatabase();
+  const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+  const rows = allRows<ExtractionJobRow>(
+    db,
+    `SELECT ${extractionJobSelectColumns}
+     FROM extraction_jobs
+     ORDER BY COALESCE(finished_at, started_at, created_at) DESC
+     LIMIT ?`,
+    [safeLimit]
   );
 
   return rows.map(mapExtractionJob);

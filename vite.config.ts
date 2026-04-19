@@ -69,6 +69,10 @@ export default defineConfig(({ mode }) => ({
           build: {
             outDir: electronOutDir,
             rollupOptions: {
+              input: {
+                main: path.resolve(__dirname, "electron/main.ts"),
+                extractionWorker: path.resolve(__dirname, "electron/extractionWorker.ts")
+              },
               external: [
                 "jsdom",
                 "canvas",
@@ -77,7 +81,7 @@ export default defineConfig(({ mode }) => ({
                 "node-llama-cpp"
               ],
               output: {
-                entryFileNames: "main.js"
+                entryFileNames: "[name].js"
               }
             }
           }

@@ -3,31 +3,23 @@ import { mkdir, rename, stat, unlink } from "node:fs/promises";
 import { once } from "node:events";
 import path from "node:path";
 import { finished } from "node:stream/promises";
-import { buildExtractionUserMessage } from "@shared/extraction/buildPrompt";
 import {
   defaultEmbeddedExtractionModelDownloadUrl,
   defaultLocalExtractionModelId,
   embeddedExtractionGgufFilename
 } from "@shared/extraction/config";
-import { extractionResponseJsonSchema } from "@shared/extraction/jsonSchema";
 import type { ExtractionInstallProgressEvent } from "@shared/extraction/localModelInstall";
-import { parseExtractionResponseJson } from "@shared/extraction/validate";
-import {
-  getLlama,
-  LlamaChatSession,
-  QwenChatWrapper,
-  type LlamaGrammar,
-  type LlamaModel
-} from "node-llama-cpp";
-import { extractionPrompt } from "../../../../supabase/functions/_shared/prompts";
 import type {
   LocalExtractionModelInfo,
   ExtractionProviderStatus,
   ExtractionRunResult
 } from "../../../ipc/types";
 import { getUserDataRoot } from "../../appPaths";
-import { ExtractionValidationError } from "../debug";
 import type { ExtractionProvider, ProviderExtractInput } from "./types";
+import {
+  disposeExtractionWorker,
+  runExtractionInWorker
+} from "./workerClient";
 
 const curatedEmbeddedModels: Array<Omit<LocalExtractionModelInfo, "installed" | "available">> = [
   {
@@ -52,63 +44,8 @@ function resolveDownloadUrl(): string {
   return fromEnv && fromEnv.length > 0 ? fromEnv : defaultEmbeddedExtractionModelDownloadUrl;
 }
 
-interface EmbeddedLoadState {
-  model: LlamaModel;
-}
-
-let loadState: EmbeddedLoadState | null = null;
-let loadPromise: Promise<EmbeddedLoadState> | null = null;
-let extractionQueue: Promise<unknown> = Promise.resolve();
-
-function runSerialized<T>(fn: () => Promise<T>): Promise<T> {
-  const run = extractionQueue.then(fn, fn);
-  extractionQueue = run.then(
-    () => {},
-    () => {}
-  );
-  return run;
-}
-
 export async function disposeEmbeddedModel(): Promise<void> {
-  const pending = loadPromise;
-  loadPromise = null;
-  if (pending) {
-    try {
-      const s = await pending;
-      await s.model.dispose();
-    } catch {
-      // ignore load failures while tearing down
-    }
-    loadState = null;
-    return;
-  }
-
-  const prior = loadState;
-  loadState = null;
-  if (prior) {
-    await prior.model.dispose();
-  }
-}
-
-async function getLoadedModel(modelPath: string): Promise<LlamaModel> {
-  if (loadState) {
-    return loadState.model;
-  }
-  if (loadPromise) {
-    return (await loadPromise).model;
-  }
-  loadPromise = (async () => {
-    const llama = await getLlama();
-    const model = await llama.loadModel({
-      modelPath,
-      gpuLayers: "auto"
-    });
-    const next: EmbeddedLoadState = { model };
-    loadState = next;
-    loadPromise = null;
-    return next;
-  })();
-  return (await loadPromise).model;
+  await disposeExtractionWorker();
 }
 
 async function statModelPath(modelPath: string): Promise<{ sizeBytes: number } | null> {
@@ -123,17 +60,30 @@ async function statModelPath(modelPath: string): Promise<{ sizeBytes: number } |
   }
 }
 
-async function buildResponseGrammar(model: LlamaModel): Promise<LlamaGrammar> {
-  const llama = model.llama;
-  try {
-    return await llama.createGrammarForJsonSchema(
-      structuredClone(extractionResponseJsonSchema) as Parameters<
-        typeof llama.createGrammarForJsonSchema
-      >[0]
-    );
-  } catch {
-    return await llama.getGrammarFor("json");
-  }
+/**
+ * Choose the smallest context size that still holds the prompt with headroom.
+ * Smaller contexts materially reduce KV-cache allocation time on each call
+ * when the worker resizes the context for a new extraction.
+ */
+function chooseContextSize(input: ProviderExtractInput): number {
+  const transcriptChars = input.transcript.reduce(
+    (sum, turn) => sum + turn.content.length,
+    0
+  );
+  const relatedChars = (input.relatedNotes ?? []).reduce(
+    (sum, note) => sum + (note.content?.length ?? 0),
+    0
+  );
+  const sourceChars = input.sourceContent?.length ?? 0;
+  const totalChars = transcriptChars + relatedChars + sourceChars;
+
+  const approxInputTokens = Math.ceil(totalChars / 4);
+  const budget = approxInputTokens + 4096 + 512;
+
+  if (budget <= 2048) return 2048;
+  if (budget <= 4096) return 4096;
+  if (budget <= 6144) return 6144;
+  return 8192;
 }
 
 async function runEmbeddedExtraction(input: ProviderExtractInput): Promise<ExtractionRunResult> {
@@ -144,66 +94,28 @@ async function runEmbeddedExtraction(input: ProviderExtractInput): Promise<Extra
     throw new Error("The on-device note processor is not installed yet.");
   }
 
-  return runSerialized(async () => {
-    const model = await getLoadedModel(modelPath);
-    const context = await model.createContext({
-      contextSize: 8192
-    });
+  const contextSize = chooseContextSize(input);
 
-    const sequence = context.getSequence();
-    const grammar = await buildResponseGrammar(model);
-
-    const session = new LlamaChatSession({
-      contextSequence: sequence,
-      chatWrapper: new QwenChatWrapper(),
-      systemPrompt: extractionPrompt,
-      autoDisposeSequence: true
-    });
-
-    const retrySuffix = input.retryThorough
-      ? "\n\n## Second pass\n" +
-        "The previous extraction pass returned no durable note operations. Re-read the transcript above. " +
-        "If it contains any concrete takeaway, decision, definition, preference, plan, named entity, or technical detail someone might search for later, return one concise synthesis or concept note. " +
-        "Prefer updating or creating a real note over noop. Only return an empty updates array if the thread is purely social, empty, or content-free.\n"
-      : "";
-
-    try {
-      const userMessage = buildExtractionUserMessage(input) + retrySuffix;
-      const content = (
-        await session.prompt(userMessage, {
-          grammar,
-          temperature: input.retryThorough ? 0.42 : 0.22,
-          maxTokens: 4096
-        })
-      ).trim();
-
-      if (!content) {
-        throw new Error("On-device note processing returned an empty response.");
-      }
-
-      const parsed = parseExtractionResponseJson(content, {
-        index: input.index,
-        sourceType: input.sourceType,
-        sourcePath: input.sourcePath
-      });
-
-      if (!parsed.value) {
-        throw new ExtractionValidationError(
-          parsed.issues[0]?.message ?? "On-device note processing returned an invalid response.",
-          parsed.issues.map((issue) => `${issue.path}: ${issue.message}`)
-        );
-      }
-
-      return {
-        response: parsed.value,
-        provider: "embedded",
-        model: defaultLocalExtractionModelId
-      };
-    } finally {
-      session.dispose({ disposeSequence: true });
-      await context.dispose();
+  const response = await runExtractionInWorker({
+    modelPath,
+    contextSize,
+    retryThorough: input.retryThorough ?? false,
+    input: {
+      transcript: input.transcript,
+      index: input.index,
+      relatedNotes: input.relatedNotes,
+      sourceType: input.sourceType,
+      sourceTitle: input.sourceTitle,
+      sourcePath: input.sourcePath,
+      sourceContent: input.sourceContent
     }
   });
+
+  return {
+    response,
+    provider: "embedded",
+    model: defaultLocalExtractionModelId
+  };
 }
 
 export const embeddedExtractionProvider: ExtractionProvider = {

@@ -41,6 +41,26 @@ export const extractionThresholds = {
   minPreparedBodyWords: 6
 } as const;
 
+/** Total attempts the queue will make before marking a job failed. */
+export const extractionDefaultMaxAttempts = 3;
+
+/** Priority value used for user-initiated ("manual") extraction triggers; higher runs first. */
+export const extractionManualTriggerPriority = 10;
+
+/**
+ * Backoff schedule (ms) for retried jobs. `extractionRetryBackoffMs[n]` is waited before the
+ * (n+1)-th attempt. Values beyond the array use the last entry.
+ */
+export const extractionRetryBackoffMs = [15_000, 60_000, 180_000] as const;
+
+export function extractionRetryDelayMs(attemptNumber: number): number {
+  const index =
+    attemptNumber < 1
+      ? 0
+      : Math.min(attemptNumber - 1, extractionRetryBackoffMs.length - 1);
+  return extractionRetryBackoffMs[index] ?? extractionRetryBackoffMs[0];
+}
+
 export function parseBooleanFlag(
   value: string | null | undefined,
   defaultValue: boolean

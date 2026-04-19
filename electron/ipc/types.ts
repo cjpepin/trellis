@@ -686,6 +686,12 @@ export interface ExtractionJobSnapshot {
   appliedUpdateCount: number;
   sessionTitle: string | null;
   errorMessage: string | null;
+  /** Higher priority jobs are picked up first within a session. Manual triggers get a positive value. */
+  priority: number;
+  /** Total attempts the queue will make before marking the job failed. */
+  maxAttempts: number;
+  /** When set and in the future, the job is deferred until this timestamp (ms epoch). */
+  nextRunAt: number | null;
   createdAt: number;
   startedAt: number | null;
   finishedAt: number | null;
