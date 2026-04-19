@@ -1,7 +1,12 @@
 appId: com.trellis.app
 productName: Trellis
+icon: build/icon.png
 directories:
+  buildResources: build
   output: out/release
+extraResources:
+  - from: build/icon.png
+    to: icon.png
 files:
   - out/build/renderer/**
   - out/build/electron/**

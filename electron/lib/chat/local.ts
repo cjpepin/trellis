@@ -1,7 +1,7 @@
 import { buildChatSystemPrompt } from "../../../supabase/functions/_shared/prompts";
 import { deriveSessionTitle } from "../../../shared/chat/deriveSessionTitle";
 import { defaultLocalExtractionModelId } from "../../../shared/extraction/config";
-import type { LocalChatRunInput, LocalChatRunResult } from "../../ipc/types";
+import type { ChatStreamEvent, LocalChatRunInput, LocalChatRunResult } from "../../ipc/types";
 import { runEmbeddedChatPrompt } from "./embeddedCompletion";
 
 let e2eStubReplyCount = 0;
@@ -65,4 +65,40 @@ export async function runLocalChatReply(input: LocalChatRunInput): Promise<Local
     provider: "embedded",
     model: defaultLocalExtractionModelId
   };
+}
+
+export async function runLocalChatReplyStream(
+  input: LocalChatRunInput,
+  emit: (type: ChatStreamEvent["type"], payload: string) => void
+): Promise<void> {
+  emit("status", "Thinking");
+
+  if (shouldUseE2eLocalReplyStub()) {
+    const result = await runE2eLocalReplyStub(input);
+    for (const token of result.text.split(/(\s+)/)) {
+      if (token.length > 0) {
+        emit("token", token);
+      }
+    }
+    emit("title", result.sessionTitle);
+    emit("done", "ok");
+    return;
+  }
+
+  const text = await runEmbeddedChatPrompt({
+    systemPrompt: buildChatSystemPrompt(input.references ?? []),
+    userPrompt: buildLocalPrompt(input.messages),
+    maxTokens: 1024,
+    temperature: 0.45,
+    missingModelErrorMessage:
+      "Local-only chat needs the on-device note processor installed. Download it in Settings or switch chat privacy back to Auto.",
+    onTextChunk: (chunk) => {
+      if (chunk.length > 0) {
+        emit("token", chunk);
+      }
+    }
+  });
+
+  emit("title", deriveSessionTitle(input.messages, { assistantReply: text }));
+  emit("done", "ok");
 }

@@ -39,8 +39,11 @@ export const ipcChannels = {
   dbReplaceMessages: "db:replace:messages",
   dbUpdateSession: "db:update:session",
   dbRecordWikiOps: "db:record:wiki-ops",
+  dbGetSessionNoteSlugs: "db:get:session-note-slugs",
   dbListWikiTouchSessions: "db:list:wiki-touch-sessions",
   dbGetStrandProvenanceForFile: "db:get:strand-provenance-for-file",
+  dbListStrandRevisions: "db:list:strand-revisions",
+  dbGetStrandRevisionBody: "db:get:strand-revision-body",
   dbCreateThought: "db:create:thought",
   dbListThoughts: "db:list:thoughts",
   dbGetThought: "db:get:thought",
@@ -80,6 +83,7 @@ export const ipcChannels = {
   chatApplyVaultOrganize: "chat:apply-vault-organize",
   chatRunLocalReply: "chat:run:local-reply",
   chatStream: "chat:stream",
+  chatStreamLocal: "chat:stream:local",
   chatStreamEvent: "chat:stream:event",
   providerKeysGet: "provider-keys:get",
   providerKeysSet: "provider-keys:set",
@@ -125,8 +129,8 @@ export type ChatBillingMode = "hosted" | "byok";
 export type ChatPrivacyMode = "auto" | "off" | "local";
 export type ChatContextReferenceType = "note" | "memory";
 export type MemoryKind = "preference" | "project" | "open_loop" | "fact" | "task";
-export type ExtractionMode = "local";
-export type ExtractionProviderId = "embedded";
+export type ExtractionMode = "local" | "cloud";
+export type ExtractionProviderId = "embedded" | "cloud-openai" | "cloud-anthropic";
 export type ExtractionJobStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 export type ExtractionJobTrigger = "idle" | "session-switch" | "manual" | "startup";
 export type ExtractionDebugStatus = "queued" | "running" | "completed" | "failed" | "skipped";
@@ -389,6 +393,15 @@ export interface VaultSnapshot {
   graph: GraphData;
 }
 
+/** Who persisted a strand snapshot (see strand_revisions). */
+export type StrandRevisionActor = "user" | "trellis" | "import" | "system";
+
+export interface StrandRevisionMeta {
+  actor: StrandRevisionActor;
+  /** Chat session when Trellis applied the change (extraction, approved note action, etc.). */
+  sessionId?: string | null;
+}
+
 export interface SaveNoteInput {
   vaultId?: string;
   slug?: string;
@@ -397,6 +410,20 @@ export interface SaveNoteInput {
   title: string;
   content: string;
   frontmatter?: Partial<NoteFrontmatter>;
+  /** When set, a row is stored in strand_revisions after a successful write (deduped by content hash). */
+  strandRevision?: StrandRevisionMeta;
+}
+
+export interface StrandRevisionSummary {
+  id: string;
+  vaultId: string;
+  /** Path under wiki/, POSIX (e.g. `folder/note.md`). */
+  file: string;
+  createdAt: number;
+  actor: StrandRevisionActor;
+  sessionId: string | null;
+  sessionTitle: string | null;
+  contentSha256: string;
 }
 
 export interface SaveNoteResult {
@@ -643,10 +670,16 @@ export interface ExtractionRuntimeStatus {
 
 export interface ExtractionRunInput {
   mode?: ExtractionMode;
+  /** Chat model id for the session; drives cloud vs local extraction when cloud feature is on. */
+  chatModel?: string;
   sessionId?: string;
   transcript: Array<Pick<MessageRecord, "role" | "content">>;
   index: ExtractionIndexEntry[];
   relatedNotes?: ExtractionContextNote[];
+  /** Slugs already written from this chat session; included in the extraction user prompt. */
+  sessionPriorNoteSlugs?: string[];
+  /** Current body content of prior session notes, keyed by slug. */
+  sessionPriorNoteContents?: Map<string, string>;
   sourceType?: ExtractionSourceType;
   sourceTitle?: string;
   sourcePath?: string;
@@ -719,6 +752,15 @@ export interface ExtractionDebugRun {
   startedAt: number | null;
   finishedAt: number | null;
   durationMs: number | null;
+  /**
+   * Orchestration-only: snapshot + retrieval + enrich + prior-session reads before the first LLM call.
+   * Null when the job skipped or failed before prep finished.
+   */
+  prepDurationMs: number | null;
+  /** Wall time for the first extraction strategy invocation (may include multiple provider attempts). */
+  llmPrimaryDurationMs: number | null;
+  /** Present when the optional retry-thorough second pass ran. */
+  llmRetryThoroughDurationMs: number | null;
   jobId: string | null;
   sessionId: string | null;
   vaultId: string | null;
@@ -802,6 +844,8 @@ export interface AuthSessionSnapshot {
   accessToken: string;
   refreshToken: string;
   expiresAt?: number;
+  /** Mirrored from profile for main-process features (e.g. cloud API key resolution). */
+  subscriptionTier?: SubscriptionTier;
   user: {
     id: string;
     email?: string | null;
@@ -839,6 +883,15 @@ export interface ChatStreamRequest {
   references?: ChatReference[];
   /** When true, main process also treats the request as preview (redundant with workspace id). */
   previewWorkspace?: boolean;
+}
+
+/** Local embedded model streaming (same event channel as {@link ChatStreamRequest}). */
+export interface ChatStreamLocalRequest {
+  requestId: string;
+  model: ChatModel;
+  sessionId: string;
+  messages: ChatStreamPayloadMessage[];
+  references?: ChatReference[];
 }
 
 export interface ChatStreamEvent {
@@ -882,12 +935,18 @@ export interface DatabaseBridge {
   appendMessages: (messages: MessageRecord[]) => Promise<void>;
   replaceMessages: (payload: { sessionId: string; messages: MessageRecord[] }) => Promise<void>;
   updateSession: (payload: Partial<ChatSessionSummary> & { id: string }) => Promise<ChatSessionSummary>;
+  getSessionNoteSlugs: (sessionId: string) => Promise<string[]>;
   recordWikiOps: (ops: RecordWikiOpInput[]) => Promise<void>;
   listWikiTouchSessions: (vaultId: string) => Promise<WikiTouchSessionSummary[]>;
   getStrandProvenanceForFile: (input: {
     vaultId: string;
     fileName: string;
   }) => Promise<StrandProvenanceSnapshot | null>;
+  listStrandRevisions: (input: { vaultId: string; file: string }) => Promise<StrandRevisionSummary[]>;
+  getStrandRevisionBody: (input: {
+    vaultId: string;
+    revisionId: string;
+  }) => Promise<{ body: string } | null>;
   createThought: (input: CreateThoughtInput) => Promise<ThoughtRecord>;
   listThoughts: (vaultId: string) => Promise<ThoughtRecord[]>;
   getThought: (thoughtId: string) => Promise<ThoughtRecord | null>;
@@ -922,7 +981,7 @@ export interface RetrievalBridge {
 }
 
 export interface ExtractionBridge {
-  getRuntimeStatus: (input?: { mode?: ExtractionMode }) => Promise<ExtractionRuntimeStatus>;
+  getRuntimeStatus: (input?: { mode?: ExtractionMode; chatModel?: string }) => Promise<ExtractionRuntimeStatus>;
   run: (input: ExtractionRunInput) => Promise<ExtractionRunResult>;
   queueSession: (input: QueueSessionExtractionInput) => Promise<QueueSessionExtractionResult>;
   installLocalModel: (modelId: string) => Promise<ExtractionRuntimeStatus>;
@@ -943,6 +1002,8 @@ export interface ChatBridge {
   proposeNoteActions: (input: ProposeChatNoteActionsInput) => Promise<ProposeChatNoteActionsResult>;
   applyVaultOrganize: (input: ApplyVaultOrganizeInput) => Promise<ApplyVaultOrganizeResult>;
   runLocalReply: (input: LocalChatRunInput) => Promise<LocalChatRunResult>;
+  /** Stream local embedded chat over {@link ipcChannels.chatStreamEvent} (use with `streamLocal`). */
+  streamLocal: (input: ChatStreamInput) => Promise<void>;
   stream: (input: ChatStreamInput) => Promise<void>;
   getProviderKeyStatus: () => Promise<ProviderKeyStatusSnapshot>;
   setProviderKey: (input: SetProviderKeyInput) => Promise<ProviderKeyStatusSnapshot>;

@@ -17,6 +17,34 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
+/** True if `index` falls inside a fenced ``` block (line-based, commonmark-style toggles). */
+export function indexInFencedCode(markdown: string, index: number): boolean {
+  let fenced = false;
+  let offset = 0;
+  const lines = markdown.split("\n");
+
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li] ?? "";
+    const lineStart = offset;
+    const lineEnd = offset + line.length;
+    const trimmed = line.trimStart();
+
+    if (trimmed.startsWith("```")) {
+      fenced = !fenced;
+      offset = lineEnd + (li < lines.length - 1 ? 1 : 0);
+      continue;
+    }
+
+    if (fenced && index >= lineStart && index < lineEnd) {
+      return true;
+    }
+
+    offset = lineEnd + (li < lines.length - 1 ? 1 : 0);
+  }
+
+  return false;
+}
+
 export function buildTranscriptFindMatches(
   messages: Array<{ id: string; content: string }>,
   query: string
@@ -39,7 +67,9 @@ export function buildTranscriptFindMatches(
       if (i === -1) {
         break;
       }
-      out.push({ messageId: m.id, start: i, end: i + q.length });
+      if (!indexInFencedCode(text, i)) {
+        out.push({ messageId: m.id, start: i, end: i + q.length });
+      }
       from = i + q.length;
     }
   }
@@ -56,6 +86,10 @@ export function markdownWithTranscriptFindMark(
   range: { start: number; end: number } | null | undefined
 ): string {
   if (!range || range.start < 0 || range.end > markdown.length || range.start >= range.end) {
+    return markdown;
+  }
+
+  if (indexInFencedCode(markdown, range.start)) {
     return markdown;
   }
 

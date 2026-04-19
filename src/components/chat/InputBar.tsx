@@ -459,7 +459,7 @@ export function InputBar({
   }
 
   return (
-    <div className="trellis-chat-composer w-full px-3 pb-2.5 pt-2">
+    <div className="trellis-chat-composer relative w-full px-3 pb-2.5 pt-2">
       <div className="flex items-start gap-2.5">
         <div className="relative flex-1">
           {pinnedWikiNotes.length > 0 && (
@@ -616,7 +616,7 @@ export function InputBar({
                 value={value}
                 disabled={disabled}
                 placeholder="What are you thinking about?"
-                className="min-h-[42px] w-full resize-none bg-transparent py-1 pb-7 pr-10 text-left text-[15px] leading-6 text-trellis-text outline-none placeholder:text-trellis-faint"
+                className="min-h-[42px] w-full resize-none bg-transparent py-1 pb-2 pr-3 text-left text-[15px] leading-6 text-trellis-text outline-none placeholder:text-trellis-faint"
                 onPaste={(event) => {
                   void handlePasteClipboardImages(event);
                 }}
@@ -656,32 +656,6 @@ export function InputBar({
                   }
                 }}
               />
-              <div className="group absolute bottom-1 right-1 z-10 inline-flex items-center">
-                <button
-                  type="button"
-                  className="rounded-full border border-transparent p-1 text-trellis-muted outline-none ring-trellis-accent/40 transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text focus-visible:ring-2"
-                  aria-label="Composer help: type slash or at-sign to link notes; pin for priority; clip, files, and images add more context; Enter sends; Shift+Enter newline."
-                >
-                  <CircleHelp className="h-4 w-4" aria-hidden />
-                </button>
-                <div
-                  className={cn(
-                    "trellis-elevated invisible absolute bottom-full right-0 z-40 mb-1.5 w-[min(100vw-2rem,340px)]",
-                    "rounded-field border border-trellis-border bg-trellis-surface px-3 py-2 shadow-lg",
-                    "text-xs leading-5 text-trellis-text",
-                    "opacity-0 transition-opacity motion-reduce:transition-none",
-                    "group-hover:visible group-hover:opacity-100",
-                    "group-focus-within:visible group-focus-within:opacity-100"
-                  )}
-                  role="tooltip"
-                >
-                  Type{" "}
-                  <code className="rounded border border-trellis-border/50 px-1 py-px font-mono text-[0.95em]">/</code> or{" "}
-                  <code className="rounded border border-trellis-border/50 px-1 py-px font-mono text-[0.95em]">@</code> to link
-                  notes · pin
-                  for priority · clip, files, and images add more context. Enter sends · Shift+Enter newline.
-                </div>
-              </div>
             </div>
           )}
           {!activeInputTool && noteLinkCommand && (
@@ -766,7 +740,7 @@ export function InputBar({
           );
         })()}
       </div>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2.5">
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2.5 pr-10">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="flex shrink-0 items-center gap-1">
             <ComposerIconButton
@@ -1011,6 +985,34 @@ export function InputBar({
               {selectedModelAccess.reason}
             </span>
           )}
+        </div>
+      </div>
+      <div className="pointer-events-none absolute bottom-2 right-3 z-10">
+        <div className="pointer-events-auto group relative inline-flex items-center">
+          <button
+            type="button"
+            className="rounded-full border border-transparent p-1 text-trellis-muted outline-none ring-trellis-accent/40 transition hover:border-trellis-border hover:bg-trellis-surface hover:text-trellis-text focus-visible:ring-2"
+            aria-label="Composer help: type slash or at-sign to link notes; pin for priority; clip, files, and images add more context; Enter sends; Shift+Enter newline."
+          >
+            <CircleHelp className="h-4 w-4" aria-hidden />
+          </button>
+          <div
+            className={cn(
+              "trellis-elevated invisible absolute bottom-full right-0 z-40 mb-1.5 w-[min(100vw-2rem,340px)]",
+              "rounded-field border border-trellis-border bg-trellis-surface px-3 py-2 shadow-lg",
+              "text-xs leading-5 text-trellis-text",
+              "opacity-0 transition-opacity motion-reduce:transition-none",
+              "group-hover:visible group-hover:opacity-100",
+              "group-focus-within:visible group-focus-within:opacity-100"
+            )}
+            role="tooltip"
+          >
+            Type{" "}
+            <code className="rounded border border-trellis-border/50 px-1 py-px font-mono text-[0.95em]">/</code> or{" "}
+            <code className="rounded border border-trellis-border/50 px-1 py-px font-mono text-[0.95em]">@</code> to link
+            notes · pin
+            for priority · clip, files, and images add more context. Enter sends · Shift+Enter newline.
+          </div>
         </div>
       </div>
     </div>

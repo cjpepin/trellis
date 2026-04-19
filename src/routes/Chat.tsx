@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardCopy, LoaderCircle, MessageSquarePlus } from "lucide-react";
+import { Check, ClipboardCopy, LoaderCircle, MessageSquarePlus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   type AppFeatureFlags,
@@ -88,7 +88,26 @@ function isReadAloudUserCancelError(error: unknown): boolean {
 }
 
 function formatExtractionJobStatus(job: ExtractionJobNotification): string {
-  return job.status === "pending" ? "Queued" : "Adding";
+  switch (job.status) {
+    case "pending":
+      return "Queued";
+    case "running":
+      return "Adding";
+    case "completed":
+      if (job.appliedNotes && job.appliedNotes.length > 0) {
+        return `${job.appliedNotes.length} note${job.appliedNotes.length === 1 ? "" : "s"}`;
+      }
+      if (job.appliedUpdateCount > 0) {
+        return `${job.appliedUpdateCount} update${job.appliedUpdateCount === 1 ? "" : "s"}`;
+      }
+      return "Up to date";
+    case "failed":
+      return "Failed";
+    case "skipped":
+      return "Skipped";
+    default:
+      return job.status;
+  }
 }
 
 function formatExtractionJobTrigger(job: ExtractionJobNotification): string {
@@ -139,7 +158,9 @@ export function Chat({
   const [extractionJobsBySession, setExtractionJobsBySession] = useState<
     Record<string, ExtractionJobNotification>
   >({});
+  const [extractionRecentJobs, setExtractionRecentJobs] = useState<ExtractionJobNotification[]>([]);
   const [extractionQueueOpen, setExtractionQueueOpen] = useState(false);
+  const extractionQueuePopoverRef = useRef<HTMLDivElement | null>(null);
   const [transcriptFindOpen, setTranscriptFindOpen] = useState(false);
   const [transcriptFindQuery, setTranscriptFindQuery] = useState("");
   const [transcriptFindMatchIdx, setTranscriptFindMatchIdx] = useState(0);
@@ -213,12 +234,17 @@ export function Chat({
     () => new Map(sessions.map((session) => [session.id, session.title] as const)),
     [sessions]
   );
-  const extractionQueueTooltip =
-    activeExtractionJobs.length > 1
-      ? `${activeExtractionJobs.length} Strand jobs active`
-      : activeExtractionJobs[0]?.status === "pending"
+  const sessionExtractionBusy = Boolean(
+    activeSessionId &&
+      activeExtractionJobs.some((job) => job.sessionId === activeSessionId)
+  );
+  const extractionQueueTooltip = sessionExtractionBusy
+    ? activeExtractionJobs.filter((job) => job.sessionId === activeSessionId).length > 1
+      ? `${activeExtractionJobs.filter((job) => job.sessionId === activeSessionId).length} Strand jobs for this chat`
+      : activeExtractionJobs.find((job) => job.sessionId === activeSessionId)?.status === "pending"
         ? "Queued for Strands"
-        : "Adding to Strands";
+        : "Adding to Strands"
+    : "Recent Strands activity — click to view";
   const awaitingFirstToken = Boolean(activeSessionChatRun?.awaitingFirstToken);
   const runningChatCount = Object.keys(chatRunsBySession).length;
   const parallelChatLimitReached = runningChatCount >= maxParallelChatRuns;
@@ -251,6 +277,50 @@ export function Chat({
       setExtractionQueueOpen(false);
     }
   }, [activeExtractionJobs.length]);
+
+  useEffect(() => {
+    if (!extractionQueueOpen || !features.localExtraction) {
+      return;
+    }
+
+    const root = extractionQueuePopoverRef.current;
+
+    if (!root) {
+      return;
+    }
+
+    function onFocusOut(event: FocusEvent): void {
+      const anchor = extractionQueuePopoverRef.current;
+      const next = event.relatedTarget;
+
+      if (!anchor) {
+        return;
+      }
+
+      if (next instanceof Node && anchor.contains(next)) {
+        return;
+      }
+
+      setExtractionQueueOpen(false);
+    }
+
+    function onPointerDown(event: PointerEvent): void {
+      const anchor = extractionQueuePopoverRef.current;
+
+      if (!anchor || anchor.contains(event.target as Node)) {
+        return;
+      }
+
+      setExtractionQueueOpen(false);
+    }
+
+    root.addEventListener("focusout", onFocusOut);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      root.removeEventListener("focusout", onFocusOut);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, [extractionQueueOpen, features.localExtraction]);
 
   useEffect(() => {
     setTranscriptFindOpen(false);
@@ -447,6 +517,17 @@ export function Chat({
         const { [notification.sessionId]: _done, ...rest } = current;
         return rest;
       });
+
+      if (
+        notification.status === "completed" ||
+        notification.status === "failed" ||
+        notification.status === "skipped"
+      ) {
+        setExtractionRecentJobs((hist) => {
+          const next = [notification, ...hist.filter((job) => job.id !== notification.id)];
+          return next.slice(0, 12);
+        });
+      }
     });
   }, []);
 
@@ -513,18 +594,11 @@ export function Chat({
     [features.localExtraction, queueExtraction]
   );
 
-  const queueIdleExtractionWithToast = useCallback(
+  const queueIdleExtraction = useCallback(
     (sessionId: string) => {
-      void maybeQueueSessionExtraction(sessionId, "idle").then((result) => {
-        if (result?.state === "queued") {
-          pushToast({
-            title: "Updating your vault from this chat in the background…",
-            tone: "default"
-          });
-        }
-      });
+      void maybeQueueSessionExtraction(sessionId, "idle");
     },
-    [maybeQueueSessionExtraction, pushToast]
+    [maybeQueueSessionExtraction]
   );
 
   const applyExtractionComposer = useApplyExtraction();
@@ -888,7 +962,7 @@ export function Chat({
             upsertSession(updatedSession);
             setPendingAttachments([]);
             setPendingImageAttachments([]);
-            queueIdleExtractionWithToast(sessionId);
+            queueIdleExtraction(sessionId);
             finishAttention = "ready";
             return;
           }
@@ -950,7 +1024,10 @@ export function Chat({
         sessionId,
         baseMessages,
         contextPacket.references as ChatNoteReference[],
-        runModel
+        runModel,
+        {
+          onFirstAssistantToken: () => clearMessageMeta(userMessage.id)
+        }
       );
 
       if (!streamResult.assistantMessage) {
@@ -1112,7 +1189,7 @@ export function Chat({
         model: runModel
       });
       upsertSession(updatedSession);
-      queueIdleExtractionWithToast(sessionId);
+      queueIdleExtraction(sessionId);
       void window.trellis.chat
         .applyVaultOrganize({
           vaultId: sessionVaultId,
@@ -1607,7 +1684,7 @@ export function Chat({
         model: imageRouteModel
       });
       upsertSession(updatedSession);
-      queueIdleExtractionWithToast(sessionId);
+      queueIdleExtraction(sessionId);
       return true;
     } catch (error) {
       replaceSessionMessages(sessionId, priorMessages);
@@ -1755,7 +1832,8 @@ export function Chat({
         folderPath: action.targetFolderPath,
         title: action.targetTitle,
         content: action.afterMarkdown,
-        frontmatter: action.frontmatter
+        frontmatter: action.frontmatter,
+        strandRevision: { actor: "trellis", sessionId: activeSessionId }
       });
       const snapshot = await window.trellis.vault.listIndex(vaultId);
       setNote(result.note);
@@ -2121,75 +2199,6 @@ export function Chat({
               />
             )}
             <div className="relative flex shrink-0 items-center justify-end gap-1.5 self-end">
-              {activeExtractionJobs.length > 0 ? (
-                <div className="relative inline-flex">
-                  <button
-                    type="button"
-                    title={extractionQueueTooltip}
-                    aria-label={extractionQueueTooltip}
-                    aria-expanded={extractionQueueOpen}
-                    data-testid="chat-extraction-sync-indicator"
-                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-trellis-border bg-trellis-surface text-trellis-accent outline-none ring-trellis-accent/40 transition hover:border-trellis-accent/35 hover:text-trellis-text focus-visible:ring-2"
-                    onClick={() => {
-                      setExtractionQueueOpen((open) => !open);
-                    }}
-                  >
-                    <LoaderCircle className="h-4 w-4 motion-safe:animate-spin" aria-hidden />
-                  </button>
-                  {extractionQueueOpen ? (
-                    <div
-                      className="trellis-elevated absolute bottom-full right-0 z-50 mb-2 w-[min(100vw-2rem,320px)] rounded-field border border-trellis-border bg-trellis-surface p-2 text-left shadow-lg"
-                      role="dialog"
-                      aria-label="Strand sync queue"
-                    >
-                      <p className="px-2 pb-1 text-[10px] uppercase tracking-[0.18em] text-trellis-faint">
-                        Strands queue
-                      </p>
-                      <div className="max-h-48 overflow-y-auto">
-                        {activeExtractionJobs.map((job) => {
-                          const title = extractionSessionTitleById.get(job.sessionId) ?? "Untitled chat";
-                          const turnCount = Math.max(
-                            0,
-                            job.transcriptEndIndex - job.transcriptStartIndex
-                          );
-
-                          return (
-                            <div
-                              key={job.id}
-                              className="rounded-field px-2 py-2 text-xs text-trellis-text"
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="min-w-0 truncate font-medium">{title}</span>
-                                <span className="shrink-0 text-trellis-accent">
-                                  {formatExtractionJobStatus(job)}
-                                </span>
-                              </div>
-                              <p className="mt-1 text-[11px] text-trellis-muted">
-                                {formatExtractionJobTrigger(job)}
-                                {turnCount > 0 ? ` · ${turnCount} turns` : ""}
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-              {activeSessionId && currentMessages.length > 0 ? (
-                <button
-                  type="button"
-                  data-testid="chat-copy-clipboard"
-                  title="Copy this conversation as plain text"
-                  aria-label="Copy this conversation as plain text"
-                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-trellis-border bg-trellis-surface text-trellis-text transition hover:border-trellis-accent/35 hover:text-trellis-accent"
-                  onClick={() => {
-                    void handleCopyChatToClipboard();
-                  }}
-                >
-                  <ClipboardCopy className="h-4 w-4" aria-hidden />
-                </button>
-              ) : null}
               <span
                 title={newChatDisabled ? parallelChatLimitMessage : undefined}
                 className={cn("inline-flex", newChatDisabled && "cursor-not-allowed")}
@@ -2218,6 +2227,149 @@ export function Chat({
                   <MessageSquarePlus className="h-4 w-4" aria-hidden />
                 </button>
               </span>
+              {activeSessionId && currentMessages.length > 0 ? (
+                <button
+                  type="button"
+                  data-testid="chat-copy-clipboard"
+                  title="Copy this conversation as plain text"
+                  aria-label="Copy this conversation as plain text"
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-trellis-border bg-trellis-surface text-trellis-text transition hover:border-trellis-accent/35 hover:text-trellis-accent"
+                  onClick={() => {
+                    void handleCopyChatToClipboard();
+                  }}
+                >
+                  <ClipboardCopy className="h-4 w-4" aria-hidden />
+                </button>
+              ) : null}
+              <div ref={extractionQueuePopoverRef} className="relative inline-flex">
+                <button
+                  type="button"
+                  title={
+                    features.localExtraction
+                      ? extractionQueueTooltip
+                      : "On-device Strands processing is off"
+                  }
+                  aria-label={
+                    features.localExtraction
+                      ? extractionQueueTooltip
+                      : "On-device Strands processing is off"
+                  }
+                  aria-expanded={extractionQueueOpen}
+                  aria-busy={sessionExtractionBusy && features.localExtraction}
+                  disabled={!features.localExtraction}
+                  data-testid="chat-extraction-sync-indicator"
+                  className={cn(
+                    "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-trellis-border bg-trellis-surface outline-none ring-trellis-accent/40 transition focus-visible:ring-2",
+                    features.localExtraction
+                      ? "text-trellis-accent hover:border-trellis-accent/35 hover:text-trellis-text"
+                      : "cursor-not-allowed text-trellis-faint opacity-50"
+                  )}
+                  onClick={() => {
+                    if (!features.localExtraction) {
+                      return;
+                    }
+                    setExtractionQueueOpen((open) => !open);
+                  }}
+                >
+                  {features.localExtraction && sessionExtractionBusy ? (
+                    <LoaderCircle className="h-4 w-4 motion-safe:animate-spin" aria-hidden />
+                  ) : (
+                    <Check className="h-4 w-4" aria-hidden />
+                  )}
+                </button>
+                {extractionQueueOpen && features.localExtraction ? (
+                  <div
+                    className="trellis-elevated absolute bottom-full right-0 z-50 mb-2 w-[min(100vw-2rem,320px)] rounded-field border border-trellis-border bg-trellis-surface p-2 text-left shadow-lg"
+                    role="dialog"
+                    aria-label={
+                      sessionExtractionBusy ? "Strands sync queue" : "Recent Strands activity"
+                    }
+                  >
+                    <p className="px-2 pb-1 text-[10px] uppercase tracking-[0.18em] text-trellis-faint">
+                      {sessionExtractionBusy ? "Strands queue" : "Recent Strands"}
+                    </p>
+                    <div className="max-h-48 overflow-y-auto">
+                      {sessionExtractionBusy ? (
+                        activeExtractionJobs.length > 0 ? (
+                          activeExtractionJobs.map((job) => {
+                            const title =
+                              extractionSessionTitleById.get(job.sessionId) ?? "Untitled chat";
+                            const turnCount = Math.max(
+                              0,
+                              job.transcriptEndIndex - job.transcriptStartIndex
+                            );
+
+                            return (
+                              <div
+                                key={job.id}
+                                className="rounded-field px-2 py-2 text-xs text-trellis-text"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="min-w-0 truncate font-medium">{title}</span>
+                                  <span className="shrink-0 text-trellis-accent">
+                                    {formatExtractionJobStatus(job)}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-[11px] text-trellis-muted">
+                                  {formatExtractionJobTrigger(job)}
+                                  {turnCount > 0 ? ` · ${turnCount} turns` : ""}
+                                </p>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <p className="px-2 py-3 text-xs text-trellis-muted">
+                            No active jobs — if this spinner persists, try switching chats or check
+                            Settings.
+                          </p>
+                        )
+                      ) : extractionRecentJobs.length > 0 ? (
+                        extractionRecentJobs.map((job) => {
+                          const title =
+                            job.sessionTitle ??
+                            extractionSessionTitleById.get(job.sessionId) ??
+                            "Untitled chat";
+                          const turnCount = Math.max(
+                            0,
+                            job.transcriptEndIndex - job.transcriptStartIndex
+                          );
+
+                          return (
+                            <div
+                              key={job.id}
+                              className="rounded-field px-2 py-2 text-xs text-trellis-text"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="min-w-0 truncate font-medium">{title}</span>
+                                <span
+                                  className={cn(
+                                    "shrink-0",
+                                    job.status === "failed" ? "text-trellis-error" : "text-trellis-accent"
+                                  )}
+                                >
+                                  {formatExtractionJobStatus(job)}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-[11px] text-trellis-muted">
+                                {formatExtractionJobTrigger(job)}
+                                {turnCount > 0 ? ` · ${turnCount} turns` : ""}
+                                {job.status === "failed" && job.errorMessage
+                                  ? ` · ${job.errorMessage}`
+                                  : ""}
+                              </p>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <p className="px-2 py-3 text-xs text-trellis-muted">
+                          No recent Strands runs yet. After each assistant reply, Trellis extracts
+                          notes in the background.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>

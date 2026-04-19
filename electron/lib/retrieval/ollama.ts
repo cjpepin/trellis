@@ -47,7 +47,8 @@ export async function embedTexts(
       body: JSON.stringify({
         model,
         input: inputs
-      })
+      }),
+      signal: AbortSignal.timeout(4000)
     });
 
     if (!response.ok) {
@@ -74,7 +75,10 @@ export async function embedTexts(
       model,
       usedEmbeddings: true
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      console.warn("Ollama embed request timed out after 4s.");
+    }
     return {
       embeddings: inputs.map(() => null),
       model: null,

@@ -1,6 +1,6 @@
 import { corsHeaders } from "../_shared/http.ts";
 import { getEnvironment, requireUser } from "../_shared/auth.ts";
-import { assertMaxJsonBodyBytes } from "../_shared/requestLimits.ts";
+import { assertMaxJsonBodyBytes, readJsonBodyWithByteLimit } from "../_shared/requestLimits.ts";
 
 function parsePlan(body: unknown): "byok" | "pro" {
   if (!body || typeof body !== "object") {
@@ -36,7 +36,7 @@ Deno.serve(async (request) => {
   try {
     assertMaxJsonBodyBytes(request);
     const { user, profile } = await requireUser(request);
-    const plan = parsePlan(await request.json());
+    const plan = parsePlan(await readJsonBodyWithByteLimit(request));
     const params = new URLSearchParams();
 
     params.set("mode", "subscription");

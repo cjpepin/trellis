@@ -1,6 +1,8 @@
-import type { ExtractionRuntimeStatus } from "../../ipc/types";
+import type { ExtractionProviderId, ExtractionRuntimeStatus } from "../../ipc/types";
 
-export function pickSelectedProviderId(status: ExtractionRuntimeStatus["providers"]) {
+export function pickSelectedProviderId(
+  status: ExtractionRuntimeStatus["providers"]
+): ExtractionProviderId | null {
   const available = status.filter((provider) => provider.available);
-  return available.find((provider) => provider.id === "embedded")?.id ?? null;
+  return available[0]?.id ?? null;
 }

@@ -92,6 +92,7 @@ async function runExtractionRequest(
 ): Promise<ExtractionResponse> {
   const runInput: ExtractionRunInput = {
     mode: input.mode,
+    chatModel: input.chatModel,
     sessionId: input.sessionId,
     transcript: input.transcript,
     index: input.index,
@@ -111,6 +112,22 @@ export async function streamChat(input: StreamChatInput): Promise<void> {
   const accessToken = await resolveAccessToken(input.accessToken);
   await window.trellis.chat.stream({
     accessToken,
+    subscriptionTier: input.subscriptionTier,
+    model: input.model,
+    sessionId: input.sessionId,
+    messages: input.messages,
+    references: input.references ?? [],
+    ...(input.previewWorkspace ? { previewWorkspace: true } : {}),
+    onToken: input.onToken,
+    onStatus: input.onStatus,
+    onTitle: input.onTitle
+  });
+}
+
+/** Stream on-device embedded chat (IPC token events; same handlers as cloud `streamChat`). */
+export async function streamLocalChat(input: StreamChatInput): Promise<void> {
+  await window.trellis.chat.streamLocal({
+    accessToken: input.accessToken,
     subscriptionTier: input.subscriptionTier,
     model: input.model,
     sessionId: input.sessionId,

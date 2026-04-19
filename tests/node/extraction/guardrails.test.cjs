@@ -57,7 +57,7 @@ const index = [
   }
 ];
 
-test("prepareExtractionWrite demotes duplicate headings and normalizes links", () => {
+test("prepareExtractionWrite merges append sections when heading already exists", () => {
   const prepared = prepareExtractionWrite({
     update: createUpdate({
       body: [
@@ -76,12 +76,50 @@ test("prepareExtractionWrite demotes duplicate headings and normalizes links", (
   });
 
   assert.ok(prepared);
-  assert.match(prepared.content, /\*\*Decisions\*\*/);
-  assert.ok(!prepared.content.includes("\n## Decisions\n\nRetention matters more than breadth."));
+  assert.match(prepared.content, /^## Decisions/m);
+  assert.match(prepared.content, /Retention matters more than breadth/);
+  assert.ok(!prepared.content.includes("**Decisions**"));
   assert.match(prepared.content, /\[\[Habit Loop\]\]/);
   assert.equal(prepared.content.match(/## Connected Notes/g)?.length, 1);
   assert.deepEqual(prepared.tags, ["product", "strategy"]);
   assert.equal(prepared.folderPath, "");
+});
+
+test("prepareExtractionWrite replaces key-value bullets on append supersession", () => {
+  const prepared = prepareExtractionWrite({
+    update: createUpdate({
+      body: [
+        "## Schedule",
+        "",
+        "- Workload: 4 days/week across the training block for this cycle.",
+        "",
+        "## Connected Notes",
+        "",
+        "- [[habit loop]]"
+      ].join("\n"),
+      links: ["habit loop"]
+    }),
+    existingNote: createExistingNote({
+      content: [
+        "## Decisions",
+        "",
+        "Keep onboarding calm.",
+        "",
+        "## Schedule",
+        "",
+        "- Workload: 3 days/week across the training block for this cycle.",
+        "",
+        "## Connected Notes",
+        "",
+        "- [[Habit Loop]]"
+      ].join("\n")
+    }),
+    index
+  });
+
+  assert.ok(prepared);
+  assert.match(prepared.content, /Workload: 4 days\/week/);
+  assert.ok(!prepared.content.includes("Workload: 3 days"));
 });
 
 test("prepareExtractionWrite inserts appends before connected notes metadata", () => {
@@ -161,6 +199,90 @@ test("prepareExtractionWrite strips assistant preamble from Summary and opening"
   assert.ok(!prepared.content.toLowerCase().includes("here's a structured"));
   assert.match(prepared.content, /Weekly structure/);
   assert.match(prepared.content, /Base phase/);
+});
+
+test("prepareExtractionWrite strips conversational Summary bridges and trailing chat offers", () => {
+  const prepared = prepareExtractionWrite({
+    update: createUpdate({
+      operation: "create",
+      targetSlug: "model-modes",
+      targetTitle: "Advisor vs Execution Modes",
+      body: [
+        "## Summary",
+        "",
+        "That tracks, and it's a useful distinction: Opus often wins on advisor-style planning.",
+        "",
+        "Here are the main reasons Claude can feel thoughtful while still feeling costly.",
+        "",
+        "## Key details",
+        "",
+        "- Execution mode favors fast iteration.",
+        "",
+        "If you want, tell me what you were planning and I'll give you a template you can reuse."
+      ].join("\n")
+    }),
+    existingNote: null,
+    index: []
+  });
+
+  assert.ok(prepared);
+  assert.ok(!prepared.content.toLowerCase().includes("that tracks"));
+  assert.ok(!prepared.content.toLowerCase().includes("here are the main reasons"));
+  assert.ok(!prepared.content.toLowerCase().includes("if you want"));
+  assert.match(prepared.content, /Key details/);
+  assert.match(prepared.content, /Execution mode/);
+});
+
+test("prepareExtractionWrite strips conclusion and AI-polite closing paragraphs", () => {
+  const body = [
+    "## Key Details",
+    "",
+    "The approach uses a queue-based pipeline for extraction jobs.",
+    "",
+    "## Architecture",
+    "",
+    "Each job runs through a provider chain with fallback support.",
+    "",
+    "In conclusion, this architecture provides a robust foundation for extraction processing."
+  ].join("\n");
+
+  const prepared = prepareExtractionWrite({
+    update: createUpdate({ operation: "create", body }),
+    existingNote: null,
+    index: []
+  });
+
+  assert.ok(prepared);
+  assert.ok(!prepared.content.toLowerCase().includes("in conclusion"));
+  assert.match(prepared.content, /queue-based pipeline/);
+  assert.match(prepared.content, /provider chain/);
+});
+
+test("prepareExtractionWrite strips 'I hope this helps' and 'Overall' closing paragraphs", () => {
+  const body = [
+    "## Summary",
+    "",
+    "The system handles three extraction modes: local, cloud, and hybrid.",
+    "",
+    "## Modes",
+    "",
+    "Local mode uses an embedded GGUF model. Cloud mode routes to OpenAI or Anthropic.",
+    "",
+    "Overall, this gives you flexibility to choose the right tradeoff for your use case.",
+    "",
+    "I hope this helps clarify the extraction architecture."
+  ].join("\n");
+
+  const prepared = prepareExtractionWrite({
+    update: createUpdate({ operation: "create", body }),
+    existingNote: null,
+    index: []
+  });
+
+  assert.ok(prepared);
+  assert.ok(!prepared.content.toLowerCase().includes("overall, this gives"));
+  assert.ok(!prepared.content.toLowerCase().includes("i hope this helps"));
+  assert.match(prepared.content, /embedded GGUF/);
 });
 
 test("skipIfDuplicatePreparedExtractionContent detects duplicate normalized bodies", () => {

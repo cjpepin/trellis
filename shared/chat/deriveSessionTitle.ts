@@ -1,4 +1,4 @@
-import { CHAT_ATTACHMENT_CONTEXT_MARKER } from "./formatMessage";
+import { CHAT_ATTACHMENT_CONTEXT_MARKER } from "./formatMessage.ts";
 
 const MAX_TITLE_WORDS = 6;
 

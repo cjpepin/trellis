@@ -118,13 +118,13 @@ export function Thoughts({ settings }: Props) {
       const result = await window.trellis.vault.writeNote({
         vaultId: vault.id,
         title,
-        folderPath: "captures",
         content: selected.content,
         frontmatter: {
           type: "synthesis",
           tags: selected.tags.length > 0 ? selected.tags : ["capture"],
           sources: 0
-        }
+        },
+        strandRevision: { actor: "user" }
       });
       pushToast({
         title: "Saved as Strand",

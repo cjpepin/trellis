@@ -9,12 +9,16 @@ import type {
   WorkspaceInfo
 } from "@electron/ipc/types";
 import { WorkspaceChooser } from "@/components/setup/WorkspaceChooser";
-import { LocalNoteProcessorFirstRun } from "@/components/setup/LocalNoteProcessorFirstRun";
 import { CommandPalette } from "@/components/shared/CommandPalette";
 import { RouteErrorBoundary } from "@/components/shared/RouteErrorBoundary";
 import { Sidebar } from "@/components/shared/Sidebar";
 import { Toast } from "@/components/shared/Toast";
-import { getProfileSnapshot, hydrateStoredSession, persistSession } from "@/lib/auth";
+import {
+  authLog,
+  getProfileSnapshot,
+  hydrateStoredSession,
+  persistSession
+} from "@/lib/auth";
 import { applyTheme, getActiveVault } from "@/lib/settings";
 import { getSupabase, hasSupabaseConfig } from "@/lib/supabase";
 import { parallelChatLimitMessage } from "@/lib/chatRunState";
@@ -315,16 +319,23 @@ export default function App() {
 
   const syncAuth = useCallback(
     async (session: Session | null, rememberSession: boolean): Promise<void> => {
+      authLog("syncAuth", {
+        hasSession: session !== null,
+        rememberSession
+      });
       if (!session) {
         await persistSession(null);
         setAnonymous();
+        authLog("syncAuth: anonymous (no session)");
         return;
       }
 
       try {
         const profile = await getProfileSnapshot(session.user.id);
         try {
-          await persistSession(rememberSession ? session : null);
+          await persistSession(rememberSession ? session : null, rememberSession
+            ? { subscriptionTier: profile.subscriptionTier }
+            : undefined);
         } catch (error) {
           console.warn("Could not persist the account session into secure storage.", error);
         }
@@ -340,6 +351,7 @@ export default function App() {
           isAdmin: profile.isAdmin,
           usage: profile.usage
         });
+        authLog("syncAuth: authenticated", { tier: profile.subscriptionTier });
       } catch (error) {
         console.warn(
           "Could not fully hydrate auth state, falling back to local trial defaults.",
@@ -362,6 +374,7 @@ export default function App() {
             ingestLimit: 5
           }
         });
+        authLog("syncAuth: authenticated (profile fallback)");
       }
     },
     [setAnonymous, setAuthenticated]
@@ -369,8 +382,12 @@ export default function App() {
 
   const refreshAuthForWorkspace = useCallback(
     async (payload: AppBootstrap): Promise<void> => {
+      authLog("refreshAuthForWorkspace: start", {
+        rememberSession: payload.settings.rememberSession
+      });
       if (!hasSupabaseConfig()) {
         setAnonymous();
+        authLog("refreshAuthForWorkspace: no Supabase config, anonymous");
         return;
       }
 
@@ -381,6 +398,7 @@ export default function App() {
 
       const session = payload.settings.rememberSession ? await hydrateStoredSession() : null;
       await syncAuth(session, payload.settings.rememberSession);
+      authLog("refreshAuthForWorkspace: done");
     },
     [setAnonymous, syncAuth]
   );
@@ -475,7 +493,9 @@ export default function App() {
         );
       }
 
+      authLog("bootstrap: ipc payload requested");
       const payload = await window.trellis.app.bootstrap();
+      authLog("bootstrap: ipc payload received", { workspaceId: payload.workspace.id });
 
       if (cancelled) {
         return;
@@ -485,28 +505,37 @@ export default function App() {
       if (hasSupabaseConfig()) {
         setLoading();
       }
-      await refreshAuthForWorkspace(payload);
 
-      if (!hasSupabaseConfig()) {
+      if (hasSupabaseConfig()) {
+        const {
+          data: { subscription }
+        } = getSupabase().auth.onAuthStateChange((_event, nextSession) => {
+          void syncAuth(nextSession, rememberSessionRef.current);
+        });
+
+        await refreshAuthForWorkspace(payload);
+
+        if (cancelled) {
+          subscription.unsubscribe();
+          return;
+        }
+
         if (!cancelled) {
           setIsBootstrapping(false);
         }
-        return;
+
+        return () => {
+          subscription.unsubscribe();
+        };
       }
 
-      const {
-        data: { subscription }
-      } = getSupabase().auth.onAuthStateChange((_event, nextSession) => {
-        void syncAuth(nextSession, rememberSessionRef.current);
-      });
+      await refreshAuthForWorkspace(payload);
 
       if (!cancelled) {
         setIsBootstrapping(false);
       }
 
-      return () => {
-        subscription.unsubscribe();
-      };
+      return undefined;
     }
 
     let cleanup: (() => void) | undefined;
@@ -672,10 +701,6 @@ export default function App() {
             onResetPreview={handleResetPreview}
           />
         </HashRouter>
-        <LocalNoteProcessorFirstRun
-          settings={settings}
-          features={features}
-        />
       </>
     );
   }, [

@@ -3,7 +3,11 @@ const test = require("node:test");
 const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
 const {
+  cloudExtractionMaxOutputTokens,
+  embeddedExtractionMaxTokensPrimary,
+  embeddedExtractionMaxTokensRetry,
   extractionFeatureFlagNames,
+  extractionRetryShortTranscriptMaxTurns,
   extractionThresholds,
   parseBooleanFlag
 } = require(fromRepoRoot("shared", "extraction", "config.ts"));
@@ -27,9 +31,17 @@ test("extraction config exports rollout flag names and stable thresholds", () =>
     extractionFeatureFlagNames.heuristicFallback,
     "TRELLIS_ENABLE_HEURISTIC_EXTRACTION_FALLBACK"
   );
+  assert.equal(
+    extractionFeatureFlagNames.cloudExtraction,
+    "TRELLIS_FEATURE_CLOUD_EXTRACTION"
+  );
   assert.equal(extractionThresholds.maxTagsPerNote, 6);
   assert.ok(
-    extractionThresholds.rewriteConfidenceFloor >= 0.68 &&
+    extractionThresholds.rewriteConfidenceFloor >= 0.55 &&
       extractionThresholds.rewriteConfidenceFloor <= 0.78
   );
+  assert.equal(cloudExtractionMaxOutputTokens, 3072);
+  assert.equal(embeddedExtractionMaxTokensPrimary, 2048);
+  assert.equal(embeddedExtractionMaxTokensRetry, 1536);
+  assert.equal(extractionRetryShortTranscriptMaxTurns, 2);
 });

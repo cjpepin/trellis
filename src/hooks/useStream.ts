@@ -1,8 +1,9 @@
 import { useCallback } from "react";
 import type { ChatModel, ChatPrivacyMode, MessageRecord, SubscriptionTier } from "@electron/ipc/types";
-import { streamChat, type ChatNoteReference } from "@/lib/api";
+import { streamChat, streamLocalChat, type ChatNoteReference } from "@/lib/api";
 import { formatMessageForApi } from "@/lib/chatAttachments";
 import { messageRecordsToStreamPayload } from "@/lib/chatStreamMessages";
+import { isUnsetChatSessionTitle } from "@shared/chat/chatSessionTitle";
 import { useChatStore } from "@/store/chatStore";
 
 interface UseStreamInput {
@@ -15,6 +16,11 @@ interface UseStreamInput {
 interface StreamResult {
   assistantMessage: MessageRecord | null;
   failureMessage: string | null;
+}
+
+export interface StreamAssistantOptions {
+  /** Called once when the first assistant token arrives (message reached the model and a reply started). */
+  onFirstAssistantToken?: () => void;
 }
 
 function getToastCopy(message: string): string {
@@ -84,7 +90,8 @@ export function useStream({
       sessionId: string,
       messages: MessageRecord[],
       references: ChatNoteReference[] = [],
-      model: ChatModel
+      model: ChatModel,
+      streamOptions?: StreamAssistantOptions
     ): Promise<StreamResult> => {
       if (privacyMode !== "local" && !accessToken) {
         throw new Error("Please sign in before starting a chat.");
@@ -102,9 +109,14 @@ export function useStream({
       addMessage(assistantDraft);
       markChatRunAssistant(sessionId, assistantDraft.id);
       let failureMessage: string | null = null;
+      let firstAssistantTokenNotified = false;
 
       try {
         const handleTitle = async (title: string) => {
+          const current = useChatStore.getState().sessions.find((s) => s.id === sessionId);
+          if (current && !isUnsetChatSessionTitle(current.title)) {
+            return;
+          }
           const updatedSession = await window.trellis.db.updateSession({
             id: sessionId,
             title,
@@ -114,6 +126,10 @@ export function useStream({
         };
         const handleToken = (token: string) => {
           markChatRunFirstToken(sessionId);
+          if (!firstAssistantTokenNotified) {
+            firstAssistantTokenNotified = true;
+            streamOptions?.onFirstAssistantToken?.();
+          }
           assistantDraft.content += token;
           patchAssistantDraft(sessionId, assistantDraft.id, assistantDraft.content);
         };
@@ -130,24 +146,18 @@ export function useStream({
         }
 
         if (privacyMode === "local") {
-          const reply = await window.trellis.chat.runLocalReply({
+          await streamLocalChat({
+            accessToken: accessToken ?? "",
+            subscriptionTier,
             model,
-            messages: messages.map((message) => ({
-              role: message.role,
-              content: formatMessageForApi(message)
-            })),
-            references
+            sessionId,
+            messages: streamPayload,
+            references,
+            ...(previewWorkspace ? { previewWorkspace: true } : {}),
+            onStatus: () => undefined,
+            onTitle: handleTitle,
+            onToken: handleToken
           });
-
-          await handleTitle(reply.sessionTitle);
-
-          for (const token of reply.text.split(/(\s+)/)) {
-            if (token.length === 0) {
-              continue;
-            }
-
-            handleToken(token);
-          }
         } else {
           await streamChat({
             accessToken: accessToken ?? "",

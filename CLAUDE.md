@@ -1,8 +1,58 @@
 # CLAUDE.md
 
-This file is the Claude Code operating guide for Trellis. It should agree with
-`AGENTS.md`, `README.md`, and the product docs. If anything here conflicts with
-`AGENTS.md`, follow `AGENTS.md` and update this file as part of the same change.
+This file is the Claude Code operating guide for Trellis.
+
+## Core Operating Principles (HIGH PRIORITY)
+
+These rules override stylistic preferences and should be followed unless explicitly told otherwise.
+
+### 1. Minimize Token Usage While Preserving Quality
+- Be concise by default.
+- Avoid unnecessary explanation, repetition, or exploration.
+- Prefer the smallest correct answer over a comprehensive one.
+- Do not restate context unless required for correctness.
+
+### 2. Deterministic Execution (No Exploration Mode)
+- Do NOT explore multiple approaches unless explicitly asked.
+- Choose the most likely correct solution and proceed.
+- Avoid speculative reasoning or “just in case” changes.
+
+### 3. Minimal Surface Area Changes
+- Make the smallest possible change to solve the problem.
+- Do not refactor unrelated code.
+- Do not rewrite entire files unless necessary.
+
+### 4. Context Discipline
+- Read the smallest set of files required.
+- Do not load or analyze large files unless directly relevant.
+- Prefer partial reads and targeted search (`rg`) over full file scans.
+
+### 5. Idempotent and Stable Behavior
+- Ensure repeated runs do not create duplicate or divergent results.
+- Prefer updates over new creations when modifying existing artifacts.
+
+---
+
+## Output Rules (CRITICAL)
+
+Always follow structured, minimal outputs.
+
+### For bug fixes:
+1. Root cause (1–2 lines)
+2. Fix summary (1–2 lines)
+3. Minimal patch (only changed code)
+
+### For feature work:
+1. Plan (concise, no fluff)
+2. Implementation (scoped, minimal)
+3. Verification steps
+
+### General:
+- No unnecessary prose
+- No long explanations unless explicitly requested
+- Avoid markdown verbosity unless it improves clarity
+
+---
 
 ## Project Summary
 
@@ -198,7 +248,8 @@ easy to extend and honest about parity.
 
 ## Local Extraction
 
-On-device extraction is the default note-processing path.
+On-device extraction is the default note-processing path when cloud extraction
+is off or the session does not use a cloud chat model.
 
 - Local extraction uses `node-llama-cpp` in the Electron main process.
 - The GGUF path is under app user data and is configured by
@@ -207,7 +258,8 @@ On-device extraction is the default note-processing path.
 - Model weights are not bundled. First run downloads once.
 - Override the download URL with `TRELLIS_EMBEDDED_EXTRACTION_MODEL_URL`.
 - Set `TRELLIS_FEATURE_LOCAL_EXTRACTION=0` to disable on-device note processing.
-- There is no cloud extraction fallback path.
+- Optional cloud extraction for OpenAI/Anthropic chat sessions: `TRELLIS_FEATURE_CLOUD_EXTRACTION`
+  (see `docs/extraction-routing.md`); on-device extraction remains the fallback when cloud fails.
 - Optional dev eval against a running HTTP chat API:
   `npm run eval:extraction:ollama`.
 

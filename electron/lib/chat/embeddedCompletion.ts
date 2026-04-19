@@ -49,6 +49,8 @@ export async function runEmbeddedChatPrompt(input: {
   maxTokens?: number;
   temperature?: number;
   missingModelErrorMessage?: string;
+  /** Stream assistant text as it is generated (node-llama-cpp `onTextChunk`). */
+  onTextChunk?: (text: string) => void;
 }): Promise<string> {
   const modelPath = getEmbeddedChatModelPath();
   const installed = await isEmbeddedModelFilePresent();
@@ -78,7 +80,8 @@ export async function runEmbeddedChatPrompt(input: {
       const text = (
         await session.prompt(input.userPrompt, {
           temperature: input.temperature ?? 0.4,
-          maxTokens: input.maxTokens ?? 1536
+          maxTokens: input.maxTokens ?? 1536,
+          ...(input.onTextChunk ? { onTextChunk: input.onTextChunk } : {})
         })
       ).trim();
 

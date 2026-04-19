@@ -142,6 +142,76 @@ test("remaps update-qualified duplicate targets to the existing vault note", () 
   assert.equal(result.value.updates[0].operation, "append");
 });
 
+test("merge with empty patches downgrades to append for existing notes", () => {
+  const result = validateExtractionResponse(
+    {
+      sessionTitle: "T",
+      updates: [
+        {
+          targetSlug: "api-design",
+          operation: "merge",
+          targetTitle: "API Design",
+          targetType: "concept",
+          summary: "Patch",
+          body: "## Details\n\nExtra detail only.",
+          tags: ["backend"],
+          confidence: 0.9,
+          evidence: [{ kind: "transcript", ref: "turn-1" }],
+          sectionPatches: [],
+          residualBody: ""
+        }
+      ]
+    },
+    {
+      index: [
+        {
+          slug: "api-design",
+          title: "API Design",
+          tags: ["backend"]
+        }
+      ]
+    }
+  );
+
+  assert.ok(result.value);
+  assert.equal(result.value.updates[0].operation, "append");
+});
+
+test("merge survives low confidence when patches target an existing note", () => {
+  const result = validateExtractionResponse(
+    {
+      sessionTitle: "T",
+      updates: [
+        {
+          targetSlug: "api-design",
+          operation: "merge",
+          targetTitle: "API Design",
+          targetType: "concept",
+          summary: "Patch",
+          body: "## Plan\n\n- Step one.",
+          tags: ["backend"],
+          confidence: 0.2,
+          evidence: [{ kind: "transcript", ref: "turn-1" }],
+          sectionPatches: [{ heading: "## Plan", body: "- Updated.", mode: "replace" }]
+        }
+      ]
+    },
+    {
+      index: [
+        {
+          slug: "api-design",
+          title: "API Design",
+          tags: ["backend"]
+        }
+      ]
+    }
+  );
+
+  assert.ok(result.value);
+  assert.equal(result.value.updates[0].operation, "merge");
+  assert.equal(result.value.updates[0].confidence < 0.72, true);
+});
+
 test("downgrades low-confidence rewrite attempts to append for existing notes", () => {
   const result = validateExtractionResponse(
     {
@@ -188,6 +258,33 @@ test("returns null for invalid JSON responses", () => {
 
   assert.equal(result.value, null);
   assert.equal(result.issues[0].message, "Extraction payload was not valid JSON.");
+});
+
+test("replaces generic note titles like Brief Chat with content-derived titles", () => {
+  const result = validateExtractionResponse(
+    {
+      sessionTitle: "Planning Session",
+      updates: [
+        {
+          targetSlug: "brief-chat",
+          operation: "create",
+          targetTitle: "Brief Chat",
+          targetType: "synthesis",
+          summary: "Retention matters more than signups for an early product.",
+          body:
+            "## Product Focus\n\nShip a tight feedback loop before expanding features.\n\n## Connected Notes\n\n- [[Strategy]]",
+          tags: ["product"],
+          confidence: 0.82,
+          evidence: [{ kind: "transcript", ref: "turn-1" }]
+        }
+      ]
+    },
+    { index: [] }
+  );
+
+  assert.ok(result.value);
+  assert.equal(result.value.updates.length, 1);
+  assert.equal(result.value.updates[0].targetTitle, "Product Focus");
 });
 
 test("extraction prompt marks placeholder targets", () => {

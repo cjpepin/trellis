@@ -31,6 +31,7 @@ import type {
 } from "./types";
 import { ipcChannels, TRELLIS_DEFAULT_CHAT_IMAGE_NOTE_SLUG } from "./types";
 import { readMediaCacheBytes } from "../lib/chatMediaCache";
+import { recordStrandRevision } from "../lib/database";
 import { rebuildVaultEmbeddings, syncNoteEmbeddings } from "../lib/retrieval/index";
 
 const noteTypeSchema = z.enum([
@@ -52,12 +53,20 @@ const folderPathSchema = z
   .transform((value) => value.replace(/\\/g, "/"))
   .refine((value) => !value.startsWith("/") && !value.includes(".."), {
     message: "Folder paths must stay inside the wiki root."
+  })
+  .refine((value) => !/^[a-zA-Z]:/.test(value) && !value.endsWith("/"), {
+    message: "Folder paths must stay inside the wiki root."
   });
 
 const slugSchema = z
   .string()
   .trim()
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+
+const strandRevisionMetaSchema = z.object({
+  actor: z.enum(["user", "trellis", "import", "system"]),
+  sessionId: z.string().uuid().nullable().optional()
+});
 
 const saveNoteSchema = z.object({
   vaultId: z.string().min(1).optional(),
@@ -76,7 +85,8 @@ const saveNoteSchema = z.object({
       type: noteTypeSchema.optional(),
       url: z.string().url().optional()
     })
-    .optional()
+    .optional(),
+  strandRevision: strandRevisionMetaSchema.optional()
 });
 
 const noteLookupSchema = z.object({
@@ -400,7 +410,8 @@ async function appendChatImageToNoteForVault(
       type: note.type,
       sources: note.sources,
       url: note.url
-    }
+    },
+    strandRevision: { actor: "trellis" }
   });
 }
 
@@ -606,6 +617,7 @@ export async function readNoteOrCreateIfMissing(vaultPath: string, slug: string)
     });
     await ensureDirectory(path.dirname(targetPath));
     await fs.writeFile(targetPath, serializeNote(frontmatter, ""), "utf8");
+    invalidateVaultSnapshotCache(vaultPath);
   }
 
   return parseNote(vaultPath, targetPath);
@@ -762,6 +774,9 @@ function buildGraph(notes: WikiNote[]): GraphData {
 
   for (const note of notes) {
     for (const target of extractWikiLinkTargets(note.content)) {
+      if (target.slug === note.slug) {
+        continue;
+      }
       rawEdges.push({
         source: note.slug,
         target: target.slug
@@ -867,16 +882,38 @@ export function resolveVault(settings: AppSettings, vaultId?: string) {
   return resolvedVault;
 }
 
+const vaultSnapshotCache = new Map<string, VaultSnapshot>();
+
+function vaultSnapshotCacheKey(vaultPath: string, vaultId: string, vaultName: string): string {
+  return `${path.resolve(vaultPath)}\0${vaultId}\0${vaultName}`;
+}
+
+/** Call after any wiki/raw mutation that should be visible to the next index/snapshot read. */
+function invalidateVaultSnapshotCache(vaultPath: string): void {
+  const resolved = path.resolve(vaultPath);
+  for (const key of vaultSnapshotCache.keys()) {
+    if (key.startsWith(`${resolved}\0`)) {
+      vaultSnapshotCache.delete(key);
+    }
+  }
+}
+
 export async function buildSnapshot(
   vaultPath: string,
   vaultId = "active-vault",
   vaultName = "Current Vault"
 ): Promise<VaultSnapshot> {
+  const key = vaultSnapshotCacheKey(vaultPath, vaultId, vaultName);
+  const cached = vaultSnapshotCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
   const notes = await readAllNotes(vaultPath);
   const { folderPaths } = await walkWikiTree(vaultPath, path.join(vaultPath, "wiki"));
   const graph = buildGraph(notes);
 
-  return {
+  const snapshot: VaultSnapshot = {
     vaultId,
     vaultName,
     vaultPath,
@@ -894,6 +931,8 @@ export async function buildSnapshot(
       relativePath: note.relativePath
     }))
   };
+  vaultSnapshotCache.set(key, snapshot);
+  return snapshot;
 }
 
 async function readExistingFrontmatter(filePath: string): Promise<Partial<NoteFrontmatter> | undefined> {
@@ -984,6 +1023,7 @@ async function listObsidianMarkdownFiles(rootPath: string): Promise<string[]> {
 
 async function writeImportedNoteAtRelativePath(
   vaultPath: string,
+  vaultId: string,
   relativePath: string,
   title: string,
   content: string,
@@ -993,9 +1033,18 @@ async function writeImportedNoteAtRelativePath(
   const targetPath = ensureInsideVault(vaultPath, path.join(wikiRoot, relativePath));
   const existingFrontmatter = await readExistingFrontmatter(targetPath);
   const frontmatter = buildFrontmatter(title, existingFrontmatter, frontmatterOverrides);
+  const serialized = serializeNote(frontmatter, content);
 
   await ensureDirectory(path.dirname(targetPath));
-  await fs.writeFile(targetPath, serializeNote(frontmatter, content), "utf8");
+  await fs.writeFile(targetPath, serialized, "utf8");
+
+  const wikiRel = toPosixRelative(wikiRoot, targetPath);
+  recordStrandRevision({
+    vaultId,
+    file: wikiRel,
+    bodyUtf8: serialized,
+    actor: "import"
+  });
 }
 
 async function readObsidianImportCandidates(sourcePath: string): Promise<ObsidianImportCandidate[]> {
@@ -1125,12 +1174,15 @@ export async function importFromObsidianVault(
 
     await writeImportedNoteAtRelativePath(
       vaultPath,
+      vaultId,
       targetRelativePath,
       candidate.resolvedTitle,
       rewrittenContent,
       candidate.frontmatter
     );
   }
+
+  invalidateVaultSnapshotCache(vaultPath);
 
   const notes = await readAllNotes(vaultPath);
   await rebuildVaultEmbeddings(vaultId, notes);
@@ -1232,12 +1284,26 @@ export async function writeNoteFile(
     ...input.frontmatter
   });
 
+  const serialized = serializeNote(frontmatter, parsedContent.content);
   await ensureDirectory(path.dirname(targetPath));
-  await fs.writeFile(targetPath, serializeNote(frontmatter, parsedContent.content), "utf8");
+  await fs.writeFile(targetPath, serialized, "utf8");
 
   if (existingPath && existingPath !== targetPath) {
     await fs.unlink(existingPath);
     await removeEmptyWikiDirectories(vaultPath, path.dirname(existingPath));
+  }
+
+  invalidateVaultSnapshotCache(vaultPath);
+
+  if (input.strandRevision) {
+    const wikiRel = toPosixRelative(wikiRoot, targetPath);
+    recordStrandRevision({
+      vaultId,
+      file: wikiRel,
+      bodyUtf8: serialized,
+      actor: input.strandRevision.actor,
+      sessionId: input.strandRevision.sessionId
+    });
   }
 
   const note = await parseNote(vaultPath, targetPath);
@@ -1262,7 +1328,8 @@ async function createStubNote(
     frontmatter: {
       type: "concept",
       tags: []
-    }
+    },
+    strandRevision: { actor: "user" }
   });
 }
 
@@ -1283,6 +1350,7 @@ async function deleteNoteFile(
 
   await fs.unlink(targetPath);
   await removeEmptyWikiDirectories(vaultPath, path.dirname(targetPath));
+  invalidateVaultSnapshotCache(vaultPath);
   const snapshot = await buildSnapshot(vaultPath);
   await rebuildVaultEmbeddings(vaultId, await readAllNotes(vaultPath));
   return snapshot;
@@ -1300,6 +1368,7 @@ export async function createFolder(
     path.join(vaultPath, "wiki", parentPath, folderName)
   );
   await ensureDirectory(targetPath);
+  invalidateVaultSnapshotCache(vaultPath);
   return buildSnapshot(vaultPath);
 }
 
@@ -1329,6 +1398,7 @@ async function renameFolder(
   await ensureDirectory(path.dirname(targetPath));
 
   await fs.rename(sourcePath, targetPath);
+  invalidateVaultSnapshotCache(vaultPath);
   return buildSnapshot(vaultPath);
 }
 
@@ -1340,6 +1410,7 @@ async function deleteFolder(
   await ensureVaultLayout(vaultPath);
   const targetPath = ensureInsideVault(vaultPath, path.join(vaultPath, "wiki", input.path));
   await fs.rm(targetPath, { recursive: true, force: true });
+  invalidateVaultSnapshotCache(vaultPath);
   const notes = await readAllNotes(vaultPath);
   await rebuildVaultEmbeddings(vaultId, notes);
   return buildSnapshot(vaultPath);

@@ -4,7 +4,8 @@ const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
 const {
   buildTranscriptFindMatches,
-  markdownWithTranscriptFindMark
+  markdownWithTranscriptFindMark,
+  indexInFencedCode
 } = require(fromRepoRoot("src", "lib", "chatTranscriptFind.ts"));
 
 test("buildTranscriptFindMatches is case-insensitive and non-overlapping", () => {
@@ -29,4 +30,29 @@ test("markdownWithTranscriptFindMark wraps slice and escapes HTML in the match",
     out,
     'a <mark class="trellis-transcript-find-mark">&lt;x&gt;</mark> b'
   );
+});
+
+test("buildTranscriptFindMatches skips matches inside fenced code blocks", () => {
+  const messages = [
+    {
+      id: "a",
+      content: "hello\n```\nhello\n```\n"
+    }
+  ];
+  const matches = buildTranscriptFindMatches(messages, "hello");
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].start, 0);
+});
+
+test("markdownWithTranscriptFindMark does not inject mark inside fenced code", () => {
+  const md = "```\nhello\n```";
+  const start = md.indexOf("hello");
+  const out = markdownWithTranscriptFindMark(md, { start, end: start + 5 });
+  assert.equal(out, md);
+});
+
+test("indexInFencedCode detects fenced regions", () => {
+  const md = "a\n```\nx\n```\nb";
+  assert.equal(indexInFencedCode(md, md.indexOf("a")), false);
+  assert.equal(indexInFencedCode(md, md.indexOf("x")), true);
 });

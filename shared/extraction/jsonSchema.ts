@@ -23,7 +23,7 @@ export const extractionResponseJsonSchema = {
         properties: {
           operation: {
             type: "string",
-            enum: ["create", "append", "rewrite", "noop"]
+            enum: ["create", "append", "rewrite", "merge", "noop"]
           },
           targetSlug: {
             type: "string"
@@ -75,6 +75,22 @@ export const extractionResponseJsonSchema = {
           },
           confidence: {
             type: "number"
+          },
+          sectionPatches: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["heading", "body", "mode"],
+              properties: {
+                heading: { type: "string" },
+                body: { type: "string" },
+                mode: { type: "string", enum: ["replace", "merge-bullets"] }
+              }
+            }
+          },
+          residualBody: {
+            type: "string"
           }
         }
       }

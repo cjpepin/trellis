@@ -43,6 +43,7 @@ import {
   resolveExtractionModeForSubscription,
   themeOptions
 } from "@/lib/settings";
+import { authLog, CLOUD_AUTH_SIGN_IN_TIMEOUT_MS } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { getSupabase, getSupabaseConfigError } from "@/lib/supabase";
 import { ListboxSelect } from "@/components/ListboxSelect";
@@ -198,6 +199,28 @@ function installProgressPercent(event: ExtractionInstallProgressEvent | null): n
   }
 
   return Math.min(100, Math.round((event.completed / event.total) * 100));
+}
+
+function formatPhaseTimings(run: ExtractionDebugRun): string | null {
+  const hasPhase =
+    run.prepDurationMs !== null ||
+    run.llmPrimaryDurationMs !== null ||
+    run.llmRetryThoroughDurationMs !== null;
+
+  if (!hasPhase) {
+    return null;
+  }
+
+  const parts: string[] = [
+    `Prep ${formatDebugDuration(run.prepDurationMs, run.status)}`,
+    `LLM ${formatDebugDuration(run.llmPrimaryDurationMs, run.status)}`
+  ];
+
+  if (run.llmRetryThoroughDurationMs !== null) {
+    parts.push(`Retry ${formatDebugDuration(run.llmRetryThoroughDurationMs, run.status)}`);
+  }
+
+  return parts.join("  |  ");
 }
 
 function formatAttemptSummary(run: ExtractionDebugRun): string | null {
@@ -666,21 +689,33 @@ export function Settings({
     setIsSubmitting(true);
 
     try {
-      const { error } = await getSupabase().auth.signInWithPassword({
-        email: normalizedEmail,
-        password
-      });
+      authLog("signInWithPassword: request");
+      const { error } = await Promise.race([
+        getSupabase().auth.signInWithPassword({
+          email: normalizedEmail,
+          password
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error("Sign-in timed out. Check your network and try again."));
+          }, CLOUD_AUTH_SIGN_IN_TIMEOUT_MS);
+        })
+      ]);
 
       if (error) {
         throw error;
       }
 
+      authLog("signInWithPassword: success");
       setPassword("");
       pushToast({
         title: "Signed in.",
         tone: "success"
       });
     } catch (error) {
+      authLog("signInWithPassword: failed", {
+        message: error instanceof Error ? error.message : String(error)
+      });
       pushToast({
         title: error instanceof Error ? error.message : "Unable to sign in.",
         tone: "error"
@@ -702,15 +737,24 @@ export function Settings({
     setIsSubmitting(true);
 
     try {
-      const { error } = await getSupabase().auth.signUp({
-        email: normalizedEmail,
-        password
-      });
+      authLog("signUp: request");
+      const { error } = await Promise.race([
+        getSupabase().auth.signUp({
+          email: normalizedEmail,
+          password
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error("Account creation timed out. Check your network and try again."));
+          }, CLOUD_AUTH_SIGN_IN_TIMEOUT_MS);
+        })
+      ]);
 
       if (error) {
         throw error;
       }
 
+      authLog("signUp: success");
       setPassword("");
       setConfirmPassword("");
       pushToast({
@@ -718,6 +762,9 @@ export function Settings({
         tone: "success"
       });
     } catch (error) {
+      authLog("signUp: failed", {
+        message: error instanceof Error ? error.message : String(error)
+      });
       pushToast({
         title: error instanceof Error ? error.message : "Unable to create account.",
         tone: "error"
@@ -1786,6 +1833,7 @@ export function Settings({
                     <div className="space-y-2">
                       {debugRuns.map((run) => {
                         const attemptsSummary = formatAttemptSummary(run);
+                        const phaseTimings = formatPhaseTimings(run);
                         const validationPreview =
                           run.validationIssues.length > 2
                             ? `${run.validationIssues.slice(0, 2).join("  |  ")}  |  +${
@@ -1874,6 +1922,12 @@ export function Settings({
                                 </span>
                               </p>
                             </div>
+
+                            {phaseTimings && (
+                              <p className="mt-2 text-[11px] leading-relaxed text-trellis-muted">
+                                Phases: <span className="text-trellis-text">{phaseTimings}</span>
+                              </p>
+                            )}
 
                             {attemptsSummary && (
                               <p className="mt-2 text-[11px] leading-relaxed text-trellis-muted">

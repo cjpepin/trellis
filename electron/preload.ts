@@ -71,12 +71,18 @@ const trellis: TrellisBridge = {
       ipcRenderer.invoke(ipcChannels.dbAppendMessages, messages),
     replaceMessages: (payload) => ipcRenderer.invoke(ipcChannels.dbReplaceMessages, payload),
     updateSession: (payload) => ipcRenderer.invoke(ipcChannels.dbUpdateSession, payload),
+    getSessionNoteSlugs: (sessionId: string) =>
+      ipcRenderer.invoke(ipcChannels.dbGetSessionNoteSlugs, sessionId),
     recordWikiOps: (ops: RecordWikiOpInput[]) =>
       ipcRenderer.invoke(ipcChannels.dbRecordWikiOps, ops),
     listWikiTouchSessions: (vaultId: string) =>
       ipcRenderer.invoke(ipcChannels.dbListWikiTouchSessions, vaultId),
     getStrandProvenanceForFile: (input: { vaultId: string; fileName: string }) =>
       ipcRenderer.invoke(ipcChannels.dbGetStrandProvenanceForFile, input),
+    listStrandRevisions: (input: { vaultId: string; file: string }) =>
+      ipcRenderer.invoke(ipcChannels.dbListStrandRevisions, input),
+    getStrandRevisionBody: (input: { vaultId: string; revisionId: string }) =>
+      ipcRenderer.invoke(ipcChannels.dbGetStrandRevisionBody, input),
     createThought: (input: CreateThoughtInput) =>
       ipcRenderer.invoke(ipcChannels.dbCreateThought, input) as Promise<ThoughtRecord>,
     listThoughts: (vaultId: string) =>
@@ -173,6 +179,51 @@ const trellis: TrellisBridge = {
     applyVaultOrganize: (input: ApplyVaultOrganizeInput) =>
       ipcRenderer.invoke(ipcChannels.chatApplyVaultOrganize, input),
     runLocalReply: (input) => ipcRenderer.invoke(ipcChannels.chatRunLocalReply, input),
+    streamLocal: async (input: ChatStreamInput) => {
+      const requestId = crypto.randomUUID();
+      const channel = ipcChannels.chatStreamEvent;
+
+      return new Promise<void>((resolve, reject) => {
+        const handler = (_event: unknown, payload: ChatStreamEvent) => {
+          if (payload.requestId !== requestId) {
+            return;
+          }
+
+          if (payload.type === "token") {
+            input.onToken(payload.payload);
+            return;
+          }
+
+          if (payload.type === "status") {
+            void input.onStatus(payload.payload);
+            return;
+          }
+
+          if (payload.type === "title") {
+            void input.onTitle(payload.payload);
+          }
+        };
+
+        ipcRenderer.on(channel, handler);
+
+        void ipcRenderer
+          .invoke(ipcChannels.chatStreamLocal, {
+            requestId,
+            model: input.model,
+            sessionId: input.sessionId,
+            messages: input.messages,
+            references: input.references ?? []
+          })
+          .then(() => {
+            ipcRenderer.removeListener(channel, handler);
+            resolve();
+          })
+          .catch((error) => {
+            ipcRenderer.removeListener(channel, handler);
+            reject(error);
+          });
+      });
+    },
     stream: async (input: ChatStreamInput) => {
       const requestId = crypto.randomUUID();
       const channel = ipcChannels.chatStreamEvent;

@@ -9,7 +9,7 @@ export const READ_ALOUD_SPEED_DEFAULT_TIER: ReadAloudSpeedTier = 3;
 /** Maps each tier to OpenAI `speed` (typically 0.25–4.0). */
 const OPENAI_SPEED_BY_TIER: Record<ReadAloudSpeedTier, number> = {
   1: 0.5,
-  2: 1,
+  2: 0.75,
   3: 1,
   4: 1.5,
   5: 2
@@ -31,8 +31,8 @@ export const READ_ALOUD_SPEED_LISTBOX_OPTIONS: Array<{
   label: string;
 }> = [
   { id: "1", label: "Slowest (0.5)" },
-  { id: "2", label: "Slower (1)" },
-  { id: "3", label: "Medium (1)" },
+  { id: "2", label: "Slower (0.75)" },
+  { id: "3", label: "Medium (1.0)" },
   { id: "4", label: "Faster (1.5)" },
   { id: "5", label: "Fastest (2)" }
 ];

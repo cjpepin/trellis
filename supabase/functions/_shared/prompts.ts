@@ -126,19 +126,47 @@ The transcript may include an "## Attached context" section with text the user c
 You may also receive a "## Relevant Existing Notes" section containing excerpts from notes retrieved locally from the user's vault. Treat those as the strongest candidates for update decisions. Prefer rewriting one of those notes when the transcript plus the excerpt gives enough context to keep the note dense, organized, and natural. Use append only when the conversation adds a genuinely separate new section or small follow-up detail. Avoid creating duplicate sibling notes.
 
 Wiki folders:
-- The notes index may include folder:segment/ labels for each note. When the user asks to file notes into a folder, start a series in a subfolder, or group related captures, include the folderPath field on relevant **create** updates (POSIX-style path under the wiki root, e.g. daily-logs or projects/acme). Omit it or use an empty string for the vault root. Prefer short, descriptive kebab-case segments that match what they asked for.
+- Default folderPath to empty string (vault root). Only set a folderPath when (a) an existing foldered note already lives there and this update belongs alongside it, or (b) there is a clear cluster of related notes that warrant a shared subfolder.
+- Never place notes in a catch-all folder like "captures", "inbox", or "unsorted" unless the user's index already uses one.
+- When a folderPath is appropriate, add at most one new folder level. Do not invent deep hierarchies.
+- The notes index may include folder:segment/ labels for each note. When the user asks to file notes into a folder, start a series in a subfolder, or group related captures, include the folderPath field on relevant **create** updates (POSIX-style path under the wiki root, e.g. daily-logs or projects/acme). Prefer short, descriptive kebab-case segments that match what they asked for.
 
-When unsure between create, append, rewrite, and noop:
+SUPERSESSION RULES (MANDATORY):
+- If the new information contradicts, refines, updates, or dates a fact in the
+  existing note, you MUST choose "merge" or "rewrite" — never "append".
+  Examples: schedule change, count change, preference refinement, renamed
+  entity, corrected fact, updated decision.
+- If the note is a stable concept and the conversation adds a genuinely new
+  dimension (a new example, an unrelated subtopic, a follow-up), choose "append".
+- If the whole note would be clearer rewritten end-to-end, choose "rewrite".
+- "merge" is preferred over "rewrite" for localized edits because it preserves
+  unchanged sections verbatim and uses fewer tokens.
+
+MERGE SHAPE:
+When you choose "merge", return sectionPatches instead of a full replacement body:
+  {
+    "operation": "merge",
+    "targetSlug": "...",
+    "sectionPatches": [
+      { "heading": "## Schedule", "mode": "replace", "body": "4 days/week …" }
+    ],
+    "residualBody": "optional markdown appended if no section matches"
+  }
+Heading text must match an existing \`##\`/\`###\` heading from the retrieved note
+excerpt exactly (case-insensitive, trimmed). If no section matches, put the
+content in residualBody and the system will place it appropriately.
+
+When unsure between create, append, rewrite, merge, and noop:
 - prefer updating an existing note when it is a plausible home
-- choose rewrite when the current transcript and relevant-note excerpt support a cleaner full note than adding another section to the bottom
+- choose rewrite when the conversation covers the same core topic as an existing note — merge new information into a cohesive document. Rewrite is the default for same-topic updates.
 - choose append only when the new material is a distinct addendum, example, decision, or follow-up that reads naturally as a new section
-- if the conversation had any substantive content at all, prefer a small create, append, or rewrite over noop; use noop only when there is truly nothing worth revisiting
+- if the conversation had any substantive content at all, prefer a small create, append, rewrite, or merge over noop; use noop only when there is truly nothing worth revisiting
 
 Return a JSON object with this exact shape:
 {
   "updates": [
     {
-      "operation": "create" | "append" | "rewrite" | "noop",
+      "operation": "create" | "append" | "rewrite" | "merge" | "noop",
       "targetSlug": "kebab-case-filename",
       "targetTitle": "Human Readable Title",
       "targetType": "concept" | "entity" | "source-summary" | "synthesis",
@@ -163,6 +191,8 @@ Return a JSON object with this exact shape:
 Guidelines for high-quality extraction:
 
 TITLES:
+- **targetTitle** (each note's title) must name the actual concept, project, decision, or idea — never generic labels. It is separate from **sessionTitle** (the chat name in the sidebar).
+- Never use "Brief Chat", "New Conversation", "Discussion", "Chat", or similar placeholders as **targetTitle** — those are not note names. Name what the note is about (e.g. "Retention-First MVP Scope", "Volleyball Rotations For Seven Players").
 - Titles should name the actual concept, project, decision, or idea — not vague keywords.
 - Good: "Mobile App MVP for Habit Tracking", "React vs Vue Comparison"
 - Bad: "Want", "App Create", "Discussion"
@@ -177,6 +207,9 @@ CONTENT:
 - Synthesize — do NOT paste the transcript. Distill the key insight, decision, plan, or concept.
 - The note must be useful on its own: include substantive facts, steps, lists, tables, schedules, constraints, and reasoning drawn from the **full** thread (user goals, limits, numbers, and milestones—not only the assistant's opening paragraph). Enough detail to act on later (typically a few short paragraphs or structured sections). Rewrite for clarity; avoid copying the user's question verbatim and avoid giant unbroken paste of the assistant reply—prefer structured markdown.
 - Never open a "## Summary" (or the note's first paragraph) with chat filler or assistant preamble: no "Absolutely", "Sure", "Here's", "I'd be happy to", "Great question", or similar. The summary states topic, scope, and outcome in plain declarative sentences. If you cannot write a substantive summary line, omit the Summary heading and start with the first real section (e.g. "## Plan" or "## Key details").
+- Do not start a summary with conversational bridges like "That tracks…", "Here are the main reasons…", or other mid-thread handoff phrasing copied from the assistant. Write a standalone sentence a reader can understand without the chat.
+- Do not end the note (or any section) with invitations to continue the chat: no "If you want…", "Tell me…", "Feel free to…", offers of templates in exchange for more chat, or rhetorical "what should we do next?" prompts. Those belong in chat, not the vault.
+- Do not wrap up with conclusion language: no "In conclusion", "Overall", "In summary", "To summarize", "I hope this helps", "This should give you", or "This covers". End the last real section naturally — the note does not need a closing paragraph.
 - Never format note bodies as labeled chat turns (e.g. "User:" / "Assistant:") or as a copy of the conversation; write clean markdown a person would keep in a notebook.
 - Use markdown structure: an optional tight "## Summary" (only if non-filler), then sections like "## Key details", "## Plan", "## Key Decisions", "## Open Questions", "## Next Steps" as appropriate.
 - Include note links as [[Note Title]] to connect to related existing notes from the index.
@@ -201,7 +234,8 @@ TAGS:
 
 ACTIONS:
 - "create": Use this when creating a brand-new note, or when filling in a placeholder target that exists only as an unresolved bracket link.
-- "rewrite": Use this when the note already exists and the best result is a cohesive refreshed note body rather than another appended block. This is preferred for ongoing chats about the same topic when the related note excerpt is sufficient context.
+- "merge": Use this when the note already exists and you only need to replace or extend specific sections (sectionPatches) without rewriting the whole note. Prefer merge over rewrite for localized supersession.
+- "rewrite": Use this when the note already exists and the conversation revisits, extends, or refines the same topic but a full pass reads better than patching sections. When a related note shows "Last updated" more than two weeks ago, strongly prefer rewrite or merge over append.
 - "append": Use this when the note already exists and the conversation adds a distinct new section, decision, example, or follow-up detail that should remain visibly separate.
 - "noop": Use this only for a candidate that should not be written. Prefer returning an empty "updates" array when nothing should change.
 
@@ -216,6 +250,11 @@ SESSION TITLE:
 - Good: "Planning Habit Tracker MVP", "Comparing Frontend Frameworks"
 - Bad: "Chat About Stuff", "New Conversation"
 
+NOTE CARDINALITY:
+- Hard rule for this chat session: at most **one** "create" operation in the entire JSON response. The strand note for this chat is a single new file; everything else must "append" or "rewrite" that note or an existing note from the index. Never emit two or more "create" operations in one response.
+- One ongoing topic → one note. When a conversation stays on a single subject, produce one update (rewrite if the note exists, append for a distinct new section, create if it is new). Do not emit two or more creates for the same topic.
+- Further substance in the same chat belongs in append/rewrite to the strand note or an existing page — not a second new file.
+
 IMPORTANT:
 - Aim for one clear note per meaningful thread (or append into an existing note when it fits). Quality over spam, but an empty "updates" array should be rare when the assistant actually helped with something specific.
 - Prefer updating existing notes over creating new ones.
@@ -225,7 +264,7 @@ IMPORTANT:
 - If you are torn between append and create, choose append.
 - If you are torn between a thin but real takeaway and noop, choose a short create or append with honest evidence—not noop.
 - Prefer fewer, higher-quality notes over many shallow ones.
-- If the conversation is trivial or content-free, return {"updates": [], "sessionTitle": "Brief Chat"}.
+- If the conversation is trivial or content-free, return {"updates": [], "sessionTitle": "Brief Chat"}. That value is **only** for empty updates; when you return a create/append/rewrite, **targetTitle** must still be a real topic name, never "Brief Chat".
 - Return ONLY valid JSON. No preamble, no markdown fences, no explanation.`;
 
 export const sessionTitlePrompt = `Generate a title for this conversation in 6 words or fewer.

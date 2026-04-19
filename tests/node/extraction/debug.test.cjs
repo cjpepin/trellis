@@ -8,8 +8,23 @@ const {
   updateExtractionDebugRun
 } = require(fromRepoRoot("electron", "lib", "extraction", "debug.ts"));
 
-test("buildRequestedProviderOrder is on-device only", () => {
+test("buildRequestedProviderOrder prefers cloud then embedded when mode and vendor match", () => {
   assert.deepEqual(buildRequestedProviderOrder("local"), ["embedded"]);
+  assert.deepEqual(buildRequestedProviderOrder("local", null), ["embedded"]);
+  assert.deepEqual(buildRequestedProviderOrder("cloud", "openai"), ["cloud-openai", "embedded"]);
+  assert.deepEqual(buildRequestedProviderOrder("cloud", "anthropic"), ["cloud-anthropic", "embedded"]);
+});
+
+test("createExtractionDebugRun initializes phase timings to null", () => {
+  const run = createExtractionDebugRun({
+    scope: "direct",
+    mode: "local",
+    transcriptMessageCount: 4
+  });
+
+  assert.equal(run.prepDurationMs, null);
+  assert.equal(run.llmPrimaryDurationMs, null);
+  assert.equal(run.llmRetryThoroughDurationMs, null);
 });
 
 test("updateExtractionDebugRun calculates duration after a run finishes", () => {

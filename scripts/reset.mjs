@@ -15,11 +15,36 @@ function parseWorkspaceArg(argv) {
   const flag = argv.find((arg) => arg.startsWith("--workspace="));
   const value = flag ? flag.split("=")[1] : "all";
 
-  if (!["all", "personal", "preview"].includes(value)) {
-    throw new Error(`Unknown workspace ${value}. Use --workspace=all|personal|preview.`);
+  if (!["all", "personal", "preview", "preview-heavy"].includes(value)) {
+    throw new Error(
+      `Unknown workspace ${value}. Use --workspace=all|personal|preview|preview-heavy.`
+    );
   }
 
   return value;
+}
+
+/** When set with `--workspace=all`, skip preview + preview-heavy (vault wiki/raw + local DB only for personal). */
+function parseExcludePreview(argv) {
+  if (argv.includes("--exclude-preview") || argv.includes("--no-preview")) {
+    return true;
+  }
+  const raw = process.env.TRELLIS_RESET_EXCLUDE_PREVIEW?.trim();
+  return raw === "1" || raw?.toLowerCase() === "true";
+}
+
+function parseResetArgs(argv) {
+  const workspaceSelection = parseWorkspaceArg(argv);
+  let excludePreviewWorkspaces = parseExcludePreview(argv);
+
+  if (excludePreviewWorkspaces && workspaceSelection !== "all") {
+    console.warn(
+      "Trellis reset: --exclude-preview / TRELLIS_RESET_EXCLUDE_PREVIEW only apply with --workspace=all; ignoring.\n"
+    );
+    excludePreviewWorkspaces = false;
+  }
+
+  return { workspaceSelection, excludePreviewWorkspaces };
 }
 
 /** Mirrors Electron `app.getPath("userData")` for unpackaged apps using `package.json` `name`. */
@@ -116,9 +141,21 @@ function removePgliteDir(dirPath) {
 
 const appName = readAppName();
 const userDataDir = getUserDataDir(appName);
-const workspaceSelection = parseWorkspaceArg(process.argv.slice(2));
+const argv = process.argv.slice(2);
+const { workspaceSelection, excludePreviewWorkspaces } = parseResetArgs(argv);
 
-console.log(`Trellis reset (app data: ${userDataDir}, workspace: ${workspaceSelection})\n`);
+const resetLabel =
+  workspaceSelection === "all" && excludePreviewWorkspaces
+    ? `${workspaceSelection} (excluding preview workspaces)`
+    : workspaceSelection;
+
+console.log(`Trellis reset (app data: ${userDataDir}, workspace: ${resetLabel})\n`);
+
+if (excludePreviewWorkspaces && workspaceSelection === "all") {
+  console.log(
+    "Only the personal workspace is reset: vault paths come from workspaces/personal/settings.json (or legacy root settings.json if personal settings are missing). Preview workspaces are skipped.\n"
+  );
+}
 
 const extraVaults = process.env.TRELLIS_EXTRA_VAULT_PATHS
   ? process.env.TRELLIS_EXTRA_VAULT_PATHS.split(path.delimiter)
@@ -126,14 +163,32 @@ const extraVaults = process.env.TRELLIS_EXTRA_VAULT_PATHS
       .filter(Boolean)
   : [];
 
+/** Keep in sync with `workspaceIds` in `electron/lib/workspaces.ts` (each has `workspaces/<id>/local.sqlite`). */
+const allAppWorkspaceIds = ["personal", "preview", "preview-heavy"];
 const workspaceIds =
-  workspaceSelection === "all" ? ["personal", "preview"] : [workspaceSelection];
-const settingsPaths = [
-  path.join(userDataDir, "settings.json"),
-  ...workspaceIds.map((workspaceId) =>
-    path.join(userDataDir, "workspaces", workspaceId, "settings.json")
-  )
-];
+  workspaceSelection === "all"
+    ? excludePreviewWorkspaces
+      ? ["personal"]
+      : allAppWorkspaceIds
+    : [workspaceSelection];
+
+const legacyRootSettingsPath = path.join(userDataDir, "settings.json");
+const personalSettingsPath = path.join(userDataDir, "workspaces", "personal", "settings.json");
+
+/** With --exclude-preview, do not read preview settings (avoids clearing their vault trees via legacy multi-vault root files). */
+const settingsPaths =
+  workspaceSelection === "all" && excludePreviewWorkspaces
+    ? fs.existsSync(personalSettingsPath)
+      ? [personalSettingsPath]
+      : fs.existsSync(legacyRootSettingsPath)
+        ? [legacyRootSettingsPath]
+        : []
+    : [
+        legacyRootSettingsPath,
+        ...workspaceIds.map((workspaceId) =>
+          path.join(userDataDir, "workspaces", workspaceId, "settings.json")
+        )
+      ];
 const vaultPaths = [
   ...new Set([
     ...settingsPaths.flatMap((settingsPath) => readVaultPaths(settingsPath)),
@@ -164,12 +219,9 @@ if (vaultPaths.length === 0) {
   console.log("");
 }
 
-const sqlitePaths =
-  workspaceSelection === "all"
-    ? workspaceIds.map((workspaceId) =>
-        path.join(userDataDir, "workspaces", workspaceId, "local.sqlite")
-      )
-    : [path.join(userDataDir, "workspaces", workspaceSelection, "local.sqlite")];
+const sqlitePaths = workspaceIds.map((workspaceId) =>
+  path.join(userDataDir, "workspaces", workspaceId, "local.sqlite")
+);
 
 for (const sqliteFile of sqlitePaths) {
   const { filePath, removed } = removeSqliteDatabase(sqliteFile);
@@ -181,13 +233,18 @@ for (const sqliteFile of sqlitePaths) {
   }
 }
 
+if (excludePreviewWorkspaces && workspaceSelection === "all") {
+  const skipped = allAppWorkspaceIds.filter((id) => id !== "personal");
+  console.log(
+    `Skipped local SQLite (exclude-preview): ${skipped.map((id) => `workspaces/${id}/local.sqlite`).join(", ")}`
+  );
+}
+
 const legacyPgliteDirs = [
   path.join(userDataDir, "pglite-data"),
-  ...(workspaceSelection === "all"
-    ? workspaceIds.map((workspaceId) =>
-        path.join(userDataDir, "workspaces", workspaceId, "pglite-data")
-      )
-    : [path.join(userDataDir, "workspaces", workspaceSelection, "pglite-data")])
+  ...workspaceIds.map((workspaceId) =>
+    path.join(userDataDir, "workspaces", workspaceId, "pglite-data")
+  )
 ];
 
 for (const pgDir of legacyPgliteDirs) {

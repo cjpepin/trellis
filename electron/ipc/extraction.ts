@@ -7,11 +7,7 @@ import {
   type QueueSessionExtractionInput,
   type QueueSessionExtractionResult
 } from "./types";
-import {
-  getExtractionRuntimeStatus,
-  resolveExtractionMode,
-  runExtraction
-} from "../lib/extraction/service";
+import { getExtractionRuntimeStatus, runExtraction } from "../lib/extraction/service";
 import { listExtractionDebugRuns } from "../lib/extraction/debug";
 import {
   installEmbeddedExtractionModel,
@@ -25,11 +21,13 @@ const extractionContextNoteSchema = z.object({
   headingPath: z.string().min(1),
   content: z.string().min(1),
   score: z.number(),
-  isExplicitMatch: z.boolean().optional()
+  isExplicitMatch: z.boolean().optional(),
+  updatedAt: z.string().optional()
 });
 
 const extractionInputSchema = z.object({
-  mode: z.literal("local").optional(),
+  mode: z.enum(["local", "cloud"]).optional(),
+  chatModel: z.string().min(1).optional(),
   sessionId: z.string().uuid().optional(),
   transcript: z.array(
     z.object({
@@ -46,6 +44,7 @@ const extractionInputSchema = z.object({
     })
   ),
   relatedNotes: z.array(extractionContextNoteSchema).optional(),
+  sessionPriorNoteSlugs: z.array(z.string().min(1)).optional(),
   sourceType: z.enum(["pdf", "web", "text"]).optional(),
   sourceTitle: z.string().min(1).optional(),
   sourcePath: z.string().min(1).optional(),
@@ -55,13 +54,14 @@ const extractionInputSchema = z.object({
 });
 
 const runtimeStatusSchema = z.object({
-  mode: z.literal("local").optional()
+  mode: z.enum(["local", "cloud"]).optional(),
+  chatModel: z.string().min(1).optional()
 });
 
 const queueSessionSchema = z.object({
   sessionId: z.string().uuid(),
   trigger: z.enum(["idle", "session-switch", "manual", "startup"]).optional(),
-  mode: z.literal("local").optional(),
+  mode: z.enum(["local", "cloud"]).optional(),
   preferredLocalModelId: z.string().min(1).optional(),
   force: z.boolean().optional()
 });
@@ -107,7 +107,7 @@ export function registerExtractionIpc(orchestrator: {
 
     try {
       await installEmbeddedExtractionModel(parsedModelId, sendProgress, activeInstallAbort.signal);
-      return getExtractionRuntimeStatus({ mode: resolveExtractionMode() });
+      return getExtractionRuntimeStatus({});
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         sendProgress({ kind: "aborted" });
@@ -127,6 +127,6 @@ export function registerExtractionIpc(orchestrator: {
   ipcMain.handle(ipcChannels.extractionRemoveLocalModel, async (_event, modelId: unknown) => {
     const parsedModelId = localModelIdSchema.parse(modelId);
     await removeEmbeddedExtractionModel(parsedModelId);
-    return getExtractionRuntimeStatus({ mode: resolveExtractionMode() });
+    return getExtractionRuntimeStatus({});
   });
 }

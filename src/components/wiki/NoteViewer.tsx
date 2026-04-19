@@ -1,9 +1,10 @@
 import { useEffect, useId, useState } from "react";
-import { CircleHelp, Link2, Plus, Trash2, X } from "lucide-react";
+import { CircleHelp, History, Link2, Plus, Trash2, X } from "lucide-react";
 import type { AppWorkspaceId, StrandProvenanceSnapshot, WikiNote } from "@electron/ipc/types";
 import { RichTextRenderer } from "@/components/shared/RichTextRenderer";
 import { EditableNoteTitle } from "@/components/wiki/EditableNoteTitle";
 import { WikiRichTextEditor } from "@/components/wiki/WikiRichTextEditor";
+import { StrandRevisionHistory } from "@/components/wiki/StrandRevisionHistory";
 import { cn, formatDateLabel } from "@/lib/utils";
 
 function sourceDomain(url: string): string {
@@ -55,7 +56,12 @@ interface Props {
   workspaceId?: AppWorkspaceId;
   variant?: "page" | "preview";
   onOpenLink: (slug: string, options?: { linkText?: string }) => void;
-  onSave?: (content: string, slug: string) => void | Promise<void>;
+  onSave?: (
+    content: string,
+    slug: string,
+    options?: { recordStrandRevision?: boolean }
+  ) => void | Promise<void>;
+  vaultId?: string;
   onSaveTitle?: (title: string, slug: string) => void | Promise<void>;
   onSelectTag?: (tag: string) => void;
   onAddTag?: (tag: string) => void | Promise<void>;
@@ -82,11 +88,13 @@ export function NoteViewer({
   onRemoveTag,
   onDeleteNote,
   strandProvenance = null,
-  onOpenStrandSession
+  onOpenStrandSession,
+  vaultId
 }: Props) {
   const isPage = variant === "page";
   const [tagDraft, setTagDraft] = useState("");
   const [isAddingTag, setIsAddingTag] = useState(false);
+  const [strandHistoryOpen, setStrandHistoryOpen] = useState(false);
   const tagSuggestionsId = useId();
 
   useEffect(() => {
@@ -128,6 +136,19 @@ export function NoteViewer({
                   <span className="pointer-events-none absolute right-0 top-full z-20 mt-2 hidden w-72 rounded-panel border border-trellis-border bg-trellis-surface-2 px-3 py-2 text-left text-xs leading-6 text-trellis-muted shadow-lg group-hover:block">
                     Type [[ to link notes (autocomplete). Bracket links use [[note title]] in the file; use the Link toolbar control for https links only. Cmd/Ctrl+click a note link to open or create the note; Cmd/Ctrl+click a web link to open in the browser.
                   </span>
+                </button>
+              ) : null}
+              {editable && vaultId ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center rounded-full border border-trellis-border px-2 py-2 text-trellis-muted transition hover:border-trellis-accent/35 hover:text-trellis-text"
+                  aria-label="Strand history"
+                  title="Strand history"
+                  onClick={() => {
+                    setStrandHistoryOpen(true);
+                  }}
+                >
+                  <History className="h-4 w-4" />
                 </button>
               ) : null}
               {editable && onDeleteNote ? (
@@ -276,6 +297,16 @@ export function NoteViewer({
           onSave={onSave ? (markdown) => onSave(markdown, note.slug) : undefined}
         />
       )}
+      {vaultId ? (
+        <StrandRevisionHistory
+          vaultId={vaultId}
+          file={note.relativePath}
+          open={strandHistoryOpen}
+          onClose={() => {
+            setStrandHistoryOpen(false);
+          }}
+        />
+      ) : null}
       {isPage && strandProvenance ? (
         <footer className="mt-10 border-t border-trellis-border pt-4">
           <p className="text-[11px] uppercase tracking-[0.14em] text-trellis-faint">Lineage</p>

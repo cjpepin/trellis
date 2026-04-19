@@ -1,4 +1,4 @@
-import type { SaveNoteInput, WikiNote } from "@electron/ipc/types";
+import type { SaveNoteInput, StrandRevisionMeta, WikiNote } from "@electron/ipc/types";
 
 /** Max explorer undo steps (file/folder ops in Notes). */
 export const WIKI_EXPLORER_UNDO_LIMIT = 50;
@@ -25,7 +25,11 @@ export function folderPathToCreateParts(folderPath: string): { name: string; par
   };
 }
 
-export function wikiNoteToSavePayload(note: WikiNote, folderPath?: string): SaveNoteInput {
+export function wikiNoteToSavePayload(
+  note: WikiNote,
+  folderPath?: string,
+  strandRevision?: StrandRevisionMeta
+): SaveNoteInput {
   return {
     slug: note.slug,
     relativePath: note.relativePath,
@@ -37,7 +41,8 @@ export function wikiNoteToSavePayload(note: WikiNote, folderPath?: string): Save
       type: note.type,
       sources: note.sources,
       url: note.url
-    }
+    },
+    strandRevision
   };
 }
 

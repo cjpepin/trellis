@@ -17,7 +17,7 @@ export interface ExtractionMessageLike {
   mediaArtifacts?: ExtractionMediaLike[];
 }
 
-/** Must match the marker checked in `supabase/functions/_shared/models.ts` for session titles. */
+/** Must match the marker used when building chat context / session titles (see `deriveSessionTitle`). */
 export const CHAT_ATTACHMENT_CONTEXT_MARKER = "\n\n---\n\n## Attached context";
 
 export function formatMessageForExtraction(

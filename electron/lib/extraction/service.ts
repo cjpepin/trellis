@@ -1,10 +1,12 @@
+import { providerForChatModel } from "../../../shared/chat/providerForModel";
 import type {
   ExtractionDebugProviderAttempt,
   ExtractionJobTrigger,
   ExtractionMode,
   ExtractionRunInput,
   ExtractionRunResult,
-  ExtractionRuntimeStatus
+  ExtractionRuntimeStatus,
+  ChatProvider
 } from "../../ipc/types";
 import {
   createExtractionDebugRun,
@@ -13,26 +15,38 @@ import {
 } from "./debug";
 import { pickSelectedProviderId } from "./providerSelection";
 import { embeddedExtractionProvider } from "./providers/embeddedLlama";
+import { createCloudExtractionProvider } from "./providers/cloudApi";
 import type { ExtractionProvider } from "./providers/types";
 import {
   getLocalExtractionFeatureDisabledReason,
   isLocalExtractionFeatureEnabled
 } from "./rollout";
+import { buildExtractionProviderIdsForOrder, resolveExtractionMode } from "./providerOrder";
 
-export function resolveExtractionMode(_mode?: ExtractionMode): ExtractionMode {
-  return "local";
-}
+export { resolveExtractionMode } from "./providerOrder";
 
-const providers: Record<"embedded", ExtractionProvider> = {
+const providers: Record<string, ExtractionProvider> = {
   embedded: embeddedExtractionProvider
 };
 
-function buildProviderOrder(_mode: ExtractionMode): ExtractionProvider[] {
-  if (!isLocalExtractionFeatureEnabled()) {
-    return [];
-  }
+export function registerCloudExtractionProviders(deps: {
+  getOpenAiKey: () => string | null;
+  getAnthropicKey: () => string | null;
+}): void {
+  providers["cloud-openai"] = createCloudExtractionProvider("openai", deps.getOpenAiKey);
+  providers["cloud-anthropic"] = createCloudExtractionProvider("anthropic", deps.getAnthropicKey);
+}
 
-  return [providers.embedded];
+function buildProviderOrder(mode: ExtractionMode, chatProvider: ChatProvider | null): ExtractionProvider[] {
+  const ids = buildExtractionProviderIdsForOrder(mode, chatProvider);
+  const out: ExtractionProvider[] = [];
+  for (const id of ids) {
+    const p = providers[id];
+    if (p) {
+      out.push(p);
+    }
+  }
+  return out;
 }
 
 interface ExtractionDebugContext {
@@ -48,21 +62,21 @@ interface ExtractionDebugContext {
 
 export async function getExtractionRuntimeStatus(input: {
   mode?: ExtractionMode;
+  chatModel?: string;
 }): Promise<ExtractionRuntimeStatus> {
-  const mode = resolveExtractionMode(input.mode);
-  const localExtractionEnabled = isLocalExtractionFeatureEnabled();
-  const statuses = [
-    localExtractionEnabled
-      ? providers.embedded.getStatus()
-      : Promise.resolve({
-          id: "embedded" as const,
-          label: "On-device",
-          available: false,
-          reason: getLocalExtractionFeatureDisabledReason(),
-          models: []
-        })
-  ];
-  const resolvedStatuses = await Promise.all(statuses);
+  const mode = resolveExtractionMode(input.chatModel);
+  const chatProvider: ChatProvider | null = input.chatModel ? providerForChatModel(input.chatModel) : null;
+  const order = buildProviderOrder(mode, chatProvider);
+  const resolvedStatuses = await Promise.all(order.map((provider) => provider.getStatus()));
+
+  // Always include the embedded provider in the status so the Settings UI can show
+  // its availability and reason even when local extraction is disabled or when a
+  // cloud provider is first in the order.
+  const hasEmbedded = resolvedStatuses.some((s) => s.id === "embedded");
+  if (!hasEmbedded && providers.embedded) {
+    const embeddedStatus = await providers.embedded.getStatus();
+    resolvedStatuses.push(embeddedStatus);
+  }
 
   return {
     mode,
@@ -75,9 +89,9 @@ export async function runExtraction(
   input: ExtractionRunInput,
   debugContext?: ExtractionDebugContext
 ): Promise<ExtractionRunResult> {
-  const mode = resolveExtractionMode(input.mode);
-  const order = buildProviderOrder(mode);
-  const localExtractionDisabled = !isLocalExtractionFeatureEnabled();
+  const mode = resolveExtractionMode(input.chatModel);
+  const chatProvider: ChatProvider | null = input.chatModel ? providerForChatModel(input.chatModel) : null;
+  const order = buildProviderOrder(mode, chatProvider);
   const errors: string[] = [];
   const attemptedProviders = [...(debugContext?.seedAttemptedProviders ?? [])];
   const run =
@@ -103,7 +117,8 @@ export async function runExtraction(
       transcriptMessageCount: input.transcript.length,
       transcriptStartIndex: debugContext?.transcriptStartIndex ?? null,
       transcriptEndIndex: debugContext?.transcriptEndIndex ?? null,
-      relatedNoteCount: debugContext?.relatedNoteCount ?? input.relatedNotes?.length ?? null
+      relatedNoteCount: debugContext?.relatedNoteCount ?? input.relatedNotes?.length ?? null,
+      requestedProviderOrder: buildExtractionProviderIdsForOrder(mode, chatProvider)
     });
 
   updateExtractionDebugRun(run.id, {
@@ -117,8 +132,11 @@ export async function runExtraction(
     errorMessage: null
   });
 
-  if (localExtractionDisabled || order.length === 0) {
-    const message = getLocalExtractionFeatureDisabledReason();
+  if (order.length === 0) {
+    const message =
+      !isLocalExtractionFeatureEnabled() && mode === "local"
+        ? getLocalExtractionFeatureDisabledReason()
+        : "No note processing provider is available.";
     updateExtractionDebugRun(run.id, {
       status: "failed",
       finishedAt: Date.now(),
@@ -151,6 +169,8 @@ export async function runExtraction(
         sessionId: input.sessionId,
         index: input.index,
         relatedNotes: input.relatedNotes,
+        sessionPriorNoteSlugs: input.sessionPriorNoteSlugs,
+        sessionPriorNoteContents: input.sessionPriorNoteContents,
         sourceType: input.sourceType,
         sourceTitle: input.sourceTitle,
         sourcePath: input.sourcePath,
@@ -190,14 +210,7 @@ export async function runExtraction(
         validationIssues: isExtractionValidationError(error) ? error.issues : [],
         errorMessage: message
       });
-
-      updateExtractionDebugRun(run.id, {
-        status: "failed",
-        finishedAt: Date.now(),
-        attemptedProviders,
-        errorMessage: message
-      });
-      throw new Error(message);
+      continue;
     }
   }
 

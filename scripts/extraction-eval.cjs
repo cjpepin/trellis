@@ -8,7 +8,7 @@ const path = require("node:path");
 const {
   extractKnowledge,
   extractKnowledgeHeuristic
-} = require("../supabase/functions/_shared/models.ts");
+} = require("./lib/extraction-cloud-knowledge.ts");
 
 const rootDir = path.resolve(__dirname, "..");
 const defaultCorpusPath = path.join(rootDir, "fixtures", "eval", "extraction-corpus.json");

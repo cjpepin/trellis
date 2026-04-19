@@ -166,14 +166,9 @@ export async function requireUser(
   };
 }
 
-export function assertEntitlement(
-  profile: ProfileRow,
-  kind: "message" | "ingest",
-  options?: { previewWorkspaceRequest?: boolean }
-): void {
-  if (options?.previewWorkspaceRequest) {
-    return;
-  }
+export function assertEntitlement(profile: ProfileRow, kind: "message" | "ingest"): void {
+  // `x-trellis-preview-workspace` / body.previewWorkspace do not affect entitlement; only
+  // `profile.is_admin` and subscription/BYOK state do (see docs/agents/entitlements.md).
 
   if (profile.is_admin === true) {
     return;

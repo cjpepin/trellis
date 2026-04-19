@@ -11,6 +11,7 @@ import { registerExtractionIpc } from "./ipc/extraction";
 import { registerIngestIpc } from "./ipc/ingest";
 import { registerRetrievalIpc } from "./ipc/retrieval";
 import { createExtractionOrchestrator } from "./lib/extraction/orchestrator";
+import { registerCloudExtractionProviders } from "./lib/extraction/service";
 import {
   getLocalExtractionFeatureDisabledReason,
   isLocalExtractionFeatureEnabled
@@ -39,7 +40,10 @@ import {
   ensureVaultLayout,
   registerVaultIpc
 } from "./ipc/vault";
-import { getProviderKeyStatusSnapshot } from "./lib/providerKeys";
+import {
+  getProviderKeyStatusSnapshot,
+  resolveProviderApiKey
+} from "./lib/providerKeys";
 import { defaultLocalExtractionModelId } from "../shared/extraction/config";
 import { normalizeExternalHttpsUrl } from "@shared/shell/externalHttpsUrl";
 import { normalizeReadAloudSpeedTier } from "@shared/media/readAloudSpeed";
@@ -51,6 +55,7 @@ import {
   type ChatSettings,
   type AppWorkspaceId,
   type AuthSessionSnapshot,
+  type SubscriptionTier,
   type ExtractionSettings,
   type SwitchWorkspaceInput,
   type ThemeName,
@@ -123,6 +128,7 @@ const authSessionSchema = z.object({
   accessToken: z.string().min(1),
   refreshToken: z.string().min(1),
   expiresAt: z.number().optional(),
+  subscriptionTier: z.enum(["trial", "byok", "pro"]).optional(),
   user: z.object({
     id: z.string().min(1),
     email: z.string().nullable().optional()
@@ -138,6 +144,50 @@ let currentSettings: AppSettings = createDefaultSettings();
 let hasWarnedAboutSessionPersistence = false;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+function resolveBrowserWindowIcon(): string | undefined {
+  if (app.isPackaged) {
+    const packaged = path.join(process.resourcesPath, "icon.png");
+    if (fs.existsSync(packaged)) {
+      return packaged;
+    }
+  }
+  const dev = path.join(process.cwd(), "build", "icon.png");
+  return fs.existsSync(dev) ? dev : undefined;
+}
+
+/** macOS Dock ignores `BrowserWindow` icon; set explicitly (critical in dev, reinforces packaged .app). */
+function resolveMacDockIconPath(): string | undefined {
+  if (app.isPackaged) {
+    const icns = path.join(process.resourcesPath, "icon.icns");
+    if (fs.existsSync(icns)) {
+      return icns;
+    }
+    const png = path.join(process.resourcesPath, "icon.png");
+    if (fs.existsSync(png)) {
+      return png;
+    }
+  }
+  return resolveBrowserWindowIcon();
+}
+
+function applyMacDockIcon(): void {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  const iconPath = resolveMacDockIconPath();
+  if (!iconPath) {
+    return;
+  }
+
+  try {
+    // `Dock` ignores `BrowserWindow` icon; string path accepts `.icns` / `.png` on macOS.
+    app.dock?.setIcon(iconPath);
+  } catch {
+    // Non-fatal: missing or unreadable icon file.
+  }
+}
 let extractionOrchestrator: ReturnType<typeof createExtractionOrchestrator> | null = null;
 let previewWorkspaceSeedVersions: PreviewWorkspaceSeedVersions = {
   preview: null,
@@ -613,6 +663,11 @@ function clearAuthSession(): void {
   }
 }
 
+function getPersistedAuthSubscriptionTier(): SubscriptionTier {
+  const snapshot = readAuthSession();
+  return snapshot?.subscriptionTier ?? "trial";
+}
+
 function getSettings(): AppSettings {
   return currentSettings;
 }
@@ -676,6 +731,12 @@ async function rebindWorkspace(
     forcePreviewReset: options?.forcePreviewReset
   });
   await initializeDatabase(getWorkspacePaths(workspaceId).databasePath);
+  registerCloudExtractionProviders({
+    getOpenAiKey: () =>
+      resolveProviderApiKey(getCurrentWorkspaceId(), "openai", getPersistedAuthSubscriptionTier()),
+    getAnthropicKey: () =>
+      resolveProviderApiKey(getCurrentWorkspaceId(), "anthropic", getPersistedAuthSubscriptionTier())
+  });
   extractionOrchestrator = createExtractionOrchestrator({
     getSettings,
     notifyJobUpdate: notifyExtractionJobUpdate
@@ -695,6 +756,7 @@ function createMainWindow(): void {
     height: 960,
     minWidth: 1180,
     minHeight: 760,
+    icon: resolveBrowserWindowIcon(),
     backgroundColor: getWindowBackgroundColor(currentSettings.theme),
     titleBarStyle: "hiddenInset",
     webPreferences: {
@@ -705,7 +767,13 @@ function createMainWindow(): void {
     }
   });
 
-  const devServerUrl = app.isPackaged ? undefined : process.env.VITE_DEV_SERVER_URL;
+  if (!app.isPackaged && process.env.TRELLIS_OPEN_DEVTOOLS !== "0") {
+    mainWindow.webContents.openDevTools();
+  }
+
+  const devServerUrl = app.isPackaged
+    ? undefined
+    : (process.env.VITE_DEV_SERVER_URL?.trim() || "http://127.0.0.1:5173/");
   const builtIndexPath = path.join(__dirname, "../renderer/index.html");
 
   if (devServerUrl) {
@@ -778,11 +846,17 @@ function registerAppIpc(): void {
       forcePreviewReset: true
     });
   });
-  ipcMain.handle(ipcChannels.authGet, async () => readAuthSession());
+  ipcMain.handle(ipcChannels.authGet, async () => {
+    const snapshot = readAuthSession();
+    console.info("[trellis:auth:main] getSession", { hasSession: snapshot !== null });
+    return snapshot;
+  });
   ipcMain.handle(ipcChannels.authSet, async (_event, session: unknown) => {
+    console.info("[trellis:auth:main] setSession (persist encrypted snapshot)");
     writeAuthSession(authSessionSchema.parse(session));
   });
   ipcMain.handle(ipcChannels.authClear, async () => {
+    console.info("[trellis:auth:main] clearSession");
     clearAuthSession();
   });
   ipcMain.handle(ipcChannels.billingCreateCheckoutSession, async (_event, input: unknown) => {
@@ -828,9 +902,10 @@ function formatStartupError(error: unknown): string {
 
   if (error.message.includes("NODE_MODULE_VERSION")) {
     return [
-      "A native module was built for a different runtime than Electron.",
+      "A native module was built for a different runtime than Electron (not a wrong Node.js major — the .node file must match Electron’s ABI).",
       "",
-      "Run `npm run rebuild:native` and restart the app.",
+      "Run `npm run rebuild:native` and restart. If you use `npm install --ignore-scripts`, run `npm run rebuild:native` after every install.",
+      "After `npm run test:node`, the repo restores the Electron build automatically; if tests were interrupted, run `npm run rebuild:native` again.",
       "",
       error.message
     ].join("\n");
@@ -857,6 +932,12 @@ async function bootstrapApplication(): Promise<void> {
   currentWorkspaceState = writeWorkspaceState(readWorkspaceState());
   await ensureWorkspaceReady(currentWorkspaceState.activeWorkspaceId);
   await initializeDatabase(getWorkspacePaths(currentWorkspaceState.activeWorkspaceId).databasePath);
+  registerCloudExtractionProviders({
+    getOpenAiKey: () =>
+      resolveProviderApiKey(getCurrentWorkspaceId(), "openai", getPersistedAuthSubscriptionTier()),
+    getAnthropicKey: () =>
+      resolveProviderApiKey(getCurrentWorkspaceId(), "anthropic", getPersistedAuthSubscriptionTier())
+  });
   extractionOrchestrator = createExtractionOrchestrator({
     getSettings,
     notifyJobUpdate: notifyExtractionJobUpdate
@@ -888,6 +969,7 @@ async function bootstrapApplication(): Promise<void> {
 app.whenReady()
   .then(async () => {
     applyElectronTestPathOverrides();
+    applyMacDockIcon();
     try {
       await bootstrapApplication();
     } catch (error) {

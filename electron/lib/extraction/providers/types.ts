@@ -15,6 +15,8 @@ export interface ProviderExtractInput {
   sessionId?: string;
   index: ExtractionIndexEntry[];
   relatedNotes?: ExtractionContextNote[];
+  sessionPriorNoteSlugs?: string[];
+  sessionPriorNoteContents?: Map<string, string>;
   sourceType?: ExtractionSourceType;
   sourceTitle?: string;
   sourcePath?: string;

@@ -2,6 +2,13 @@ import type {
   ExtractionIndexEntry,
   ExtractionUpdate
 } from "../../../shared/extraction/contracts";
+import {
+  applyKeyValueBulletSupersession,
+  applyMerge,
+  inferAppendSectionPatches,
+  reconcileNoteContent,
+  splitConnectedNotesFromBody
+} from "./mergeNote";
 import { extractionThresholds } from "../../../shared/extraction/config";
 import {
   extractWikiLinkTitles,
@@ -19,7 +26,7 @@ interface PreparedExtractionWrite {
   sources: number;
   folderPath: string;
   url?: string;
-  operation: "create" | "append" | "rewrite";
+  operation: "create" | "append" | "rewrite" | "merge";
 }
 
 interface PrepareExtractionWriteInput {
@@ -237,23 +244,112 @@ function stripLeadingAssistantHedge(paragraph: string): string {
     /^Here(?:'|’)?s\s+(?:a|an|the)\s+(?:structured|detailed|complete|comprehensive|brief|quick|helpful|overview)\b[\s\S]{0,1200}?[.!?]\s*/i,
     ""
   );
-  t = t.replace(/^I(?:'|’)?d\s+be\s+happy\s+to[^.!?\n]*[.:—\-]\s*/i, "");
+  t = t.replace(/^I(?:’|’)?d\s+be\s+happy\s+to[^.!?\n]*[.:—\-]\s*/i, "");
+  t = t.replace(/^I(?:’|’)?d\s+(?:recommend|suggest)\s+/i, "");
+  t = t.replace(/^I\s+(?:think|believe|suggest|recommend)\s+(?:the\s+key|that)\s+/i, "");
   t = t.replace(/^Let me\s+(?:know|help)[^.!?\n]*[.:—\-]\s*/i, "");
+  t = t.replace(/^that tracks,?\s+and\s+it(?:'|’)s\s+a\s+useful\s+distinction[^.!?\n]*[.!?:]\s*/i, "");
 
   return t.trim();
+}
+
+/** Drop assistant “bridge” openers that are not standalone note summaries. */
+function stripLeadingConversationalSummaryParagraphs(sectionContent: string): string {
+  let parts = sectionContent.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+  let removedAny = false;
+
+  while (parts.length > 0) {
+    const p = parts[0] ?? "";
+
+    if (/^that tracks\b/i.test(p)) {
+      parts = parts.slice(1);
+      removedAny = true;
+      continue;
+    }
+
+    if (
+      /^here are (?:the main |a few )?reasons\b/i.test(p) &&
+      (parts.length >= 2 || removedAny)
+    ) {
+      parts = parts.slice(1);
+      removedAny = true;
+      continue;
+    }
+
+    break;
+  }
+
+  return parts.join("\n\n").trim();
+}
+
+/**
+ * Remove trailing paragraphs that are clearly assistant chat-wrappers (offers to continue the
+ * conversation), not durable note content.
+ */
+function stripTrailingAssistantOfferParagraphs(body: string): string {
+  const parts = body.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+
+  if (parts.length <= 1) {
+    return body.trim();
+  }
+
+  const isClosingOffer = (paragraph: string): boolean => {
+    const t = paragraph.replace(/\s+/g, " ").trim();
+    if (t.length === 0 || t.length > 1400) {
+      return false;
+    }
+
+    if (/^(?:If you want|If you'd like|Feel free to|Happy to|Want me to)\b/i.test(t)) {
+      return true;
+    }
+    if (/^Let me know\b/i.test(t)) {
+      return true;
+    }
+    if (/^(?:In conclusion|In summary|To summarize|To wrap up|Overall)\b/i.test(t)) {
+      return true;
+    }
+    if (/^(?:I hope this helps|This should give you|This provides|This covers)\b/i.test(t)) {
+      return true;
+    }
+    if (/^By (?:following|implementing|using) (?:these|this|the above)\b/i.test(t)) {
+      return true;
+    }
+    if (/\bI'll give you\b/i.test(t) && /\b(template|reusable|memo)\b/i.test(t)) {
+      return true;
+    }
+    if (/\btell me what\b/i.test(t) && /\?\s*$/.test(t)) {
+      return true;
+    }
+    if (/\?\s*$/.test(t) && t.length < 420 && /\b(?:if you|want me to|should I|can I)\b/i.test(t)) {
+      return true;
+    }
+
+    return false;
+  };
+
+  let end = parts.length;
+
+  while (end > 1 && isClosingOffer(parts[end - 1] ?? "")) {
+    end -= 1;
+  }
+
+  return parts.slice(0, end).join("\n\n").trim();
 }
 
 function stripAssistantFillersFromSummarySection(body: string): string {
   const re = /(##\s+Summary\s*\n+)([\s\S]*?)(?=\n##[^#]|\n#\s[^#]|$)/;
   return body.replace(re, (_match, heading, sectionContent) => {
-    const parts = sectionContent.split(/\n\n+/);
+    let inner = sectionContent.trim();
+    inner = stripLeadingConversationalSummaryParagraphs(inner);
+    const parts = inner.split(/\n\n+/);
 
     if (parts.length === 0 || !parts[0]) {
-      return `${heading}${sectionContent}`;
+      return inner.length === 0 ? "" : `${heading}${inner}`;
     }
 
     parts[0] = stripLeadingAssistantHedge(parts[0].trim());
-    return `${heading}${parts.join("\n\n")}`;
+    const joined = parts.join("\n\n").trim();
+    return joined.length === 0 ? "" : `${heading}${joined}`;
   });
 }
 
@@ -374,6 +470,25 @@ function hasEnoughDurableContent(body: string): boolean {
   return words.length >= extractionThresholds.minPreparedBodyWords;
 }
 
+/** Text cleanup for extraction markdown (link resolution happens separately). */
+function sanitizeMarkdownFragment(
+  fragment: string,
+  update: Pick<ExtractionUpdate, "targetTitle">
+): string {
+  let body = normalizeWhitespace(fragment);
+
+  body = stripTranscriptLikeLines(body);
+  body = normalizeBulletLines(body);
+  body = stripRedundantTitleHeading(body, update.targetTitle);
+  body = normalizeWhitespace(body);
+  body = stripTrailingAssistantOfferParagraphs(body);
+  body = stripAssistantFillersFromSummarySection(body);
+  body = stripOpeningAssistantHedgesFromBody(body);
+  body = normalizeWhitespace(body);
+
+  return body.trim();
+}
+
 function prepareNoteBody(
   update: ExtractionUpdate,
   existingNote: Pick<WikiNote, "title" | "content"> | null,
@@ -382,15 +497,7 @@ function prepareNoteBody(
   nextBody: string;
   links: string[];
 } | null {
-  let body = normalizeWhitespace(update.body);
-
-  body = stripTranscriptLikeLines(body);
-  body = normalizeBulletLines(body);
-  body = stripRedundantTitleHeading(body, update.targetTitle);
-  body = normalizeWhitespace(body);
-  body = stripAssistantFillersFromSummarySection(body);
-  body = stripOpeningAssistantHedgesFromBody(body);
-  body = normalizeWhitespace(body);
+  let body = sanitizeMarkdownFragment(update.body, update);
 
   if (body.length === 0) {
     return null;
@@ -404,9 +511,9 @@ function prepareNoteBody(
   body = normalizedBodyLinks.body;
 
   if (update.operation === "append" && existingNote) {
-    body = demoteDuplicateHeadings(body, existingNote.content, existingNote.title);
-    body = dedupeParagraphsAgainstExisting(existingNote.content, body);
-  } else {
+    // Duplicate-heading demotion and paragraph dedupe run in prepareExtractionWrite
+    // after optional section-level merge.
+  } else if (update.operation !== "merge") {
     body = demoteDuplicateHeadings(body, "", update.targetTitle);
   }
 
@@ -423,11 +530,98 @@ function prepareNoteBody(
   };
 }
 
+function buildAppendMergedContent(
+  existingContent: string,
+  preparedFragment: string,
+  resolvedLinks: string[],
+  noteTitle: string,
+  index: ExtractionIndexEntry[]
+): string {
+  const { main: existingMain, connectedSuffix: existingConn } =
+    splitConnectedNotesFromBody(existingContent);
+  const { main: fragMain } = splitConnectedNotesFromBody(preparedFragment);
+
+  const kvMain = applyKeyValueBulletSupersession(existingMain, fragMain);
+  const { patches, residual } = inferAppendSectionPatches(kvMain, fragMain);
+
+  const sanitizedPatches = patches.map((patch) => ({
+    ...patch,
+    body: sanitizeMarkdownFragment(patch.body, { targetTitle: noteTitle })
+  }));
+
+  let merged: string;
+
+  if (sanitizedPatches.length > 0 || residual.trim().length > 0) {
+    const existingForMerge =
+      kvMain + (existingConn.length > 0 ? `\n\n${existingConn}` : "");
+    merged = applyMerge(existingForMerge, sanitizedPatches, residual.trim() || undefined).content;
+  } else {
+    let demoted = demoteDuplicateHeadings(fragMain, existingContent, noteTitle);
+    demoted = dedupeParagraphsAgainstExisting(existingContent, demoted);
+    merged = appendBeforeConnectedNotes(existingContent, demoted);
+  }
+
+  const normalizedBodyLinks = normalizeBodyLinks(merged, index);
+  merged = normalizedBodyLinks.body;
+  merged = ensureConnectedNotesSection(merged, resolvedLinks);
+  merged = reconcileNoteContent(normalizeWhitespace(merged));
+  return merged;
+}
+
+function buildMergeWriteContent(
+  update: ExtractionUpdate,
+  existingContent: string,
+  index: ExtractionIndexEntry[]
+): { content: string; links: string[] } | null {
+  const patches = update.sectionPatches ?? [];
+  const sanitizedPatches = patches.map((patch) => ({
+    ...patch,
+    body: sanitizeMarkdownFragment(patch.body, update)
+  }));
+  const residual =
+    update.residualBody !== undefined ? sanitizeMarkdownFragment(update.residualBody, update) : undefined;
+
+  const { content: merged } = applyMerge(existingContent, sanitizedPatches, residual);
+  const normalizedBodyLinks = normalizeBodyLinks(merged, index);
+  let body = normalizedBodyLinks.body;
+  const resolvedLinks = normalizeLinkTitles(
+    [...update.links, ...normalizedBodyLinks.links],
+    index
+  );
+  body = ensureConnectedNotesSection(body, resolvedLinks);
+  body = reconcileNoteContent(normalizeWhitespace(body));
+
+  if (!hasEnoughDurableContent(body)) {
+    return null;
+  }
+
+  return { content: body, links: resolvedLinks };
+}
+
 export function prepareExtractionWrite(
   input: PrepareExtractionWriteInput
 ): PreparedExtractionWrite | null {
   if (input.update.operation === "noop") {
     return null;
+  }
+
+  const mergeUsesPatches =
+    input.update.operation === "merge" &&
+    input.existingNote &&
+    ((input.update.sectionPatches?.length ?? 0) > 0 || Boolean(input.update.residualBody?.trim()));
+
+  if (mergeUsesPatches) {
+    const built = buildMergeWriteContent(
+      input.update,
+      input.existingNote!.content,
+      input.index
+    );
+
+    if (!built) {
+      return null;
+    }
+
+    return finalizePreparedExtractionWrite(input, built.content, "merge");
   }
 
   const preparedBody = prepareNoteBody(input.update, input.existingNote, input.index);
@@ -436,12 +630,30 @@ export function prepareExtractionWrite(
     return null;
   }
 
-  const nextContent =
-    input.update.operation === "append" && input.existingNote
-      ? appendBeforeConnectedNotes(input.existingNote.content, preparedBody.nextBody)
-      : preparedBody.nextBody;
+  let nextContent: string;
+
+  if (input.update.operation === "append" && input.existingNote) {
+    nextContent = buildAppendMergedContent(
+      input.existingNote.content,
+      preparedBody.nextBody,
+      preparedBody.links,
+      input.existingNote.title,
+      input.index
+    );
+  } else {
+    nextContent = reconcileNoteContent(normalizeWhitespace(preparedBody.nextBody));
+  }
+
+  return finalizePreparedExtractionWrite(input, nextContent, input.update.operation);
+}
+
+function finalizePreparedExtractionWrite(
+  input: PrepareExtractionWriteInput,
+  content: string,
+  operation: PreparedExtractionWrite["operation"]
+): PreparedExtractionWrite {
   const nextTitle =
-    input.update.operation === "append" && input.existingNote
+    (operation === "append" || operation === "merge") && input.existingNote
       ? input.existingNote.title
       : input.update.targetTitle;
   const nextTags = normalizeTagList(
@@ -453,7 +665,7 @@ export function prepareExtractionWrite(
     ? input.existingNote.sources + (input.update.sources ?? 0)
     : (input.update.sources ?? 1);
   const nextType =
-    input.update.operation === "append" && input.existingNote
+    (operation === "append" || operation === "merge") && input.existingNote
       ? input.existingNote.type
       : input.update.targetType;
 
@@ -465,12 +677,12 @@ export function prepareExtractionWrite(
   return {
     slug: input.update.targetSlug,
     title: nextTitle,
-    content: normalizeWhitespace(nextContent),
+    content: normalizeWhitespace(content),
     tags: nextTags,
     type: nextType,
     sources: nextSources,
     folderPath: resolvedFolderPath,
     url: input.update.url,
-    operation: input.update.operation
+    operation
   };
 }

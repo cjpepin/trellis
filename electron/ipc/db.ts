@@ -8,12 +8,15 @@ import {
   createThought,
   getMessagesBySession,
   getStrandProvenanceForFile,
+  getStrandRevisionBody,
   getThoughtById,
+  listStrandRevisionsForFile,
   listSessions,
   listThoughtsForVault,
   listWikiTouchSessionsForVault,
   replaceMessages,
   recordWikiOps,
+  getSessionNoteSlugs,
   updateSession
 } from "../lib/database";
 import { runThoughtEnrichment } from "../lib/thoughts/enrichThought";
@@ -127,7 +130,7 @@ const sessionUpdateSchema = z.object({
 const wikiOpSchema = z.object({
   sessionId: sessionIdSchema.optional(),
   file: z.string().min(1),
-  action: z.enum(["create", "rewrite", "append"])
+  action: z.enum(["create", "rewrite", "append", "merge"])
 });
 
 const vaultIdSchema = z.string().min(1);
@@ -135,6 +138,16 @@ const vaultIdSchema = z.string().min(1);
 const strandProvenanceInputSchema = z.object({
   vaultId: vaultIdSchema,
   fileName: z.string().min(1).max(500)
+});
+
+const strandRevisionListInputSchema = z.object({
+  vaultId: vaultIdSchema,
+  file: z.string().min(1).max(2000)
+});
+
+const strandRevisionBodyInputSchema = z.object({
+  vaultId: vaultIdSchema,
+  revisionId: z.string().uuid()
 });
 
 const replaceMessagesSchema = z.object({
@@ -168,6 +181,9 @@ export function registerDatabaseIpc(getSettings: () => AppSettings): void {
   ipcMain.handle(ipcChannels.dbUpdateSession, async (_event, payload: unknown) =>
     updateSession(sessionUpdateSchema.parse(payload))
   );
+  ipcMain.handle(ipcChannels.dbGetSessionNoteSlugs, async (_event, sessionId: unknown) =>
+    getSessionNoteSlugs(sessionIdSchema.parse(sessionId))
+  );
   ipcMain.handle(ipcChannels.dbRecordWikiOps, async (_event, ops: unknown) => {
     await recordWikiOps(z.array(wikiOpSchema).parse(ops));
   });
@@ -177,6 +193,14 @@ export function registerDatabaseIpc(getSettings: () => AppSettings): void {
   ipcMain.handle(ipcChannels.dbGetStrandProvenanceForFile, async (_event, payload: unknown) => {
     const parsed = strandProvenanceInputSchema.parse(payload);
     return getStrandProvenanceForFile(parsed.vaultId, parsed.fileName);
+  });
+  ipcMain.handle(ipcChannels.dbListStrandRevisions, async (_event, payload: unknown) => {
+    const parsed = strandRevisionListInputSchema.parse(payload);
+    return listStrandRevisionsForFile(parsed.vaultId, parsed.file);
+  });
+  ipcMain.handle(ipcChannels.dbGetStrandRevisionBody, async (_event, payload: unknown) => {
+    const parsed = strandRevisionBodyInputSchema.parse(payload);
+    return getStrandRevisionBody(parsed.vaultId, parsed.revisionId);
   });
   ipcMain.handle(ipcChannels.dbCreateThought, async (_event, payload: unknown) => {
     const parsed = createThoughtSchema.parse(payload);

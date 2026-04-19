@@ -1,6 +1,4 @@
-import {
-  extractionThresholds
-} from "./config.ts";
+import { extractionThresholds } from "./config.ts";
 import {
   extractionEvidenceKindValues,
   extractionNoteTypeValues,
@@ -9,6 +7,7 @@ import {
   type ExtractionIndexEntry,
   type ExtractionOperation,
   type ExtractionResponse,
+  type ExtractionSectionPatch,
   type ExtractionUpdate,
   type ExtractionValidationIssue,
   type ExtractionValidationOptions,
@@ -122,9 +121,10 @@ function resolveSlugCandidate(lookups: IndexLookups, candidate: string): string 
 function resolveCanonicalTargetSlug(
   lookups: IndexLookups,
   initialSlug: string,
-  rawTitle: string | null
+  rawTitle: string | null,
+  sessionPriorSlugs?: string[]
 ): string {
-  if (lookups.bySlug.size === 0) {
+  if (lookups.bySlug.size === 0 && (!sessionPriorSlugs || sessionPriorSlugs.length === 0)) {
     return initialSlug;
   }
 
@@ -157,6 +157,15 @@ function resolveCanonicalTargetSlug(
     }
   }
 
+  if (sessionPriorSlugs && sessionPriorSlugs.length > 0 && titleKey.length > 0) {
+    for (const priorSlug of sessionPriorSlugs) {
+      const priorNote = lookups.bySlug.get(priorSlug);
+      if (priorNote && normalizeTitleKey(priorNote.title) === titleKey) {
+        return priorSlug;
+      }
+    }
+  }
+
   return initialSlug;
 }
 
@@ -167,6 +176,123 @@ function summarizeMarkdown(value: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 240);
+}
+
+/** Model often copies session-title placeholders like "Brief Chat" into targetTitle; reject those. */
+const UNACCEPTABLE_GENERIC_NOTE_TITLE_KEYS = new Set([
+  "brief chat",
+  "new conversation",
+  "new chat",
+  "discussion",
+  "chat",
+  "untitled",
+  "notes",
+  "untitled session",
+  "chat about stuff",
+  "quick chat",
+  "short chat",
+  "conversation",
+  "general",
+  "misc",
+  "miscellaneous",
+  "topic",
+  "update",
+  "important",
+  "note",
+  "synthesis",
+  "summary"
+]);
+
+const GENERIC_SECTION_HEADING_KEYS = new Set([
+  "summary",
+  "details",
+  "overview",
+  "introduction",
+  "key details",
+  "connected notes",
+  "next steps",
+  "open questions",
+  "plan",
+  "background"
+]);
+
+/** Exported for manual/auto chat capture fallbacks that must not reuse session placeholders as note titles. */
+export function isUnacceptableGenericNoteTitle(title: string): boolean {
+  const key = normalizeTitleKey(title);
+  if (key.length === 0) {
+    return true;
+  }
+  return UNACCEPTABLE_GENERIC_NOTE_TITLE_KEYS.has(key);
+}
+
+function extractFirstSubstantiveHeading(body: string): string | null {
+  const re = /^#{1,3}\s+(.+)$/gm;
+  let match: RegExpExecArray | null;
+
+  while ((match = re.exec(body)) !== null) {
+    const text =
+      match[1]
+        ?.trim()
+        .replace(/\s+#+\s*$/, "")
+        .slice(0, 120) ?? "";
+    const key = normalizeTitleKey(text);
+    if (key.length === 0 || GENERIC_SECTION_HEADING_KEYS.has(key)) {
+      continue;
+    }
+    if (!isUnacceptableGenericNoteTitle(text)) {
+      return text;
+    }
+  }
+
+  return null;
+}
+
+function clipWords(text: string, maxWords: number, maxChars: number): string {
+  const words = text.split(/\s+/).filter(Boolean).slice(0, maxWords);
+  let out = words.join(" ");
+  if (out.length > maxChars) {
+    out = out.slice(0, maxChars).replace(/\s+\S*$/, "").trim();
+  }
+  return out;
+}
+
+function titleFromSummaryOrExcerpt(summary: string, bodyPlain: string): string | null {
+  const fromSummary = clipWords(summary.replace(/\s+/g, " ").trim(), 14, 100);
+  if (fromSummary.length >= 10 && !isUnacceptableGenericNoteTitle(fromSummary)) {
+    return fromSummary;
+  }
+
+  const excerpt = clipWords(bodyPlain, 14, 100);
+  if (excerpt.length >= 10 && !isUnacceptableGenericNoteTitle(excerpt)) {
+    return excerpt;
+  }
+
+  return null;
+}
+
+/**
+ * When the model emits a placeholder note title, derive a concise title from note content.
+ */
+function deriveDescriptiveNoteTitle(body: string, summary: string, targetSlug: string): string | null {
+  const heading = extractFirstSubstantiveHeading(body);
+
+  if (heading) {
+    return heading.slice(0, 120);
+  }
+
+  const bodyPlain = summarizeMarkdown(body);
+  const fromText = titleFromSummaryOrExcerpt(summary, bodyPlain);
+
+  if (fromText) {
+    return fromText.slice(0, 120);
+  }
+
+  const fromSlug = humanizeSlug(targetSlug);
+  if (!isUnacceptableGenericNoteTitle(fromSlug)) {
+    return fromSlug.slice(0, 120);
+  }
+
+  return null;
 }
 
 function clampConfidence(value: unknown, fallback: number): number {
@@ -348,12 +474,59 @@ function resolveOperation(raw: unknown): ExtractionOperation | null {
     candidate === "create" ||
     candidate === "append" ||
     candidate === "rewrite" ||
+    candidate === "merge" ||
     candidate === "noop"
   ) {
     return candidate;
   }
 
   return null;
+}
+
+function normalizeHeadingKeyForPatch(heading: string): string {
+  return heading
+    .trim()
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/\[\[([^[\]]+)\]\]/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function readSectionPatches(raw: Record<string, unknown>): ExtractionSectionPatch[] {
+  const rawPatches = raw.sectionPatches;
+  if (!Array.isArray(rawPatches)) {
+    return [];
+  }
+
+  const out: ExtractionSectionPatch[] = [];
+
+  for (const entry of rawPatches) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+
+    const heading = readNonEmptyString(entry.heading);
+
+    if (!heading) {
+      continue;
+    }
+
+    const body = typeof entry.body === "string" ? entry.body : "";
+    const mode = entry.mode === "merge-bullets" ? "merge-bullets" : "replace";
+    out.push({ heading, body, mode });
+  }
+
+  return out;
+}
+
+function flattenMergeToBody(patches: ExtractionSectionPatch[], residual?: string): string {
+  const parts = [
+    ...patches.map((patch) => `${patch.heading.trim()}\n\n${patch.body.trim()}`),
+    residual?.trim() ?? ""
+  ].filter((part) => part.length > 0);
+
+  return parts.join("\n\n");
 }
 
 function readNonEmptyString(value: unknown): string | null {
@@ -461,26 +634,71 @@ function normalizeUpdate(
   }
 
   const rawTitle = readNonEmptyString(raw.targetTitle) ?? readNonEmptyString(raw.title);
-  targetSlug = resolveCanonicalTargetSlug(lookups, targetSlug, rawTitle);
+  targetSlug = resolveCanonicalTargetSlug(lookups, targetSlug, rawTitle, options.sessionPriorSlugs);
 
   const matchedIndexNote = lookups.bySlug.get(targetSlug);
-  const targetTitle = matchedIndexNote?.title ?? rawTitle ?? humanizeSlug(targetSlug);
-  const rawBody = readNonEmptyString(raw.body) ?? readNonEmptyString(raw.content) ?? "";
+  const mergeEnabled = options.mergeOperationEnabled ?? extractionThresholds.mergeOperationEnabled;
+  let sectionPatches = readSectionPatches(raw);
+  const residualRaw =
+    typeof raw.residualBody === "string" && raw.residualBody.trim().length > 0
+      ? raw.residualBody.trim()
+      : undefined;
+
+  let rawBody = readNonEmptyString(raw.body) ?? readNonEmptyString(raw.content) ?? "";
+
+  if (operation === "merge" && !mergeEnabled) {
+    if (!rawBody.trim() && (sectionPatches.length > 0 || residualRaw)) {
+      rawBody = flattenMergeToBody(sectionPatches, residualRaw);
+    } else if (rawBody.trim() && (sectionPatches.length > 0 || residualRaw)) {
+      rawBody = [rawBody, flattenMergeToBody(sectionPatches, residualRaw)].filter(Boolean).join("\n\n");
+    }
+    sectionPatches = [];
+  } else if (operation === "merge" && mergeEnabled && !rawBody.trim()) {
+    if (sectionPatches.length > 0 || residualRaw) {
+      rawBody = flattenMergeToBody(sectionPatches, residualRaw);
+    }
+  }
+
+  let effectiveOperation: ExtractionOperation =
+    operation === "merge" && !mergeEnabled ? "append" : operation;
+
   const normalizedLinks = normalizeLinks(raw.links ?? raw.linkedTo, lookups);
   const sanitizedBody = ensureDeclaredLinksInBody(
     sanitizeBodyLinks(rawBody, lookups),
     normalizedLinks
   );
+
+  const summary =
+    readNonEmptyString(raw.summary)?.slice(0, 240) ??
+    summarizeMarkdown(sanitizedBody).slice(0, 240);
+
+  let targetTitle = matchedIndexNote?.title ?? rawTitle ?? humanizeSlug(targetSlug);
+
+  if (
+    !(matchedIndexNote && !matchedIndexNote.isPlaceholder) &&
+    isUnacceptableGenericNoteTitle(targetTitle)
+  ) {
+    const refined = deriveDescriptiveNoteTitle(sanitizedBody, summary, targetSlug);
+    if (refined) {
+      targetTitle = refined;
+    }
+  }
+
   const fallbackKind: ExtractionEvidenceKind = options.sourceType ? "source" : "transcript";
   const fallbackEvidence: ExtractionEvidence = {
     kind: fallbackKind,
     ref: options.sourcePath ?? (options.sourceType ?? "transcript")
   };
 
-  let normalizedOperation = operation;
+  let normalizedOperation = effectiveOperation;
   const existsAlready = lookups.existingSlugs.has(targetSlug);
-  const fallbackConfidence = operation === "rewrite" ? 0.76 : operation === "noop" ? 1 : 0.58;
+  const fallbackConfidence =
+    effectiveOperation === "rewrite" ? 0.75 : effectiveOperation === "noop" ? 1 : 0.58;
   const confidence = clampConfidence(raw.confidence, fallbackConfidence);
+
+  if (normalizedOperation === "merge" && !existsAlready) {
+    normalizedOperation = "create";
+  }
 
   if (normalizedOperation === "append" && !existsAlready) {
     normalizedOperation = "create";
@@ -498,9 +716,14 @@ function normalizeUpdate(
     normalizedOperation = "append";
   }
 
-  const summary =
-    readNonEmptyString(raw.summary)?.slice(0, 240) ??
-    summarizeMarkdown(sanitizedBody).slice(0, 240);
+  if (
+    normalizedOperation === "merge" &&
+    existsAlready &&
+    sectionPatches.length === 0 &&
+    !residualRaw
+  ) {
+    normalizedOperation = "append";
+  }
 
   if (
     normalizedOperation !== "noop" &&
@@ -537,6 +760,12 @@ function normalizeUpdate(
     resolvedFolderPath = fromIndex.length > 0 ? fromIndex : undefined;
   }
 
+  const emitMergePayload =
+    mergeEnabled &&
+    normalizedOperation === "merge" &&
+    existsAlready &&
+    (sectionPatches.length > 0 || Boolean(residualRaw));
+
   return {
     update: {
       operation: normalizedOperation,
@@ -551,7 +780,13 @@ function normalizeUpdate(
       confidence,
       ...(resolvedFolderPath !== undefined ? { folderPath: resolvedFolderPath } : {}),
       sources: options.sourceType ? 1 : 0,
-      url: options.sourceType === "web" ? options.sourcePath : undefined
+      url: options.sourceType === "web" ? options.sourcePath : undefined,
+      ...(emitMergePayload
+        ? {
+            ...(sectionPatches.length > 0 ? { sectionPatches } : {}),
+            ...(residualRaw ? { residualBody: residualRaw } : {})
+          }
+        : {})
     },
     issues
   };
@@ -580,6 +815,10 @@ function mergeOperations(updates: ExtractionUpdate[]): ExtractionOperation {
     return "rewrite";
   }
 
+  if (updates.some((update) => update.operation === "merge")) {
+    return "merge";
+  }
+
   if (updates.some((update) => update.operation === "create")) {
     return "create";
   }
@@ -600,6 +839,29 @@ function mergeFolderPaths(updates: ExtractionUpdate[]): string | undefined {
   }
 
   return undefined;
+}
+
+function mergeGroupSectionPatches(group: ExtractionUpdate[]): {
+  patches: ExtractionSectionPatch[];
+  residual?: string;
+} {
+  const map = new Map<string, ExtractionSectionPatch>();
+
+  for (const update of group) {
+    for (const patch of update.sectionPatches ?? []) {
+      map.set(normalizeHeadingKeyForPatch(patch.heading), patch);
+    }
+  }
+
+  const residuals = group
+    .map((update) => update.residualBody)
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+
+  return {
+    patches: [...map.values()],
+    residual:
+      residuals.length > 0 ? residuals[residuals.length - 1]!.trim() : undefined
+  };
 }
 
 function mergeDuplicateUpdates(
@@ -636,6 +898,7 @@ function mergeDuplicateUpdates(
     }
 
     const mergedFolderPath = mergeFolderPaths(group);
+    const { patches: mergedSectionPatches, residual: mergedResidual } = mergeGroupSectionPatches(group);
 
     merged.push({
       operation,
@@ -653,7 +916,13 @@ function mergeDuplicateUpdates(
       confidence: Math.max(...group.map((update) => update.confidence)),
       ...(mergedFolderPath !== undefined ? { folderPath: mergedFolderPath } : {}),
       sources: Math.max(...group.map((update) => update.sources ?? 0)),
-      url: [...group].reverse().find((update) => typeof update.url === "string")?.url
+      url: [...group].reverse().find((update) => typeof update.url === "string")?.url,
+      ...(operation === "merge" && (mergedSectionPatches.length > 0 || mergedResidual)
+        ? {
+            ...(mergedSectionPatches.length > 0 ? { sectionPatches: mergedSectionPatches } : {}),
+            ...(mergedResidual ? { residualBody: mergedResidual } : {})
+          }
+        : {})
     });
   }
 

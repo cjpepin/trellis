@@ -11,6 +11,7 @@ Local-first AI knowledge desktop app: **Electron + React + TypeScript**. Chats a
 | [Agent workflow](docs/agents/README.md) | How feature work is planned, built, tested, QA’d |
 | [Electron E2E](docs/testing/electron-e2e.md) | Playwright setup and expectations |
 | [Extraction V2](docs/extraction-v2.md) | Local-first extraction and note interlinking roadmap |
+| [Extraction routing](docs/extraction-routing.md) | Cloud vs on-device extraction, env flags, profiling |
 
 ## Requirements
 
@@ -36,7 +37,7 @@ npm run check        # TypeScript (run before PRs)
 npm run build        # Renderer + packaged app (electron-builder)
 ```
 
-**Tests:** `npm run test:node` · `npm run test:e2e` · `npm run verify` (check + node + e2e) — see AGENTS.md for when to use which.
+**Tests:** `npm test` (TypeScript + node tests) · `npm run test:e2e` · `npm run test:all` or `npm run verify` (check + node + e2e; same as `test:all`) · optional `npm run test:supabase` when Deno is installed — see AGENTS.md for when to use which. If node tests fail to load `better-sqlite3` (native ABI mismatch), run `node scripts/rebuild-native-if-needed.mjs`.
 
 ## Repository layout
 
@@ -77,6 +78,8 @@ Source: [`fixtures/preview-seed/`](fixtures/preview-seed/).
 
 Defaults and full detail are in **AGENTS.md** and `.env.example`. In short: local extraction is **on** by default; set `TRELLIS_FEATURE_LOCAL_EXTRACTION=0` to disable on-device note processing (no cloud fallback). Heuristic fallback in Supabase extraction is controlled with `TRELLIS_ENABLE_HEURISTIC_EXTRACTION_FALLBACK`.
 
+Optional **cloud extraction** for chat sessions that already use a cloud provider: set `TRELLIS_FEATURE_CLOUD_EXTRACTION=1` and configure API keys in Settings (see [Extraction routing](docs/extraction-routing.md)). On-device extraction remains for local-only chat, offline use, and when cloud extraction fails.
+
 ## Reset local vault + SQLite
 
 Quit Trellis and stop `npm run dev` first.
@@ -85,6 +88,10 @@ Quit Trellis and stop `npm run dev` first.
 npm run reset                              # all configured vault wiki/raw + workspace SQLite
 node scripts/reset.mjs --workspace=preview
 node scripts/reset.mjs --workspace=personal
+# Full reset but keep preview + preview-heavy workspaces (personal only):
+node scripts/reset.mjs --workspace=all --exclude-preview
+# or: TRELLIS_RESET_EXCLUDE_PREVIEW=1 npm run reset
+# Vault wiki/raw uses workspaces/personal/settings.json only (falls back to legacy root settings if needed).
 ```
 
 Optional extra vault trees: `TRELLIS_EXTRA_VAULT_PATHS` (colon-separated; `;` on Windows). Paths come from Trellis `settings.json` under app user data (e.g. macOS `~/Library/Application Support/trellis/`).

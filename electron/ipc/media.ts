@@ -19,7 +19,7 @@ import {
   writeMediaCacheFile,
   writeMediaCacheFromBase64
 } from "../lib/chatMediaCache";
-import { getProviderKey } from "../lib/providerKeys";
+import { resolveProviderApiKey } from "../lib/providerKeys";
 
 let activeSpeechStreamAbort: AbortController | null = null;
 
@@ -115,11 +115,11 @@ function buildMediaHeaders(
   };
 
   if (input.subscriptionTier === "byok") {
-    const openAiKey = getProviderKey(workspaceId, "openai");
+    const openAiKey = resolveProviderApiKey(workspaceId, "openai", input.subscriptionTier);
 
     if (!openAiKey) {
       throw new Error(
-        "Add your OpenAI API key in Settings to use voice and image features on the BYOK plan."
+        "Add your OpenAI API key in Settings (BYOK) or set OPENAI_API_KEY in the environment to use voice and image features on the BYOK plan."
       );
     }
 

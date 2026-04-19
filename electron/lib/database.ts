@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import Sqlite from "better-sqlite3";
@@ -16,7 +17,9 @@ import type {
   MemoryItem,
   MemoryKind,
   MessageRecord,
-  RecordWikiOpInput
+  RecordWikiOpInput,
+  StrandRevisionActor,
+  StrandRevisionSummary
 } from "../ipc/types";
 import { normalizeChatModel } from "../ipc/types";
 import type {
@@ -86,8 +89,6 @@ interface ExtractionJobRow {
   applied_update_count: string;
   session_title: string | null;
   error_message: string | null;
-  cloud_functions_base_url: string | null;
-  cloud_publishable_key: string | null;
   preferred_local_model_id: string | null;
   created_at: string;
   started_at: string | null;
@@ -123,8 +124,6 @@ interface ThoughtRow {
 }
 
 interface ExtractionJobConfigRow {
-  cloud_functions_base_url: string | null;
-  cloud_publishable_key: string | null;
   preferred_local_model_id: string | null;
 }
 
@@ -178,8 +177,6 @@ export interface CreateExtractionJobInput {
   transcriptStartIndex: number;
   transcriptEndIndex: number;
   transcriptDigest: string;
-  cloudFunctionsBaseUrl?: string | null;
-  cloudPublishableKey?: string | null;
   preferredLocalModelId?: string | null;
 }
 
@@ -454,6 +451,20 @@ function mapNoteEmbedding(row: NoteEmbeddingRow): StoredNoteEmbedding {
   };
 }
 
+function mapStoredExtractionMode(raw: string): ExtractionMode {
+  if (raw === "cloud") {
+    return "cloud";
+  }
+  return "local";
+}
+
+function mapStoredExtractionProvider(raw: string | null): ExtractionProviderId | null {
+  if (raw === "embedded" || raw === "cloud-openai" || raw === "cloud-anthropic") {
+    return raw;
+  }
+  return null;
+}
+
 function mapExtractionJob(row: ExtractionJobRow): ExtractionJobSnapshot {
   return {
     id: row.id,
@@ -461,8 +472,8 @@ function mapExtractionJob(row: ExtractionJobRow): ExtractionJobSnapshot {
     vaultId: row.vault_id,
     status: row.status,
     trigger: row.trigger,
-    mode: "local",
-    provider: row.provider === "embedded" ? "embedded" : null,
+    mode: mapStoredExtractionMode(row.mode),
+    provider: mapStoredExtractionProvider(row.provider),
     model: row.model,
     transcriptStartIndex: Number(row.transcript_start_index),
     transcriptEndIndex: Number(row.transcript_end_index),
@@ -613,7 +624,7 @@ function ensureSchema(db: Sqlite.Database): void {
       status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
       trigger TEXT NOT NULL CHECK(trigger IN ('idle', 'session-switch', 'manual', 'startup')),
       mode TEXT NOT NULL CHECK(mode IN ('auto', 'cloud', 'local')),
-      provider TEXT CHECK(provider IN ('cloud', 'ollama', 'embedded')),
+      provider TEXT,
       model TEXT,
       transcript_start_index INTEGER NOT NULL,
       transcript_end_index INTEGER NOT NULL,
@@ -622,8 +633,6 @@ function ensureSchema(db: Sqlite.Database): void {
       applied_update_count INTEGER NOT NULL DEFAULT 0,
       session_title TEXT,
       error_message TEXT,
-      cloud_functions_base_url TEXT,
-      cloud_publishable_key TEXT,
       preferred_local_model_id TEXT,
       created_at BIGINT NOT NULL,
       started_at BIGINT,
@@ -635,6 +644,20 @@ function ensureSchema(db: Sqlite.Database): void {
 
     CREATE INDEX IF NOT EXISTS extraction_jobs_status_idx
       ON extraction_jobs (status, created_at);
+
+    CREATE TABLE IF NOT EXISTS strand_revisions (
+      id TEXT PRIMARY KEY,
+      vault_id TEXT NOT NULL,
+      file TEXT NOT NULL,
+      body TEXT NOT NULL,
+      content_sha256 TEXT NOT NULL,
+      created_at BIGINT NOT NULL,
+      actor TEXT NOT NULL CHECK(actor IN ('user', 'trellis', 'import', 'system')),
+      session_id TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS strand_revisions_vault_file_created_idx
+      ON strand_revisions (vault_id, file, created_at DESC);
   `);
 }
 
@@ -740,8 +763,92 @@ function migrateMessagesComposerPinsColumn(db: Sqlite.Database): void {
   }
 }
 
-/** PGlite-era migration; SQLite ships the full CHECK in ensureSchema. No-op. */
-function migrateExtractionJobProviderConstraint(_db: Sqlite.Database): void {}
+/**
+ * Older DBs constrained `provider` to legacy values; widen so cloud extraction can persist
+ * `cloud-openai` / `cloud-anthropic` (and future ids) without CHECK failures.
+ */
+function migrateExtractionJobProviderConstraint(db: Sqlite.Database): void {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='extraction_jobs'`)
+    .get() as { sql: string | null } | undefined;
+  const sql = row?.sql ?? "";
+  if (!sql.includes("CHECK(provider IN ('cloud', 'ollama', 'embedded'))")) {
+    return;
+  }
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec("BEGIN");
+  try {
+    db.exec(`
+      CREATE TABLE extraction_jobs_new (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES chat_sessions(id),
+        vault_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+        trigger TEXT NOT NULL CHECK(trigger IN ('idle', 'session-switch', 'manual', 'startup')),
+        mode TEXT NOT NULL CHECK(mode IN ('auto', 'cloud', 'local')),
+        provider TEXT,
+        model TEXT,
+        transcript_start_index INTEGER NOT NULL,
+        transcript_end_index INTEGER NOT NULL,
+        transcript_digest TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        applied_update_count INTEGER NOT NULL DEFAULT 0,
+        session_title TEXT,
+        error_message TEXT,
+        preferred_local_model_id TEXT,
+        created_at BIGINT NOT NULL,
+        started_at BIGINT,
+        finished_at BIGINT
+      )
+    `);
+    db.exec(`
+      INSERT INTO extraction_jobs_new (
+        id, session_id, vault_id, status, trigger, mode, provider, model,
+        transcript_start_index, transcript_end_index, transcript_digest,
+        attempt_count, applied_update_count, session_title, error_message,
+        preferred_local_model_id, created_at, started_at, finished_at
+      )
+      SELECT
+        id, session_id, vault_id, status, trigger, mode, provider, model,
+        transcript_start_index, transcript_end_index, transcript_digest,
+        attempt_count, applied_update_count, session_title, error_message,
+        preferred_local_model_id, created_at, started_at, finished_at
+      FROM extraction_jobs
+    `);
+    db.exec("DROP TABLE extraction_jobs");
+    db.exec("ALTER TABLE extraction_jobs_new RENAME TO extraction_jobs");
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS extraction_jobs_session_status_idx
+        ON extraction_jobs (session_id, status, created_at)
+    `);
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS extraction_jobs_status_idx
+        ON extraction_jobs (status, created_at)
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
+function migrateExtractionJobsDropCloudColumns(db: Sqlite.Database): void {
+  const urlCol = db
+    .prepare(
+      `SELECT 1 AS ok FROM pragma_table_info('extraction_jobs') WHERE name = 'cloud_functions_base_url' LIMIT 1`
+    )
+    .get() as { ok: number } | undefined;
+
+  if (!urlCol) {
+    return;
+  }
+
+  db.exec(`ALTER TABLE extraction_jobs DROP COLUMN cloud_functions_base_url`);
+  db.exec(`ALTER TABLE extraction_jobs DROP COLUMN cloud_publishable_key`);
+}
 
 function ensureParentDir(filePath: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -757,6 +864,7 @@ export async function initializeDatabase(databaseFilePath: string): Promise<Sqli
     migrateMessagesReplyContextColumn(database);
     migrateMessagesComposerPinsColumn(database);
     migrateExtractionJobProviderConstraint(database);
+    migrateExtractionJobsDropCloudColumns(database);
     return database;
   }
 
@@ -778,6 +886,7 @@ export async function initializeDatabase(databaseFilePath: string): Promise<Sqli
   migrateMessagesReplyContextColumn(database);
   migrateMessagesComposerPinsColumn(database);
   migrateExtractionJobProviderConstraint(database);
+  migrateExtractionJobsDropCloudColumns(database);
 
   return database;
 }
@@ -1097,6 +1206,21 @@ export async function updateSession(
   };
 }
 
+/** Slugs of notes touched for a given session, for use as pinned retrieval hints. */
+export async function getSessionNoteSlugs(sessionId: string): Promise<string[]> {
+  const db = getDatabase();
+  const rows = allRows<{ slug: string }>(
+    db,
+    `SELECT DISTINCT REPLACE(file, '.md', '') AS slug
+     FROM wiki_ops
+     WHERE session_id = ? AND action IN ('create', 'rewrite', 'append')
+     ORDER BY created_at DESC
+     LIMIT 10`,
+    [sessionId]
+  );
+  return rows.map((r) => r.slug);
+}
+
 export async function recordWikiOps(ops: RecordWikiOpInput[]): Promise<void> {
   const db = getDatabase();
 
@@ -1194,6 +1318,131 @@ export async function getStrandProvenanceForFile(
     sessionTitle: row.session_title,
     lastTouchedAt: row.last_touched_at
   };
+}
+
+const STRAND_REVISION_MAX_PER_FILE = 100;
+
+function strandContentSha256(utf8: string): string {
+  return createHash("sha256").update(utf8, "utf8").digest("hex");
+}
+
+/** Persists a full-file snapshot when content changed vs the latest revision for this file. */
+export function recordStrandRevision(input: {
+  vaultId: string;
+  file: string;
+  bodyUtf8: string;
+  actor: StrandRevisionActor;
+  sessionId?: string | null;
+}): void {
+  const db = getDatabase();
+  const hash = strandContentSha256(input.bodyUtf8);
+  const last = firstRow<{ content_sha256: string }>(
+    db,
+    `SELECT content_sha256 FROM strand_revisions
+     WHERE vault_id = ? AND file = ?
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [input.vaultId, input.file]
+  );
+
+  if (last && last.content_sha256 === hash) {
+    return;
+  }
+
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const sessionId = input.sessionId ?? null;
+
+  runExec(
+    db,
+    `INSERT INTO strand_revisions (
+       id, vault_id, file, body, content_sha256, created_at, actor, session_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, input.vaultId, input.file, input.bodyUtf8, hash, now, input.actor, sessionId]
+  );
+
+  const countRow = firstRow<{ c: number }>(
+    db,
+    `SELECT COUNT(*) AS c FROM strand_revisions WHERE vault_id = ? AND file = ?`,
+    [input.vaultId, input.file]
+  );
+  const count = countRow ? Number(countRow.c) : 0;
+
+  if (count > STRAND_REVISION_MAX_PER_FILE) {
+    const excess = count - STRAND_REVISION_MAX_PER_FILE;
+    runExec(
+      db,
+      `DELETE FROM strand_revisions WHERE id IN (
+         SELECT id FROM strand_revisions
+         WHERE vault_id = ? AND file = ?
+         ORDER BY created_at ASC
+         LIMIT ?
+       )`,
+      [input.vaultId, input.file, excess]
+    );
+  }
+}
+
+export async function listStrandRevisionsForFile(
+  vaultId: string,
+  file: string
+): Promise<StrandRevisionSummary[]> {
+  const db = getDatabase();
+  const rows = allRows<{
+    id: string;
+    vault_id: string;
+    file: string;
+    created_at: string;
+    actor: string;
+    session_id: string | null;
+    content_sha256: string;
+    session_title: string | null;
+  }>(
+    db,
+    `SELECT sr.id,
+            sr.vault_id,
+            sr.file,
+            sr.created_at,
+            sr.actor,
+            sr.session_id,
+            sr.content_sha256,
+            cs.title AS session_title
+     FROM strand_revisions sr
+     LEFT JOIN chat_sessions cs ON cs.id = sr.session_id
+     WHERE sr.vault_id = ? AND sr.file = ?
+     ORDER BY sr.created_at DESC
+     LIMIT ?`,
+    [vaultId, file, STRAND_REVISION_MAX_PER_FILE]
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    vaultId: row.vault_id,
+    file: row.file,
+    createdAt: Number(row.created_at),
+    actor: row.actor as StrandRevisionActor,
+    sessionId: row.session_id,
+    sessionTitle: row.session_title,
+    contentSha256: row.content_sha256
+  }));
+}
+
+export async function getStrandRevisionBody(
+  vaultId: string,
+  revisionId: string
+): Promise<{ body: string } | null> {
+  const db = getDatabase();
+  const row = firstRow<{ body: string }>(
+    db,
+    `SELECT body FROM strand_revisions WHERE vault_id = ? AND id = ?`,
+    [vaultId, revisionId]
+  );
+
+  if (!row) {
+    return null;
+  }
+
+  return { body: row.body };
 }
 
 export async function listMemoryItems(vaultId: string): Promise<MemoryItem[]> {
@@ -1638,16 +1887,14 @@ export async function createExtractionJob(
        transcript_start_index,
        transcript_end_index,
        transcript_digest,
-       cloud_functions_base_url,
-       cloud_publishable_key,
        preferred_local_model_id,
        created_at
      )
-     VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
      RETURNING id, session_id, vault_id, status, trigger, mode, provider, model,
                transcript_start_index, transcript_end_index, transcript_digest,
                attempt_count, applied_update_count, session_title, error_message,
-               cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
+               preferred_local_model_id,
                created_at, started_at, finished_at`,
     [
       id,
@@ -1658,8 +1905,6 @@ export async function createExtractionJob(
       input.transcriptStartIndex,
       input.transcriptEndIndex,
       input.transcriptDigest,
-      input.cloudFunctionsBaseUrl ?? null,
-      input.cloudPublishableKey ?? null,
       input.preferredLocalModelId ?? null,
       now
     ]
@@ -1679,7 +1924,7 @@ export async function getExtractionJob(jobId: string): Promise<ExtractionJobSnap
     `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
             transcript_start_index, transcript_end_index, transcript_digest,
             attempt_count, applied_update_count, session_title, error_message,
-            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
+            preferred_local_model_id,
             created_at, started_at, finished_at
      FROM extraction_jobs
      WHERE id = ?`,
@@ -1698,7 +1943,7 @@ export async function updateExtractionJob(
     `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
             transcript_start_index, transcript_end_index, transcript_digest,
             attempt_count, applied_update_count, session_title, error_message,
-            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
+            preferred_local_model_id,
             created_at, started_at, finished_at
      FROM extraction_jobs
      WHERE id = ?`,
@@ -1728,7 +1973,7 @@ export async function updateExtractionJob(
      RETURNING id, session_id, vault_id, status, trigger, mode, provider, model,
                transcript_start_index, transcript_end_index, transcript_digest,
                attempt_count, applied_update_count, session_title, error_message,
-               cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
+               preferred_local_model_id,
                created_at, started_at, finished_at`,
     [
       input.status ?? row.status,
@@ -1763,7 +2008,7 @@ export async function getLatestCompletedExtractionJob(
     `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
             transcript_start_index, transcript_end_index, transcript_digest,
             attempt_count, applied_update_count, session_title, error_message,
-            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
+            preferred_local_model_id,
             created_at, started_at, finished_at
      FROM extraction_jobs
      WHERE session_id = ? AND status = 'completed'
@@ -1784,7 +2029,7 @@ export async function listQueuedExtractionJobsBySession(
     `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
             transcript_start_index, transcript_end_index, transcript_digest,
             attempt_count, applied_update_count, session_title, error_message,
-            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
+            preferred_local_model_id,
             created_at, started_at, finished_at
      FROM extraction_jobs
      WHERE session_id = ? AND status IN ('pending', 'running')
@@ -1804,7 +2049,7 @@ export async function getNextPendingExtractionJob(
     `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
             transcript_start_index, transcript_end_index, transcript_digest,
             attempt_count, applied_update_count, session_title, error_message,
-            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
+            preferred_local_model_id,
             created_at, started_at, finished_at
      FROM extraction_jobs
      WHERE session_id = ? AND status = 'pending'
@@ -1823,7 +2068,7 @@ export async function listResumableExtractionJobs(): Promise<ExtractionJobSnapsh
     `SELECT id, session_id, vault_id, status, trigger, mode, provider, model,
             transcript_start_index, transcript_end_index, transcript_digest,
             attempt_count, applied_update_count, session_title, error_message,
-            cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id,
+            preferred_local_model_id,
             created_at, started_at, finished_at
      FROM extraction_jobs
      WHERE status IN ('pending', 'running')
@@ -1836,14 +2081,12 @@ export async function listResumableExtractionJobs(): Promise<ExtractionJobSnapsh
 export async function getExtractionJobConfig(
   jobId: string
 ): Promise<{
-  cloudFunctionsBaseUrl: string | null;
-  cloudPublishableKey: string | null;
   preferredLocalModelId: string | null;
 } | null> {
   const db = getDatabase();
   const row = firstRow<ExtractionJobConfigRow>(
     db,
-    `SELECT cloud_functions_base_url, cloud_publishable_key, preferred_local_model_id
+    `SELECT preferred_local_model_id
      FROM extraction_jobs
      WHERE id = ?`,
     [jobId]
@@ -1854,8 +2097,6 @@ export async function getExtractionJobConfig(
   }
 
   return {
-    cloudFunctionsBaseUrl: row.cloud_functions_base_url,
-    cloudPublishableKey: row.cloud_publishable_key,
     preferredLocalModelId: row.preferred_local_model_id
   };
 }

@@ -909,7 +909,12 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     overrides: Partial<Pick<SaveNoteInput, "title" | "content" | "folderPath">> & {
       tags?: string[];
     },
-    options?: { recordExplorerMoveUndo?: boolean; skipExplorerUndo?: boolean }
+    options?: {
+      recordExplorerMoveUndo?: boolean;
+      skipExplorerUndo?: boolean;
+      /** When true, stores a strand revision snapshot (user checkpoint). */
+      recordStrandRevision?: boolean;
+    }
   ): Promise<void> {
     const previousFolderPath = note.folderPath;
     const nextFolderPath =
@@ -926,7 +931,8 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
         type: note.type,
         sources: note.sources,
         url: note.url
-      }
+      },
+      strandRevision: options?.recordStrandRevision ? { actor: "user" } : undefined
     });
 
     setNote(result.note);
@@ -972,7 +978,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
           await saveExistingNote(
             current,
             { folderPath: previousFolderPath },
-            { skipExplorerUndo: true }
+            { skipExplorerUndo: true, recordStrandRevision: true }
           );
         },
         redo: async () => {
@@ -980,7 +986,10 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
           if (!current) {
             return;
           }
-          await saveExistingNote(current, { folderPath: nextFolderPath }, { skipExplorerUndo: true });
+          await saveExistingNote(current, { folderPath: nextFolderPath }, {
+            skipExplorerUndo: true,
+            recordStrandRevision: true
+          });
         }
       });
     }
@@ -1016,7 +1025,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     }
 
     try {
-      await saveExistingNote(note, { title: trimmed });
+      await saveExistingNote(note, { title: trimmed }, { recordStrandRevision: true });
     } catch (error) {
       pushToast({
         title: error instanceof Error ? error.message : "Could not save that title.",
@@ -1025,7 +1034,11 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     }
   }
 
-  async function handleSave(content: string, slug: string): Promise<void> {
+  async function handleSave(
+    content: string,
+    slug: string,
+    saveOpts?: { recordStrandRevision?: boolean }
+  ): Promise<void> {
     const note = useWikiStore.getState().noteCache[slug];
 
     if (!note) {
@@ -1033,7 +1046,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     }
 
     try {
-      await saveExistingNote(note, { content });
+      await saveExistingNote(note, { content }, { recordStrandRevision: saveOpts?.recordStrandRevision });
     } catch (error) {
       pushToast({
         title: error instanceof Error ? error.message : "Could not save that note.",
@@ -1054,9 +1067,13 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     }
 
     try {
-      await saveExistingNote(activeNote, {
-        tags: [...activeNote.tags, normalizedTag].sort((left, right) => left.localeCompare(right))
-      });
+      await saveExistingNote(
+        activeNote,
+        {
+          tags: [...activeNote.tags, normalizedTag].sort((left, right) => left.localeCompare(right))
+        },
+        { recordStrandRevision: true }
+      );
     } catch (error) {
       pushToast({
         title: error instanceof Error ? error.message : "Could not update tags.",
@@ -1071,9 +1088,13 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
     }
 
     try {
-      await saveExistingNote(activeNote, {
+      await saveExistingNote(
+        activeNote,
+        {
           tags: activeNote.tags.filter((value) => value !== tag)
-      });
+        },
+        { recordStrandRevision: true }
+      );
 
       if (selectedTag === tag) {
         setSelectedTag(null);
@@ -1097,7 +1118,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
         {
           folderPath
         },
-        { recordExplorerMoveUndo: true }
+        { recordExplorerMoveUndo: true, recordStrandRevision: true }
       );
     } catch (error) {
       pushToast({
@@ -1129,7 +1150,9 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       applySnapshot(snapshot, preferredAfterDelete);
       pushExplorerUndo({
         undo: async () => {
-          await window.trellis.vault.writeNote(wikiNoteToSavePayload(fullBody));
+          await window.trellis.vault.writeNote(
+            wikiNoteToSavePayload(fullBody, undefined, { actor: "user" })
+          );
           const snap = await window.trellis.vault.listIndex();
           applySnapshot(snap, fullBody.slug);
         },
@@ -1183,7 +1206,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
         await saveExistingNote(
           note,
           { folderPath: nextFolderPath },
-          { recordExplorerMoveUndo: true }
+          { recordExplorerMoveUndo: true, recordStrandRevision: true }
         );
         return;
       }
@@ -1193,7 +1216,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
       await saveExistingNote(
         fullNote,
         { folderPath: nextFolderPath },
-        { recordExplorerMoveUndo: true }
+        { recordExplorerMoveUndo: true, recordStrandRevision: true }
       );
       return;
     }
@@ -1519,7 +1542,9 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
             });
           }
           for (const body of wikiBodies) {
-            await window.trellis.vault.writeNote(wikiNoteToSavePayload(body));
+            await window.trellis.vault.writeNote(
+              wikiNoteToSavePayload(body, undefined, { actor: "user" })
+            );
           }
           const snap = await window.trellis.vault.listIndex();
           applySnapshot(snap, wikiBodies[0]?.slug ?? activeNoteSlug);
@@ -2204,6 +2229,7 @@ export function Wiki({ workspaceId }: { workspaceId: AppWorkspaceId }) {
             >
               <NoteViewer
                 note={activeNote}
+                vaultId={activeVaultId}
                 existingSlugs={notes.map((note) => note.slug)}
                 wikiNotes={notes.map((note) => ({ slug: note.slug, title: note.title }))}
                 allTags={allTags}

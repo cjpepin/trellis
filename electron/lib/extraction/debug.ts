@@ -1,9 +1,11 @@
 import type {
+  ChatProvider,
   ExtractionDebugRun,
   ExtractionMode,
   ExtractionJobTrigger,
   ExtractionProviderId
 } from "../../ipc/types";
+import { buildExtractionProviderIdsForOrder } from "./providerOrder";
 
 const maxDebugRuns = 50;
 const debugRuns = new Map<string, ExtractionDebugRun>();
@@ -41,8 +43,11 @@ function insertDebugRun(id: string): void {
   }
 }
 
-export function buildRequestedProviderOrder(_mode: ExtractionMode): ExtractionProviderId[] {
-  return ["embedded"];
+export function buildRequestedProviderOrder(
+  mode: ExtractionMode,
+  chatProvider?: ChatProvider | null
+): ExtractionProviderId[] {
+  return buildExtractionProviderIdsForOrder(mode, chatProvider ?? null);
 }
 
 export function createExtractionDebugRun(input: {
@@ -57,6 +62,8 @@ export function createExtractionDebugRun(input: {
   transcriptEndIndex?: number | null;
   relatedNoteCount?: number | null;
   requestedProviderOrder?: ExtractionProviderId[];
+  /** Used when `requestedProviderOrder` is omitted. */
+  chatProviderForOrder?: ChatProvider | null;
 }): ExtractionDebugRun {
   const run: ExtractionDebugRun = {
     id: crypto.randomUUID(),
@@ -67,6 +74,9 @@ export function createExtractionDebugRun(input: {
     startedAt: null,
     finishedAt: null,
     durationMs: null,
+    prepDurationMs: null,
+    llmPrimaryDurationMs: null,
+    llmRetryThoroughDurationMs: null,
     jobId: input.jobId ?? null,
     sessionId: input.sessionId ?? null,
     vaultId: input.vaultId ?? null,
@@ -78,7 +88,9 @@ export function createExtractionDebugRun(input: {
     requestedUpdateCount: null,
     appliedUpdateCount: null,
     guardrailDropCount: null,
-    requestedProviderOrder: input.requestedProviderOrder ?? buildRequestedProviderOrder(input.mode),
+    requestedProviderOrder:
+      input.requestedProviderOrder ??
+      buildRequestedProviderOrder(input.mode, input.chatProviderForOrder ?? null),
     attemptedProviders: [],
     selectedProvider: null,
     model: null,

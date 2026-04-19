@@ -68,6 +68,9 @@ const NOTE_EDITOR_BODY_MIN_HEIGHT_CLASS = "min-h-[max(12rem,calc(100dvh-13.5rem)
 
 const WIKI_NOTE_COLUMN_SCROLL_SELECTOR = "[data-trellis-wiki-note-scroll]";
 
+/** After this idle period following an edit, a user strand revision checkpoint is recorded (if content changed). */
+const STRAND_REVISION_IDLE_MS = 45_000;
+
 interface WikiNoteSummary {
   slug: string;
   title: string;
@@ -88,7 +91,11 @@ interface Props {
   wikiNotes?: WikiNoteSummary[];
   className?: string;
   onOpenNote?: (slug: string, options?: { linkText?: string }) => void;
-  onSave?: (markdown: string, slug: string) => void | Promise<void>;
+  onSave?: (
+    markdown: string,
+    slug: string,
+    options?: { recordStrandRevision?: boolean }
+  ) => void | Promise<void>;
 }
 
 export type WikiRichTextPreviewPanelHandle = {
@@ -629,37 +636,65 @@ const WikiRichTextPreviewPanel = forwardRef<WikiRichTextPreviewPanelHandle, Wiki
   );
 
   const saveTimerRef = useRef<number | null>(null);
+  const revisionIdleTimerRef = useRef<number | null>(null);
   const pendingMarkdownRef = useRef<string | null>(null);
   const pendingSlugRef = useRef<string | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
 
-  const scheduleSave = useCallback((html: string) => {
-    if (!onSaveRef.current) {
-      return;
+  const clearRevisionIdle = useCallback(() => {
+    if (revisionIdleTimerRef.current !== null) {
+      window.clearTimeout(revisionIdleTimerRef.current);
+      revisionIdleTimerRef.current = null;
     }
+  }, []);
 
-    if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current);
-    }
-
-    const md = htmlToMarkdown(html);
-    pendingMarkdownRef.current = md;
-    pendingSlugRef.current = noteSlug;
-
-    saveTimerRef.current = window.setTimeout(() => {
-      const markdownToSave = pendingMarkdownRef.current;
-      const slug = pendingSlugRef.current;
-      pendingMarkdownRef.current = null;
-      pendingSlugRef.current = null;
-      saveTimerRef.current = null;
-
-      if (markdownToSave !== null && slug) {
-        void onSaveRef.current?.(markdownToSave, slug);
+  const scheduleRevisionIdle = useCallback(() => {
+    clearRevisionIdle();
+    revisionIdleTimerRef.current = window.setTimeout(() => {
+      revisionIdleTimerRef.current = null;
+      const ed = editorRef.current;
+      if (!ed || !onSaveRef.current) {
+        return;
       }
-    }, 500);
-  }, [noteSlug]);
+
+      void onSaveRef.current(htmlToMarkdown(ed.getHTML()), noteSlug, {
+        recordStrandRevision: true
+      });
+    }, STRAND_REVISION_IDLE_MS);
+  }, [clearRevisionIdle, noteSlug]);
+
+  const scheduleSave = useCallback(
+    (html: string) => {
+      if (!onSaveRef.current) {
+        return;
+      }
+
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+      }
+
+      const md = htmlToMarkdown(html);
+      pendingMarkdownRef.current = md;
+      pendingSlugRef.current = noteSlug;
+
+      scheduleRevisionIdle();
+
+      saveTimerRef.current = window.setTimeout(() => {
+        const markdownToSave = pendingMarkdownRef.current;
+        const slug = pendingSlugRef.current;
+        pendingMarkdownRef.current = null;
+        pendingSlugRef.current = null;
+        saveTimerRef.current = null;
+
+        if (markdownToSave !== null && slug) {
+          void onSaveRef.current?.(markdownToSave, slug);
+        }
+      }, 500);
+    },
+    [noteSlug, scheduleRevisionIdle]
+  );
 
   useImperativeHandle(
     ref,
@@ -675,7 +710,7 @@ const WikiRichTextPreviewPanel = forwardRef<WikiRichTextPreviewPanelHandle, Wiki
 
         const ed = editorRef.current;
         const md = ed ? htmlToMarkdown(ed.getHTML()) : markdown;
-        void onSaveRef.current?.(md, noteSlug);
+        void onSaveRef.current?.(md, noteSlug, { recordStrandRevision: true });
         return md;
       }
     }),
@@ -838,6 +873,28 @@ const WikiRichTextPreviewPanel = forwardRef<WikiRichTextPreviewPanelHandle, Wiki
       return;
     }
 
+    function onBlur(): void {
+      const ed = editorRef.current;
+      if (!ed || !onSaveRef.current) {
+        return;
+      }
+
+      void onSaveRef.current(htmlToMarkdown(ed.getHTML()), noteSlug, {
+        recordStrandRevision: true
+      });
+    }
+
+    editor.on("blur", onBlur);
+    return () => {
+      editor.off("blur", onBlur);
+    };
+  }, [editor, noteSlug]);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
     const prevSlug = prevNoteSlugForPropSyncRef.current;
     if (prevSlug === noteSlug) {
       return;
@@ -860,16 +917,18 @@ const WikiRichTextPreviewPanel = forwardRef<WikiRichTextPreviewPanelHandle, Wiki
         window.clearTimeout(saveTimerRef.current);
       }
 
+      clearRevisionIdle();
+
       const pendingMd = pendingMarkdownRef.current;
       const slug = pendingSlugRef.current;
       pendingMarkdownRef.current = null;
       pendingSlugRef.current = null;
 
       if (pendingMd !== null && slug) {
-        onSaveRef.current?.(pendingMd, slug);
+        onSaveRef.current?.(pendingMd, slug, { recordStrandRevision: true });
       }
     };
-  }, []);
+  }, [clearRevisionIdle]);
 
   useEffect(() => {
     if (!editor) {
@@ -1040,6 +1099,7 @@ export function WikiRichTextEditor(props: Props): ReactElement {
   const previewRef = useRef<WikiRichTextPreviewPanelHandle | null>(null);
   const [markdownDraft, setMarkdownDraft] = useState(markdown);
   const mdSaveTimerRef = useRef<number | null>(null);
+  const mdRevisionIdleTimerRef = useRef<number | null>(null);
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
   const markdownDraftRef = useRef(markdownDraft);
@@ -1052,23 +1112,51 @@ export function WikiRichTextEditor(props: Props): ReactElement {
   const viewModeRef = useRef(viewMode);
   viewModeRef.current = viewMode;
 
+  const clearMdRevisionIdle = useCallback(() => {
+    if (mdRevisionIdleTimerRef.current !== null) {
+      window.clearTimeout(mdRevisionIdleTimerRef.current);
+      mdRevisionIdleTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleMdRevisionIdle = useCallback(() => {
+    clearMdRevisionIdle();
+    mdRevisionIdleTimerRef.current = window.setTimeout(() => {
+      mdRevisionIdleTimerRef.current = null;
+      if (!onSaveRef.current) {
+        return;
+      }
+
+      void onSaveRef.current(markdownDraftRef.current, noteSlug, {
+        recordStrandRevision: true
+      });
+    }, STRAND_REVISION_IDLE_MS);
+  }, [clearMdRevisionIdle, noteSlug]);
+
   useEffect(() => {
     return () => {
       if (mdSaveTimerRef.current) {
         window.clearTimeout(mdSaveTimerRef.current);
         mdSaveTimerRef.current = null;
       }
+
+      clearMdRevisionIdle();
+
       if (viewModeRef.current === "markdown" && onSaveRef.current) {
-        void onSaveRef.current(markdownDraftRef.current, noteSlugRef.current);
+        void onSaveRef.current(markdownDraftRef.current, noteSlugRef.current, {
+          recordStrandRevision: true
+        });
       }
     };
-  }, []);
+  }, [clearMdRevisionIdle]);
 
   const scheduleMarkdownSave = useCallback(
     (next: string) => {
       if (!onSaveRef.current) {
         return;
       }
+
+      scheduleMdRevisionIdle();
 
       if (mdSaveTimerRef.current) {
         window.clearTimeout(mdSaveTimerRef.current);
@@ -1079,7 +1167,7 @@ export function WikiRichTextEditor(props: Props): ReactElement {
         void onSaveRef.current?.(next, noteSlug);
       }, 500);
     },
-    [noteSlug]
+    [noteSlug, scheduleMdRevisionIdle]
   );
 
   const scheduleMarkdownSaveRef = useRef(scheduleMarkdownSave);
@@ -1239,7 +1327,9 @@ export function WikiRichTextEditor(props: Props): ReactElement {
           mdSaveTimerRef.current = null;
         }
         try {
-          await onSaveRef.current?.(markdownDraftRef.current, noteSlug);
+          await onSaveRef.current?.(markdownDraftRef.current, noteSlug, {
+            recordStrandRevision: true
+          });
         } finally {
           // Capture after save: parent/layout may have shifted the column during `await`.
           const column = document.querySelector<HTMLElement>(WIKI_NOTE_COLUMN_SCROLL_SELECTOR);
@@ -1345,6 +1435,11 @@ export function WikiRichTextEditor(props: Props): ReactElement {
             setMarkdownDraft(next);
             onTextareaIdleInput();
             scheduleMarkdownSave(next);
+          }}
+          onBlur={() => {
+            void onSaveRef.current?.(markdownDraftRef.current, noteSlug, {
+              recordStrandRevision: true
+            });
           }}
           onDragOver={(event) => {
             event.preventDefault();

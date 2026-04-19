@@ -2,12 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { safeStorage } from "electron";
 import { z } from "zod";
+import { resolveCloudProviderApiKey } from "@shared/billing/providerApiKeyResolution";
 import type {
   AppWorkspaceId,
   ChatProvider,
   DeleteProviderKeyInput,
   ProviderKeyStatusSnapshot,
-  SetProviderKeyInput
+  SetProviderKeyInput,
+  SubscriptionTier
 } from "../ipc/types";
 import { getSharedAccountStoragePaths } from "./workspaces";
 
@@ -151,4 +153,26 @@ export function getProviderKey(
   provider: ChatProvider
 ): string | null {
   return readProviderKeys(workspaceId)[provider]?.apiKey ?? null;
+}
+
+function getEnvProviderApiKey(provider: ChatProvider): string | null {
+  const raw = provider === "openai" ? process.env.OPENAI_API_KEY : process.env.ANTHROPIC_API_KEY;
+  const trimmed = raw?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Env keys (e.g. from `.env` via dev scripts) are used for trial/pro and as fallback for BYOK.
+ * Persisted keys from Settings apply only as an override for BYOK accounts.
+ */
+export function resolveProviderApiKey(
+  workspaceId: AppWorkspaceId,
+  provider: ChatProvider,
+  subscriptionTier: SubscriptionTier
+): string | null {
+  return resolveCloudProviderApiKey({
+    subscriptionTier,
+    storedKey: getProviderKey(workspaceId, provider),
+    envKey: getEnvProviderApiKey(provider)
+  });
 }

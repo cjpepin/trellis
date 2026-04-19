@@ -50,6 +50,63 @@ test("manual save fallback body passes extraction guardrails", () => {
   assert.ok(!prepared.content.includes("Auto-saved from Trellis chat when on-device extraction"));
 });
 
+test("fallback note title ignores model session placeholders like Brief Chat", () => {
+  const response = buildManualSaveFallbackResponse({
+    transcript: [
+      { role: "user", content: "what's the word champ" },
+      {
+        role: "assistant",
+        content:
+          "Hey champ 😄\n\nWhat's up—are we talking about your next task, something you want to write, or just checking in?"
+      }
+    ],
+    session: {
+      id: "session-word-champ",
+      title: "Word Champ",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      model: "gpt-4o-mini",
+      messageCount: 2,
+      vaultId: "vault-1"
+    },
+    suggestedSessionTitle: "Brief Chat",
+    existingSlugs: new Set(),
+    now: new Date("2026-04-11T12:00:00.000Z")
+  });
+
+  const u = response.updates[0];
+  assert.ok(u);
+  assert.notEqual(u.targetTitle.trim().toLowerCase(), "brief chat");
+  assert.equal(u.targetTitle, "Word Champ");
+});
+
+test("automatic capture fallback also skips Brief Chat for note title", () => {
+  const longAssistant = `${"Retention and habit loops. ".repeat(30)}`;
+  const response = buildAutomaticChatCaptureFallbackResponse({
+    transcript: [
+      { role: "user", content: "What should we optimize for in the MVP?" },
+      { role: "assistant", content: longAssistant }
+    ],
+    session: {
+      id: "session-auto",
+      title: "Strategy Thread",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      model: "gpt-4o-mini",
+      messageCount: 2,
+      vaultId: "vault-1"
+    },
+    suggestedSessionTitle: "Brief Chat",
+    existingSlugs: new Set(),
+    now: new Date("2026-04-11T12:00:00.000Z")
+  });
+
+  const u = response.updates[0];
+  assert.ok(u);
+  assert.notEqual(u.targetTitle.trim().toLowerCase(), "brief chat");
+  assert.equal(u.targetTitle, "Strategy Thread");
+});
+
 test("fallback title avoids raw user-style session titles", () => {
   const response = buildManualSaveFallbackResponse({
     transcript: [
@@ -83,7 +140,7 @@ test("fallback title avoids raw user-style session titles", () => {
   assert.ok(!u.body.includes("Can you make a volleyball"));
 });
 
-test("automatic idle fallback body passes guardrails and lands under captures/", () => {
+test("automatic idle fallback body passes guardrails and defaults to vault root", () => {
   const longAssistant = `${"Week 1: base miles. ".repeat(25)}Add strides on Wednesdays.`;
   assert.equal(shouldAutoCaptureStrandFromTranscript([{ role: "user", content: "Plan my marathon build." }, { role: "assistant", content: longAssistant }]), true);
   assert.equal(shouldAutoCaptureStrandFromTranscript([{ role: "user", content: "Hi" }, { role: "assistant", content: "Hello!" }]), false);
@@ -109,13 +166,13 @@ test("automatic idle fallback body passes guardrails and lands under captures/",
 
   assert.equal(response.updates.length, 1);
   const u = response.updates[0];
-  assert.equal(u.folderPath, "captures");
+  assert.equal(u.folderPath, undefined);
   const prepared = prepareExtractionWrite({
     update: u,
     existingNote: null,
     index: []
   });
   assert.ok(prepared);
-  assert.equal(prepared.folderPath, "captures");
+  assert.equal(prepared.folderPath, "");
   assert.ok(prepared.content.includes("Week 1"));
 });

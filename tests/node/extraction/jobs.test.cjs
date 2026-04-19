@@ -5,9 +5,11 @@ const { fromRepoRoot } = require("../support/repo-paths.cjs");
 const {
   buildExtractionRetrievalQuery,
   computeSessionExtractionPlan,
+  foldIncrementalCreatesOntoSessionAnchor,
   getDirectNoteActionExcludedMessageIds,
   planSessionExtraction,
-  resolveExtractionExecutionStrategy
+  resolveExtractionExecutionStrategy,
+  shouldRunRetryThoroughPass
 } = require(fromRepoRoot("electron", "lib", "extraction", "jobs.ts"));
 
 function createMessage(id, role, content) {
@@ -140,7 +142,7 @@ test("planSessionExtraction reprocesses the full transcript when messages were r
   assert.equal(plan.transcriptEndIndex, 4);
 });
 
-test("planSessionExtraction can reprocess the full changed transcript for background capture", () => {
+test("planSessionExtraction processes only new turns when new messages are added", () => {
   const messages = [
     createMessage("1", "user", "We should focus on durable notes."),
     createMessage("2", "assistant", "Let’s keep the note count low."),
@@ -156,15 +158,14 @@ test("planSessionExtraction can reprocess the full changed transcript for backgr
     createCompletedJob({
       transcriptEndIndex: initialPlan.transcriptEndIndex,
       transcriptDigest: initialPlan.transcriptDigest
-    }),
-    false,
-    { fullTranscriptWhenChanged: true }
+    })
   );
 
   assert.ok(plan);
-  assert.equal(plan.transcriptStartIndex, 0);
+  // Should start at the prior job’s end index (incremental, no overlap)
+  assert.equal(plan.transcriptStartIndex, initialPlan.transcriptEndIndex);
   assert.equal(plan.transcriptEndIndex, 4);
-  assert.equal(plan.transcript.length, 4);
+  assert.equal(plan.transcript.length, 4 - initialPlan.transcriptEndIndex);
 });
 
 test("planSessionExtraction excludes messages covered by direct note actions", () => {
@@ -252,4 +253,230 @@ test("resolveExtractionExecutionStrategy skips unavailable local-only runs", () 
     action: "skip",
     reason: "Download the on-device note processor once to turn chats into notes on this device."
   });
+});
+
+test("resolveExtractionExecutionStrategy runs cloud when a cloud or embedded provider is available", () => {
+  const strategy = resolveExtractionExecutionStrategy("cloud", [
+    {
+      id: "cloud-openai",
+      label: "Cloud",
+      available: true
+    },
+    { id: "embedded", label: "On-device", available: false, reason: "no gguf" }
+  ]);
+
+  assert.deepEqual(strategy, {
+    action: "run",
+    initialMode: "cloud",
+    localRetryCount: 0
+  });
+});
+
+test("resolveExtractionExecutionStrategy skips cloud when no provider is runnable", () => {
+  const strategy = resolveExtractionExecutionStrategy("cloud", [
+    {
+      id: "cloud-openai",
+      label: "Cloud",
+      available: false,
+      reason: "No API key"
+    },
+    { id: "embedded", label: "On-device", available: false, reason: "No GGUF" }
+  ]);
+
+  assert.equal(strategy.action, "skip");
+  assert.match(strategy.reason ?? "", /No API key/);
+});
+
+test("foldIncrementalCreatesOntoSessionAnchor folds incremental creates onto the single strand slug", () => {
+  const noteTitleBySlug = new Map([["topic-a", "Topic A"]]);
+  const folded = foldIncrementalCreatesOntoSessionAnchor(
+    {
+      updates: [
+        {
+          operation: "create",
+          targetSlug: "topic-b",
+          targetTitle: "Topic B",
+          targetType: "concept",
+          summary: "x",
+          body: "More on the same thread.",
+          tags: [],
+          links: [],
+          evidence: [{ kind: "transcript", ref: "t", summary: "x" }],
+          confidence: 0.8
+        }
+      ],
+      sessionTitle: "Chat"
+    },
+    {
+      transcriptStartIndex: 4,
+      priorSessionSlugs: ["topic-a"],
+      noteTitleBySlug
+    }
+  );
+
+  assert.equal(folded.updates[0].operation, "append");
+  assert.equal(folded.updates[0].targetSlug, "topic-a");
+  assert.equal(folded.updates[0].targetTitle, "Topic A");
+});
+
+test("foldIncrementalCreatesOntoSessionAnchor is a no-op when multiple session notes exist and no title matches", () => {
+  const response = {
+    updates: [
+      {
+        operation: "create",
+        targetSlug: "topic-b",
+        targetTitle: "Topic B",
+        targetType: "concept",
+        summary: "x",
+        body: "Body",
+        tags: [],
+        links: [],
+        evidence: [{ kind: "transcript", ref: "t", summary: "x" }],
+        confidence: 0.8
+      }
+    ],
+    sessionTitle: "Chat"
+  };
+  const folded = foldIncrementalCreatesOntoSessionAnchor(response, {
+    transcriptStartIndex: 4,
+    priorSessionSlugs: ["topic-a", "topic-c"],
+    noteTitleBySlug: new Map([
+      ["topic-a", "Topic A"],
+      ["topic-c", "Topic C"]
+    ])
+  });
+
+  assert.deepEqual(folded, response);
+});
+
+test("foldIncrementalCreatesOntoSessionAnchor folds title-matched creates with multiple session notes", () => {
+  const noteTitleBySlug = new Map([
+    ["topic-a", "Topic A"],
+    ["topic-c", "Topic C"]
+  ]);
+  const folded = foldIncrementalCreatesOntoSessionAnchor(
+    {
+      updates: [
+        {
+          operation: "create",
+          targetSlug: "topic-a-update",
+          targetTitle: "Topic A",
+          targetType: "concept",
+          summary: "x",
+          body: "More about Topic A.",
+          tags: [],
+          links: [],
+          evidence: [{ kind: "transcript", ref: "t", summary: "x" }],
+          confidence: 0.8
+        }
+      ],
+      sessionTitle: "Chat"
+    },
+    {
+      transcriptStartIndex: 4,
+      priorSessionSlugs: ["topic-a", "topic-c"],
+      noteTitleBySlug
+    }
+  );
+
+  assert.equal(folded.updates[0].operation, "append");
+  assert.equal(folded.updates[0].targetSlug, "topic-a");
+  assert.equal(folded.updates[0].targetTitle, "Topic A");
+});
+
+test("foldIncrementalCreatesOntoSessionAnchor folds second create onto first when no prior session slugs", () => {
+  const folded = foldIncrementalCreatesOntoSessionAnchor(
+    {
+      updates: [
+        {
+          operation: "create",
+          targetSlug: "first-topic",
+          targetTitle: "First Topic",
+          targetType: "concept",
+          summary: "a",
+          body: "Body A",
+          tags: [],
+          links: [],
+          evidence: [{ kind: "transcript", ref: "t", summary: "x" }],
+          confidence: 0.8
+        },
+        {
+          operation: "create",
+          targetSlug: "second-topic",
+          targetTitle: "Second Topic",
+          targetType: "concept",
+          summary: "b",
+          body: "Body B",
+          tags: [],
+          links: [],
+          evidence: [{ kind: "transcript", ref: "t", summary: "x" }],
+          confidence: 0.8
+        }
+      ],
+      sessionTitle: "Chat"
+    },
+    {
+      transcriptStartIndex: 0,
+      priorSessionSlugs: [],
+      noteTitleBySlug: new Map()
+    }
+  );
+
+  assert.equal(folded.updates[0].operation, "create");
+  assert.equal(folded.updates[0].targetSlug, "first-topic");
+  assert.equal(folded.updates[1].operation, "append");
+  assert.equal(folded.updates[1].targetSlug, "first-topic");
+  assert.equal(folded.updates[1].targetTitle, "First Topic");
+});
+
+test("shouldRunRetryThoroughPass is true for embedded on manual trigger", () => {
+  assert.equal(
+    shouldRunRetryThoroughPass({
+      trigger: "manual",
+      primaryProvider: "embedded",
+      transcriptTurnCount: 4
+    }),
+    true
+  );
+});
+
+test("shouldRunRetryThoroughPass is false for cloud providers", () => {
+  assert.equal(
+    shouldRunRetryThoroughPass({
+      trigger: "manual",
+      primaryProvider: "cloud-openai",
+      transcriptTurnCount: 10
+    }),
+    false
+  );
+  assert.equal(
+    shouldRunRetryThoroughPass({
+      trigger: "session-switch",
+      primaryProvider: "cloud-anthropic",
+      transcriptTurnCount: 6
+    }),
+    false
+  );
+});
+
+test("shouldRunRetryThoroughPass is false for startup trigger", () => {
+  assert.equal(
+    shouldRunRetryThoroughPass({
+      trigger: "startup",
+      primaryProvider: "embedded",
+      transcriptTurnCount: 8
+    }),
+    false
+  );
+});
+
+test("shouldRunRetryThoroughPass is false for short transcripts with embedded", () => {
+  assert.equal(
+    shouldRunRetryThoroughPass({
+      trigger: "idle",
+      primaryProvider: "embedded",
+      transcriptTurnCount: 2
+    }),
+    false
+  );
 });

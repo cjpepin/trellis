@@ -3,7 +3,9 @@ import {
   prepareExtractionWrite,
   skipIfDuplicatePreparedExtractionContent
 } from "@electron/lib/extraction/guardrails";
+import { foldIncrementalCreatesOntoSessionAnchor } from "@shared/extraction/foldIncrementalCreates";
 import { buildExtractionIndex } from "@/lib/extractionIndex";
+import { isUnsetChatSessionTitle } from "@shared/chat/chatSessionTitle";
 import { useChatStore } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
 import { useWikiStore } from "@/store/wikiStore";
@@ -18,7 +20,7 @@ interface ApplyOptions {
 function isWritableUpdate(
   update: ExtractionUpdate
 ): update is ExtractionUpdate & {
-  operation: "create" | "append" | "rewrite";
+  operation: "create" | "append" | "rewrite" | "merge";
 } {
   return update.operation !== "noop";
 }
@@ -32,10 +34,23 @@ export function useApplyExtraction() {
 
   return useCallback(
     async (response: ExtractionResponse, options: ApplyOptions = {}) => {
-      const appliedUpdates = response.updates.filter(isWritableUpdate);
-      const appliedOps: Array<{ file: string; action: "create" | "append" | "rewrite" }> = [];
-      const appliedNotes: Array<{ slug: string; title: string }> = [];
       const extractionIndex = buildExtractionIndex(graph);
+      const noteTitleBySlug = new Map(extractionIndex.map((entry) => [entry.slug, entry.title]));
+
+      let folded: ExtractionResponse = response;
+      if (options.sessionId) {
+        const priorSessionSlugs = await window.trellis.db.getSessionNoteSlugs(options.sessionId);
+        folded = foldIncrementalCreatesOntoSessionAnchor(response, {
+          transcriptStartIndex: 0,
+          priorSessionSlugs,
+          noteTitleBySlug
+        });
+      }
+
+      const appliedUpdates = folded.updates.filter(isWritableUpdate);
+      const appliedOps: Array<{ file: string; action: "create" | "append" | "rewrite" | "merge" }> =
+        [];
+      const appliedNotes: Array<{ slug: string; title: string }> = [];
       let appliedUpdateCount = 0;
       const seenPreparedBodies = new Set<string>();
 
@@ -76,7 +91,8 @@ export function useApplyExtraction() {
             type: preparedWrite.type,
             sources: preparedWrite.sources,
             url: preparedWrite.url
-          }
+          },
+          strandRevision: { actor: "trellis", sessionId: options.sessionId }
         });
 
         appliedUpdateCount += 1;
@@ -97,25 +113,30 @@ export function useApplyExtraction() {
         );
       }
 
-      const appSettings = await window.trellis.app.getSettings();
-      const shouldRefreshIndex =
-        !options.vaultId || appSettings.activeVaultId === options.vaultId;
+      if (appliedUpdateCount > 0) {
+        const appSettings = await window.trellis.app.getSettings();
+        const shouldRefreshIndex =
+          !options.vaultId || appSettings.activeVaultId === options.vaultId;
 
-      if (shouldRefreshIndex) {
-        const snapshot = await window.trellis.vault.listIndex(options.vaultId);
-        replaceIndex({
-          notes: snapshot.notes,
-          folders: snapshot.folders,
-          graph: snapshot.graph
-        });
+        if (shouldRefreshIndex) {
+          const snapshot = await window.trellis.vault.listIndex(options.vaultId);
+          replaceIndex({
+            notes: snapshot.notes,
+            folders: snapshot.folders,
+            graph: snapshot.graph
+          });
+        }
       }
 
-      if (appliedUpdateCount > 0 && options.sessionId && response.sessionTitle) {
-        const updatedSession = await window.trellis.db.updateSession({
-          id: options.sessionId,
-          title: response.sessionTitle
-        });
-        upsertSession(updatedSession);
+      if (appliedUpdateCount > 0 && options.sessionId && folded.sessionTitle) {
+        const session = useChatStore.getState().sessions.find((s) => s.id === options.sessionId);
+        if (session && isUnsetChatSessionTitle(session.title)) {
+          const updatedSession = await window.trellis.db.updateSession({
+            id: options.sessionId,
+            title: folded.sessionTitle
+          });
+          upsertSession(updatedSession);
+        }
       }
 
       if (options.sessionId && options.messageCount) {

@@ -1,6 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import pdfParse from "pdf-parse";
+import { fetchSafeHttps } from "../lib/fetchSafe";
 import { ipcMain } from "electron";
 import { z } from "zod";
 import type { AppSettings } from "./types";
@@ -124,8 +125,7 @@ async function fetchClipHtml(startingUrl: URL): Promise<{ html: string; finalUrl
   for (let redirectCount = 0; redirectCount <= maxClipRedirects; redirectCount += 1) {
     await assertPublicHostname(currentUrl);
 
-    const response = await fetch(currentUrl, {
-      redirect: "manual",
+    const response = await fetchSafeHttps(currentUrl.toString(), {
       headers: {
         Accept: "text/html,application/xhtml+xml"
       }

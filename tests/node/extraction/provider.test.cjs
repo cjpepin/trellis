@@ -41,8 +41,18 @@ test("buildExtractionUserMessage includes related notes and transcript context",
   assert.match(message, /We decided to keep onboarding lightweight/);
 });
 
-test("pickSelectedProviderId selects embedded when available", () => {
+test("pickSelectedProviderId selects first available provider in order", () => {
   const selected = pickSelectedProviderId([
+    { id: "cloud-openai", label: "Cloud", available: true },
+    { id: "embedded", label: "On-device", available: true }
+  ]);
+
+  assert.equal(selected, "cloud-openai");
+});
+
+test("pickSelectedProviderId selects embedded when it is first available", () => {
+  const selected = pickSelectedProviderId([
+    { id: "cloud-openai", label: "Cloud", available: false, reason: "no key" },
     { id: "embedded", label: "On-device", available: true }
   ]);
 

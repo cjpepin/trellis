@@ -1,4 +1,5 @@
 import type { ExtractionResponse, ExtractionUpdate } from "../../../shared/extraction/contracts";
+import { isUnacceptableGenericNoteTitle } from "../../../shared/extraction/validate";
 import { slugifyExtractionTitle } from "../../../shared/extraction/wikiLinks";
 import type { ChatSessionSummary } from "../../ipc/types";
 
@@ -78,7 +79,11 @@ function resolveFallbackTargetTitle(input: {
   now: Date;
 }): string {
   const suggested = input.suggestedSessionTitle.trim();
-  if (suggested.length > 0 && !looksLikeRawUserPrompt(suggested)) {
+  if (
+    suggested.length > 0 &&
+    !looksLikeRawUserPrompt(suggested) &&
+    !isUnacceptableGenericNoteTitle(suggested)
+  ) {
     return suggested.length > 120 ? `${suggested.slice(0, 117)}…` : suggested;
   }
 
@@ -86,13 +91,14 @@ function resolveFallbackTargetTitle(input: {
   if (
     sessionTitle.length > 0 &&
     sessionTitle.toLowerCase() !== "untitled session" &&
-    !looksLikeRawUserPrompt(sessionTitle)
+    !looksLikeRawUserPrompt(sessionTitle) &&
+    !isUnacceptableGenericNoteTitle(sessionTitle)
   ) {
     return sessionTitle.length > 120 ? `${sessionTitle.slice(0, 117)}…` : sessionTitle;
   }
 
   const fromAssistant = titleFromAssistantMessages(input.transcript);
-  if (fromAssistant.length > 0) {
+  if (fromAssistant.length > 0 && !isUnacceptableGenericNoteTitle(fromAssistant)) {
     return fromAssistant.length > 120 ? `${fromAssistant.slice(0, 117)}…` : fromAssistant;
   }
 
@@ -254,13 +260,11 @@ export function shouldAutoCaptureStrandFromTranscript(
  */
 export function buildManualFallbackBody(
   transcript: Array<{ role: "user" | "assistant"; content: string }>,
-  capturedAt: Date = new Date(),
   noteTitle: string
 ): string {
-  const dateLabel = formatInstanceDateLabel(capturedAt);
   const assistantBlob = combineAssistantBodies(transcript);
 
-  const lines: string[] = [`## ${noteTitle}`, "", `Saved from chat on **${dateLabel}**.`, ""];
+  const lines: string[] = [`## ${noteTitle}`, ""];
 
   if (assistantBlob.length === 0) {
     lines.push("_No assistant reply was available to save in this slice._");
@@ -292,15 +296,18 @@ export function buildManualSaveFallbackResponse(input: {
     suggestedSessionTitle: input.suggestedSessionTitle,
     now
   });
-  const body = buildManualFallbackBody(input.transcript, now, targetTitle);
-  let baseSlug = slugifyExtractionTitle(targetTitle);
-  baseSlug = ensureUniqueSlug(baseSlug, input.existingSlugs);
+  const body = buildManualFallbackBody(input.transcript, targetTitle);
+  const baseSlug = slugifyExtractionTitle(targetTitle);
+  // Reuse the existing slug/note when the same title was captured before (idempotent).
+  const slugExists = input.existingSlugs.has(baseSlug);
+  const targetSlug = slugExists ? baseSlug : ensureUniqueSlug(baseSlug, input.existingSlugs);
+  const operation: ExtractionUpdate["operation"] = slugExists ? "rewrite" : "create";
 
   const sessionTitle = clampSessionTitleWords(targetTitle, 6) || "Chat capture";
 
   const synthetic: ExtractionUpdate = {
-    operation: "create",
-    targetSlug: baseSlug,
+    operation,
+    targetSlug,
     targetTitle,
     targetType: "synthesis",
     summary: "Working notes captured after extraction produced no wiki writes",
@@ -343,20 +350,22 @@ export function buildAutomaticChatCaptureFallbackResponse(input: {
     suggestedSessionTitle: input.suggestedSessionTitle,
     now
   });
-  const body = buildManualFallbackBody(input.transcript, now, targetTitle);
-  let baseSlug = slugifyExtractionTitle(targetTitle);
-  baseSlug = ensureUniqueSlug(baseSlug, input.existingSlugs);
+  const body = buildManualFallbackBody(input.transcript, targetTitle);
+  const baseSlug = slugifyExtractionTitle(targetTitle);
+  // Reuse the existing slug/note when the same title was captured before (idempotent).
+  const slugExists = input.existingSlugs.has(baseSlug);
+  const targetSlug = slugExists ? baseSlug : ensureUniqueSlug(baseSlug, input.existingSlugs);
+  const operation: ExtractionUpdate["operation"] = slugExists ? "rewrite" : "create";
 
   const sessionTitle = clampSessionTitleWords(targetTitle, 6) || "Chat capture";
 
   const synthetic: ExtractionUpdate = {
-    operation: "create",
-    targetSlug: baseSlug,
+    operation,
+    targetSlug,
     targetTitle,
     targetType: "synthesis",
     summary: "Auto-saved from chat: on-device extraction proposed no wiki updates for this slice",
     body,
-    folderPath: "captures",
     tags: ["chat-capture", "auto"],
     links: [],
     evidence: [
@@ -364,7 +373,7 @@ export function buildAutomaticChatCaptureFallbackResponse(input: {
         kind: "transcript",
         ref: "automatic_extraction_fallback",
         summary:
-          "Local extraction completed with no applied wiki updates; Trellis saved assistant substance under captures/."
+          "On-device extraction completed with no applied wiki updates; Trellis saved assistant substance as a capture note."
       }
     ],
     confidence: 1

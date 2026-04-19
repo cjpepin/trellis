@@ -6,6 +6,42 @@ import {
 } from "@shared/billing/trialMessageWindow";
 import { getSupabase, hasSupabaseConfig } from "./supabase";
 
+/** Visible in DevTools; filter with `[trellis:auth]`. */
+export function authLog(message: string, detail?: Record<string, unknown>): void {
+  if (detail !== undefined) {
+    console.info("[trellis:auth]", message, detail);
+  } else {
+    console.info("[trellis:auth]", message);
+  }
+}
+
+const PROFILE_FETCH_TIMEOUT_MS = 12_000;
+const HYDRATE_SESSION_TIMEOUT_MS = 20_000;
+
+/** Sign-in / sign-up against Supabase Auth (renderer). */
+export const CLOUD_AUTH_SIGN_IN_TIMEOUT_MS = 35_000;
+
+async function withTimeout<T>(
+  label: string,
+  promise: Promise<T>,
+  ms: number,
+  fallback: T
+): Promise<T> {
+  const safe = promise.catch((error: unknown) => {
+    authLog(`${label}: rejected`, {
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return fallback;
+  });
+  const timeout = new Promise<T>((resolve) => {
+    setTimeout(() => {
+      authLog(`${label}: timed out`, { timeoutMs: ms });
+      resolve(fallback);
+    }, ms);
+  });
+  return Promise.race([safe, timeout]);
+}
+
 export interface ProfileSnapshot {
   subscriptionTier: SubscriptionTier;
   subscriptionStatus: "trialing" | "active" | "expired";
@@ -67,11 +103,7 @@ function mapProfileRow(row: Record<string, unknown> | null): ProfileSnapshot {
   };
 }
 
-export async function hydrateStoredSession(): Promise<Session | null> {
-  if (!hasSupabaseConfig()) {
-    return null;
-  }
-
+async function hydrateStoredSessionUnchecked(): Promise<Session | null> {
   const secureSession = await window.trellis.auth.getSession();
 
   if (secureSession) {
@@ -84,12 +116,16 @@ export async function hydrateStoredSession(): Promise<Session | null> {
     });
 
     if (error) {
+      authLog("hydrateStoredSession: setSession from secure storage failed", {
+        message: error.message
+      });
       await window.trellis.auth.clearSession();
     } else {
       const resolvedSession = data.session ?? null;
 
       if (resolvedSession) {
-        await persistSession(resolvedSession);
+        const profile = await getProfileSnapshot(resolvedSession.user.id);
+        await persistSession(resolvedSession, { subscriptionTier: profile.subscriptionTier });
         return resolvedSession;
       }
     }
@@ -102,11 +138,31 @@ export async function hydrateStoredSession(): Promise<Session | null> {
     return null;
   }
 
-  await persistSession(session);
+  const profile = await getProfileSnapshot(session.user.id);
+  await persistSession(session, { subscriptionTier: profile.subscriptionTier });
   return session;
 }
 
-export async function persistSession(session: Session | null): Promise<void> {
+export async function hydrateStoredSession(): Promise<Session | null> {
+  if (!hasSupabaseConfig()) {
+    return null;
+  }
+
+  authLog("hydrateStoredSession: start");
+  const result = await withTimeout(
+    "hydrateStoredSession",
+    hydrateStoredSessionUnchecked(),
+    HYDRATE_SESSION_TIMEOUT_MS,
+    null
+  );
+  authLog("hydrateStoredSession: done", { hasSession: result !== null });
+  return result;
+}
+
+export async function persistSession(
+  session: Session | null,
+  options?: { subscriptionTier?: SubscriptionTier }
+): Promise<void> {
   if (!session) {
     await window.trellis.auth.clearSession();
     return;
@@ -119,7 +175,8 @@ export async function persistSession(session: Session | null): Promise<void> {
     user: {
       id: session.user.id,
       email: session.user.email ?? null
-    }
+    },
+    ...(options?.subscriptionTier !== undefined ? { subscriptionTier: options.subscriptionTier } : {})
   });
 }
 
@@ -128,18 +185,31 @@ export async function getProfileSnapshot(userId: string): Promise<ProfileSnapsho
     return mapProfileRow(null);
   }
 
-  const { data, error } = await getSupabase()
-    .from("profiles")
-    .select(
-      "subscription_tier, subscription_status, is_admin, messages_used, message_limit, trial_message_window_started_at, ingests_used, ingest_limit"
-    )
-    .eq("id", userId)
-    .maybeSingle();
+  authLog("getProfileSnapshot: start");
+  const snapshot = await withTimeout(
+    "getProfileSnapshot",
+    (async (): Promise<ProfileSnapshot> => {
+      const { data, error } = await getSupabase()
+        .from("profiles")
+        .select(
+          "subscription_tier, subscription_status, is_admin, messages_used, message_limit, trial_message_window_started_at, ingests_used, ingest_limit"
+        )
+        .eq("id", userId)
+        .maybeSingle();
 
-  if (error) {
-    console.warn("Could not load profile snapshot from Supabase, falling back to trial defaults.", error);
-    return mapProfileRow(null);
-  }
+      if (error) {
+        console.warn(
+          "Could not load profile snapshot from Supabase, falling back to trial defaults.",
+          error
+        );
+        return mapProfileRow(null);
+      }
 
-  return mapProfileRow(data);
+      return mapProfileRow(data);
+    })(),
+    PROFILE_FETCH_TIMEOUT_MS,
+    mapProfileRow(null)
+  );
+  authLog("getProfileSnapshot: done", { tier: snapshot.subscriptionTier });
+  return snapshot;
 }

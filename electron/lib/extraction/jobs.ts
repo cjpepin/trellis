@@ -4,9 +4,13 @@ import {
   extractWikiLinkTitles,
   normalizeTitleKey
 } from "../../../shared/extraction/wikiLinks";
+import { extractionRetryShortTranscriptMaxTurns } from "../../../shared/extraction/config";
+import type { ExtractionResponse, ExtractionUpdate } from "../../../shared/extraction/contracts";
 import type {
   ExtractionJobSnapshot,
+  ExtractionJobTrigger,
   ExtractionMode,
+  ExtractionProviderId,
   ExtractionProviderStatus,
   MessageRecord,
   NoteSummary
@@ -28,9 +32,6 @@ export interface ExtractionExecutionStrategy {
   reason?: string;
 }
 
-interface PlanSessionExtractionOptions {
-  fullTranscriptWhenChanged?: boolean;
-}
 
 export function buildFormattedTranscript(
   messages: MessageRecord[]
@@ -98,8 +99,7 @@ export type ExtractionPlanIneligibleReason =
 export function computeSessionExtractionPlan(
   messages: MessageRecord[],
   latestCompletedJob: ExtractionJobSnapshot | null,
-  force = false,
-  options: PlanSessionExtractionOptions = {}
+  force = false
 ): {
   plan: PlannedSessionExtraction | null;
   ineligibleReason: ExtractionPlanIneligibleReason | null;
@@ -118,14 +118,17 @@ export function computeSessionExtractionPlan(
 
   let transcriptStartIndex = 0;
 
-  if (!force && latestCompletedJob && !options.fullTranscriptWhenChanged) {
-    if (messages.length <= latestCompletedJob.transcriptEndIndex) {
+  if (!force && latestCompletedJob) {
+    // Compare against fullTranscript.length (not messages.length) — they differ because
+    // buildFormattedTranscript filters out direct-note-action messages.
+    if (fullTranscript.length <= latestCompletedJob.transcriptEndIndex) {
+      // Transcript was modified or truncated; reprocess from start.
       transcriptStartIndex = 0;
     } else {
-      transcriptStartIndex = Math.max(
-        0,
-        Math.min(latestCompletedJob.transcriptEndIndex, messages.length) - 2
-      );
+      // Process only turns added since the last completed job.
+      // No overlap needed: prior session notes are pinned in retrieval so the model
+      // always sees what it previously extracted.
+      transcriptStartIndex = latestCompletedJob.transcriptEndIndex;
     }
   }
 
@@ -150,10 +153,9 @@ export function computeSessionExtractionPlan(
 export function planSessionExtraction(
   messages: MessageRecord[],
   latestCompletedJob: ExtractionJobSnapshot | null,
-  force = false,
-  options: PlanSessionExtractionOptions = {}
+  force = false
 ): PlannedSessionExtraction | null {
-  return computeSessionExtractionPlan(messages, latestCompletedJob, force, options).plan;
+  return computeSessionExtractionPlan(messages, latestCompletedJob, force).plan;
 }
 
 /**
@@ -198,12 +200,34 @@ export function findExplicitReferenceSlugs(
 }
 
 export function resolveExtractionExecutionStrategy(
-  _mode: ExtractionMode,
+  mode: ExtractionMode,
   providers: ExtractionProviderStatus[]
 ): ExtractionExecutionStrategy {
-  const local = providers.find((provider) => provider.id === "embedded");
+  const byId = new Map(providers.map((provider) => [provider.id, provider]));
+  const embedded = byId.get("embedded");
+  const cloudOpenAi = byId.get("cloud-openai");
+  const cloudAnthropic = byId.get("cloud-anthropic");
 
-  if (local?.available) {
+  if (mode === "cloud") {
+    const hasRunnable = [cloudOpenAi, cloudAnthropic, embedded].some((p) => p?.available);
+    if (hasRunnable) {
+      return {
+        action: "run",
+        initialMode: "cloud",
+        localRetryCount: 0
+      };
+    }
+    const reason =
+      [cloudOpenAi?.reason, cloudAnthropic?.reason, embedded?.reason].find(
+        (r): r is string => typeof r === "string" && r.length > 0
+      ) ?? "No cloud or on-device note processing is available.";
+    return {
+      action: "skip",
+      reason
+    };
+  }
+
+  if (embedded?.available) {
     return {
       action: "run",
       initialMode: "local",
@@ -213,6 +237,38 @@ export function resolveExtractionExecutionStrategy(
 
   return {
     action: "skip",
-    reason: local?.reason ?? "On-device note processing is unavailable."
+    reason: embedded?.reason ?? "On-device note processing is unavailable."
   };
 }
+
+/**
+ * Whether to run the second "retry thorough" extraction pass when the first pass
+ * returned only noop updates. Cloud providers skip the second pass to avoid doubled
+ * latency; embedded keeps it as a backstop for small-model quality.
+ */
+export function shouldRunRetryThoroughPass(params: {
+  trigger: ExtractionJobTrigger;
+  primaryProvider: ExtractionProviderId;
+  /** Formatted transcript turns (user/assistant messages); used to skip retry on very short threads. */
+  transcriptTurnCount: number;
+}): boolean {
+  if (
+    params.trigger !== "idle" &&
+    params.trigger !== "session-switch" &&
+    params.trigger !== "manual"
+  ) {
+    return false;
+  }
+
+  if (params.primaryProvider === "cloud-openai" || params.primaryProvider === "cloud-anthropic") {
+    return false;
+  }
+
+  if (params.transcriptTurnCount <= extractionRetryShortTranscriptMaxTurns) {
+    return false;
+  }
+
+  return true;
+}
+
+export { foldIncrementalCreatesOntoSessionAnchor } from "../../../shared/extraction/foldIncrementalCreates";

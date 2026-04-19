@@ -11,6 +11,7 @@ export const extractionOperationValues = [
   "create",
   "append",
   "rewrite",
+  "merge",
   "noop"
 ] as const;
 
@@ -25,6 +26,16 @@ export const extractionEvidenceKindValues = [
 export type ExtractionEvidenceKind = (typeof extractionEvidenceKindValues)[number];
 
 export type ExtractionSourceType = "pdf" | "web" | "text";
+
+export type ExtractionSectionPatchMode = "replace" | "merge-bullets";
+
+export interface ExtractionSectionPatch {
+  /** Heading line text to match in the existing note (`## Schedule`); compared with normalizeHeadingForMatch. */
+  heading: string;
+  /** New body for that section without the heading line. */
+  body: string;
+  mode: ExtractionSectionPatchMode;
+}
 
 export interface ExtractionIndexEntry {
   slug: string;
@@ -49,6 +60,8 @@ export interface ExtractionContextNote {
   content: string;
   score: number;
   isExplicitMatch?: boolean;
+  /** ISO date from vault frontmatter when available (staleness signal for extraction). */
+  updatedAt?: string;
 }
 
 export interface ExtractionUpdate {
@@ -66,6 +79,10 @@ export interface ExtractionUpdate {
   folderPath?: string;
   sources?: number;
   url?: string;
+  /** Present when operation === "merge": replace or merge bullets under these headings. */
+  sectionPatches?: ExtractionSectionPatch[];
+  /** Optional markdown appended when patches do not cover everything (or skipped headings). */
+  residualBody?: string;
 }
 
 export interface ExtractionResponse {
@@ -82,6 +99,9 @@ export interface ExtractionValidationOptions {
   index?: ExtractionIndexEntry[];
   sourceType?: ExtractionSourceType;
   sourcePath?: string;
+  sessionPriorSlugs?: string[];
+  /** When false, `merge` updates are coerced to `append` with a flattened body. */
+  mergeOperationEnabled?: boolean;
 }
 
 export interface ExtractionValidationResult {

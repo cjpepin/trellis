@@ -1,6 +1,12 @@
-import { assertEntitlement, requireUser } from "../_shared/auth.ts";
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import {
+  assertEntitlement,
+  incrementUsage,
+  requireUser,
+  type ProfileRow
+} from "../_shared/auth.ts";
 import { corsHeaders } from "../_shared/http.ts";
-import { assertMaxJsonBodyBytes } from "../_shared/requestLimits.ts";
+import { assertMaxJsonBodyBytes, readJsonBodyWithByteLimit } from "../_shared/requestLimits.ts";
 
 function readEnvironmentValue(name: string): string | undefined {
   const deno = (globalThis as { Deno?: { env?: { get: (key: string) => string | undefined } } })
@@ -60,6 +66,34 @@ async function readProviderError(response: Response): Promise<string | null> {
   return text.trim();
 }
 
+function shouldSkipHostedMediaUsageIncrement(
+  profile: ProfileRow,
+  request: Request,
+  previewWorkspaceRequest: boolean
+): boolean {
+  if (request.headers.get("x-trellis-billing-mode") === "byok") {
+    return true;
+  }
+  if (previewWorkspaceRequest && profile.is_admin === true) {
+    return true;
+  }
+  return false;
+}
+
+async function recordHostedMediaMessageUsage(
+  admin: SupabaseClient,
+  userId: string,
+  profile: ProfileRow,
+  request: Request,
+  previewWorkspaceRequest: boolean,
+  metadata: Record<string, unknown>
+): Promise<void> {
+  if (shouldSkipHostedMediaUsageIncrement(profile, request, previewWorkspaceRequest)) {
+    return;
+  }
+  await incrementUsage(admin, userId, "message", 1, metadata, {});
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", {
@@ -69,11 +103,11 @@ Deno.serve(async (request) => {
 
   try {
     assertMaxJsonBodyBytes(request);
-    const { profile } = await requireUser(request);
+    const { user, profile, admin } = await requireUser(request);
     const previewWorkspaceRequest = request.headers.get("x-trellis-preview-workspace") === "1";
-    assertEntitlement(profile, "message", { previewWorkspaceRequest });
+    assertEntitlement(profile, "message");
 
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = (await readJsonBodyWithByteLimit(request)) as Record<string, unknown>;
     const action = typeof body.action === "string" ? body.action : "";
     const apiKey = resolveOpenAiApiKey(request);
 
@@ -141,6 +175,11 @@ Deno.serve(async (request) => {
 
       const payload = (await response.json()) as { text?: string };
       const text = typeof payload.text === "string" ? payload.text.trim() : "";
+
+      await recordHostedMediaMessageUsage(admin, user.id, profile, request, previewWorkspaceRequest, {
+        media_action: "transcribe",
+        billing_mode: request.headers.get("x-trellis-billing-mode") === "byok" ? "byok" : "hosted"
+      });
 
       return new Response(JSON.stringify({ text }), {
         headers: {
@@ -217,6 +256,12 @@ Deno.serve(async (request) => {
           );
         }
 
+        await recordHostedMediaMessageUsage(admin, user.id, profile, request, previewWorkspaceRequest, {
+          media_action: "tts",
+          billing_mode: request.headers.get("x-trellis-billing-mode") === "byok" ? "byok" : "hosted",
+          stream: true
+        });
+
         return new Response(outBody, {
           status: 200,
           headers: {
@@ -266,6 +311,12 @@ Deno.serve(async (request) => {
         binary += String.fromCharCode(...chunk);
       }
       const audioBase64 = btoa(binary);
+
+      await recordHostedMediaMessageUsage(admin, user.id, profile, request, previewWorkspaceRequest, {
+        media_action: "tts",
+        billing_mode: request.headers.get("x-trellis-billing-mode") === "byok" ? "byok" : "hosted",
+        stream: false
+      });
 
       return new Response(
         JSON.stringify({
@@ -340,6 +391,11 @@ Deno.serve(async (request) => {
           }
         });
       }
+
+      await recordHostedMediaMessageUsage(admin, user.id, profile, request, previewWorkspaceRequest, {
+        media_action: "image_generate",
+        billing_mode: request.headers.get("x-trellis-billing-mode") === "byok" ? "byok" : "hosted"
+      });
 
       return new Response(
         JSON.stringify({

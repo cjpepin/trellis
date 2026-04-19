@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, rename, stat, unlink } from "node:fs/promises";
 import { once } from "node:events";
@@ -7,7 +8,10 @@ import { buildExtractionUserMessage } from "@shared/extraction/buildPrompt";
 import {
   defaultEmbeddedExtractionModelDownloadUrl,
   defaultLocalExtractionModelId,
-  embeddedExtractionGgufFilename
+  embeddedExtractionGgufFilename,
+  embeddedExtractionGgufSha256Hex,
+  embeddedExtractionMaxTokensPrimary,
+  embeddedExtractionMaxTokensRetry
 } from "@shared/extraction/config";
 import { extractionResponseJsonSchema } from "@shared/extraction/jsonSchema";
 import type { ExtractionInstallProgressEvent } from "@shared/extraction/localModelInstall";
@@ -29,6 +33,11 @@ import { getUserDataRoot } from "../../appPaths";
 import { ExtractionValidationError } from "../debug";
 import type { ExtractionProvider, ProviderExtractInput } from "./types";
 
+/**
+ * On-device extraction uses a small GGUF for local-first chat and offline fallback when
+ * cloud extraction is unavailable. Product quality for cloud sessions should target the
+ * cloud extraction path; this stack is maintained for resilience, not parity with API models.
+ */
 const curatedEmbeddedModels: Array<Omit<LocalExtractionModelInfo, "installed" | "available">> = [
   {
     id: defaultLocalExtractionModelId,
@@ -49,7 +58,47 @@ export function getEmbeddedExtractionModelPath(): string {
 
 function resolveDownloadUrl(): string {
   const fromEnv = process.env.TRELLIS_EMBEDDED_EXTRACTION_MODEL_URL?.trim();
-  return fromEnv && fromEnv.length > 0 ? fromEnv : defaultEmbeddedExtractionModelDownloadUrl;
+  if (!fromEnv || fromEnv.length === 0) {
+    return defaultEmbeddedExtractionModelDownloadUrl;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(fromEnv);
+  } catch {
+    console.warn("TRELLIS_EMBEDDED_EXTRACTION_MODEL_URL is not a valid URL; using default download URL.");
+    return defaultEmbeddedExtractionModelDownloadUrl;
+  }
+
+  if (parsed.protocol !== "https:") {
+    console.warn("TRELLIS_EMBEDDED_EXTRACTION_MODEL_URL must use https; using default download URL.");
+    return defaultEmbeddedExtractionModelDownloadUrl;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const allowed =
+    host === "huggingface.co" ||
+    host.endsWith(".huggingface.co") ||
+    host === "cdn-lfs.huggingface.co" ||
+    host.endsWith(".hf.co");
+
+  if (!allowed) {
+    console.warn(
+      "TRELLIS_EMBEDDED_EXTRACTION_MODEL_URL hostname is not allow-listed; using default download URL."
+    );
+    return defaultEmbeddedExtractionModelDownloadUrl;
+  }
+
+  console.warn("Using TRELLIS_EMBEDDED_EXTRACTION_MODEL_URL override for on-device model download.");
+  return fromEnv;
+}
+
+async function safelyUnlink(filePath: string): Promise<void> {
+  try {
+    await unlink(filePath);
+  } catch {
+    // ignore
+  }
 }
 
 interface EmbeddedLoadState {
@@ -59,6 +108,8 @@ interface EmbeddedLoadState {
 let loadState: EmbeddedLoadState | null = null;
 let loadPromise: Promise<EmbeddedLoadState> | null = null;
 let extractionQueue: Promise<unknown> = Promise.resolve();
+/** Reuse JSON grammar for the pinned GGUF path to avoid rebuilding each job. */
+let cachedGrammar: { modelPath: string; grammar: LlamaGrammar } | null = null;
 
 function runSerialized<T>(fn: () => Promise<T>): Promise<T> {
   const run = extractionQueue.then(fn, fn);
@@ -70,6 +121,7 @@ function runSerialized<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function disposeEmbeddedModel(): Promise<void> {
+  cachedGrammar = null;
   const pending = loadPromise;
   loadPromise = null;
   if (pending) {
@@ -136,6 +188,15 @@ async function buildResponseGrammar(model: LlamaModel): Promise<LlamaGrammar> {
   }
 }
 
+async function getOrCreateResponseGrammar(model: LlamaModel, modelPath: string): Promise<LlamaGrammar> {
+  if (cachedGrammar && cachedGrammar.modelPath === modelPath) {
+    return cachedGrammar.grammar;
+  }
+  const grammar = await buildResponseGrammar(model);
+  cachedGrammar = { modelPath, grammar };
+  return grammar;
+}
+
 async function runEmbeddedExtraction(input: ProviderExtractInput): Promise<ExtractionRunResult> {
   const modelPath = getEmbeddedExtractionModelPath();
   const st = await statModelPath(modelPath);
@@ -151,7 +212,7 @@ async function runEmbeddedExtraction(input: ProviderExtractInput): Promise<Extra
     });
 
     const sequence = context.getSequence();
-    const grammar = await buildResponseGrammar(model);
+    const grammar = await getOrCreateResponseGrammar(model, modelPath);
 
     const session = new LlamaChatSession({
       contextSequence: sequence,
@@ -173,7 +234,7 @@ async function runEmbeddedExtraction(input: ProviderExtractInput): Promise<Extra
         await session.prompt(userMessage, {
           grammar,
           temperature: input.retryThorough ? 0.42 : 0.22,
-          maxTokens: 4096
+          maxTokens: input.retryThorough ? embeddedExtractionMaxTokensRetry : embeddedExtractionMaxTokensPrimary
         })
       ).trim();
 
@@ -184,7 +245,8 @@ async function runEmbeddedExtraction(input: ProviderExtractInput): Promise<Extra
       const parsed = parseExtractionResponseJson(content, {
         index: input.index,
         sourceType: input.sourceType,
-        sourcePath: input.sourcePath
+        sourcePath: input.sourcePath,
+        sessionPriorSlugs: input.sessionPriorNoteSlugs
       });
 
       if (!parsed.value) {
@@ -249,66 +311,87 @@ export async function installEmbeddedExtractionModel(
   const finalPath = getEmbeddedExtractionModelPath();
   const tempPath = `${finalPath}.download`;
 
-  try {
-    await unlink(tempPath);
-  } catch {
-    // ignore
-  }
+  await safelyUnlink(tempPath);
 
   const url = resolveDownloadUrl();
   onProgress?.({ kind: "status", status: "Connecting…" });
 
-  const response = await fetch(url, { signal });
-
-  if (!response.ok) {
-    throw new Error(
-      "Could not download the on-device note processor. Check your network and try again."
-    );
-  }
-
-  const totalRaw = response.headers.get("content-length");
-  const total = totalRaw ? Number(totalRaw) : 0;
-  const body = response.body;
-
-  if (!body) {
-    throw new Error("Download did not return a response body.");
-  }
-
-  let completed = 0;
-  const reader = body.getReader();
-  const stream = createWriteStream(tempPath);
+  const hash = createHash("sha256");
 
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      if (!value?.byteLength) {
-        continue;
-      }
-      const buf = Buffer.from(value);
-      completed += buf.length;
-      if (total > 0) {
-        onProgress?.({ kind: "layer", completed, total });
-      } else {
-        onProgress?.({
-          kind: "status",
-          status: `Downloaded ${(completed / (1024 * 1024)).toFixed(1)} MB`
-        });
-      }
-      if (!stream.write(buf)) {
-        await once(stream, "drain");
-      }
-    }
-  } finally {
-    stream.end();
-    await finished(stream);
-  }
+    const response = await fetch(url, { signal });
 
-  await disposeEmbeddedModel();
-  await rename(tempPath, finalPath);
-  onProgress?.({ kind: "complete" });
+    if (!response.ok) {
+      throw new Error(
+        "Could not download the on-device note processor. Check your network and try again."
+      );
+    }
+
+    const totalRaw = response.headers.get("content-length");
+    const total = totalRaw ? Number(totalRaw) : 0;
+    const body = response.body;
+
+    if (!body) {
+      throw new Error("Download did not return a response body.");
+    }
+
+    let completed = 0;
+    const reader = body.getReader();
+    const stream = createWriteStream(tempPath);
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        if (!value?.byteLength) {
+          continue;
+        }
+        const buf = Buffer.from(value);
+        hash.update(buf);
+        completed += buf.length;
+        if (total > 0) {
+          onProgress?.({ kind: "layer", completed, total });
+        } else {
+          onProgress?.({
+            kind: "status",
+            status: `Downloaded ${(completed / (1024 * 1024)).toFixed(1)} MB`
+          });
+        }
+        if (!stream.write(buf)) {
+          await once(stream, "drain");
+        }
+      }
+    } finally {
+      stream.end();
+      await finished(stream);
+    }
+
+    if (total > 0 && completed !== total) {
+      throw new Error(
+        "Download size mismatch (connection may have been cut off). Try downloading again."
+      );
+    }
+
+    const digestHex = hash.digest("hex");
+    if (
+      typeof embeddedExtractionGgufSha256Hex === "string" &&
+      embeddedExtractionGgufSha256Hex.length === 64 &&
+      embeddedExtractionGgufSha256Hex !== digestHex
+    ) {
+      throw new Error(
+        "Downloaded model file did not match the expected checksum. Try downloading again."
+      );
+    }
+
+    await disposeEmbeddedModel();
+    await rename(tempPath, finalPath);
+    onProgress?.({ kind: "complete" });
+  } catch (error) {
+    await safelyUnlink(tempPath);
+    throw error;
+  }
 }
 
 export async function removeEmbeddedExtractionModel(modelId: string): Promise<void> {

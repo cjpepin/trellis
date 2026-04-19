@@ -1,5 +1,9 @@
+import { providerForChatModel } from "@shared/chat/providerForModel";
+import { isUnsetChatSessionTitle } from "@shared/chat/chatSessionTitle";
 import type {
   AppSettings,
+  ChatProvider,
+  ExtractionDebugProviderAttempt,
   ExtractionJobNotification,
   ExtractionJobSnapshot,
   ExtractionMode,
@@ -16,6 +20,7 @@ import {
   getMessagesBySession,
   getNextPendingExtractionJob,
   getSessionById,
+  getSessionNoteSlugs,
   listQueuedExtractionJobsBySession,
   listResumableExtractionJobs,
   recordWikiOps,
@@ -37,9 +42,11 @@ import {
   computeSessionExtractionPlan,
   filterDirectNoteActionMessages,
   findExplicitReferenceSlugs,
-  resolveExtractionExecutionStrategy
+  foldIncrementalCreatesOntoSessionAnchor,
+  resolveExtractionExecutionStrategy,
+  shouldRunRetryThoroughPass
 } from "./jobs";
-import { logExtraction } from "./extractionLog";
+import { logExtraction, logExtractionTimingSummary } from "./extractionLog";
 import { prepareExtractionWrite, skipIfDuplicatePreparedExtractionContent } from "./guardrails";
 import {
   buildRequestedProviderOrder,
@@ -58,6 +65,44 @@ import {
   buildManualSaveFallbackResponse,
   shouldAutoCaptureStrandFromTranscript
 } from "./manualSaveFallback";
+
+function formatAttemptedProvidersSummary(attempts: ExtractionDebugProviderAttempt[] | undefined): string {
+  if (!attempts || attempts.length === 0) {
+    return "(none)";
+  }
+
+  return attempts
+    .map((a) => `${a.id}:${a.outcome}${a.reason ? `:${String(a.reason).slice(0, 64)}` : ""}`)
+    .join(" | ");
+}
+
+async function enrichTopRelatedNotes(
+  vaultPath: string,
+  relatedNotes: ExtractionContextNote[],
+  options: { topN: number; maxFullBodyChars: number }
+): Promise<ExtractionContextNote[]> {
+  const enriched = [...relatedNotes];
+  const top = Math.min(options.topN, enriched.length);
+  const replacements = await Promise.all(
+    Array.from({ length: top }, (_, index) => index).map(async (index) => {
+      const note = enriched[index];
+      if (!note) {
+        return { index, replacement: null as ExtractionContextNote | null };
+      }
+      const fullNote = await readNoteIfExists(vaultPath, note.slug);
+      if (fullNote && fullNote.content.length <= options.maxFullBodyChars) {
+        return { index, replacement: { ...note, content: fullNote.content } };
+      }
+      return { index, replacement: null };
+    })
+  );
+  for (const { index, replacement } of replacements) {
+    if (replacement) {
+      enriched[index] = replacement;
+    }
+  }
+  return enriched;
+}
 
 interface CreateExtractionOrchestratorOptions {
   getSettings: () => AppSettings;
@@ -83,7 +128,7 @@ const activeSessionIds = new Set<string>();
 function isWritableUpdate(
   update: ExtractionUpdate
 ): update is ExtractionUpdate & {
-  operation: "create" | "append" | "rewrite";
+  operation: "create" | "append" | "rewrite" | "merge";
 } {
   return update.operation !== "noop";
 }
@@ -112,10 +157,11 @@ async function applyExtractionResponseLocally(
   vault: VaultDefinition,
   response: ExtractionResponse,
   sessionId: string,
-  index: ExtractionIndexItem[]
+  index: ExtractionIndexItem[],
+  currentSessionTitle?: string
 ): Promise<ApplyExtractionResult> {
   const appliedUpdates = response.updates.filter(isWritableUpdate);
-  const appliedOps: Array<{ file: string; action: "create" | "append" | "rewrite" }> = [];
+  const appliedOps: Array<{ file: string; action: "create" | "append" | "rewrite" | "merge" }> = [];
   const appliedNotes: Array<{ slug: string; title: string }> = [];
   let appliedUpdateCount = 0;
   const seenPreparedBodies = new Set<string>();
@@ -159,7 +205,8 @@ async function applyExtractionResponseLocally(
         type: preparedWrite.type,
         sources: preparedWrite.sources,
         url: preparedWrite.url
-      }
+      },
+      strandRevision: { actor: "trellis", sessionId }
     });
 
     appliedUpdateCount += 1;
@@ -185,7 +232,9 @@ async function applyExtractionResponseLocally(
 
   let sessionTitle: string | null = null;
 
-  if (appliedUpdateCount > 0 && response.sessionTitle) {
+  const titleIsUnset = isUnsetChatSessionTitle(currentSessionTitle);
+
+  if (appliedUpdateCount > 0 && response.sessionTitle && titleIsUnset) {
     const updatedSession = await updateSession({
       id: sessionId,
       title: response.sessionTitle
@@ -207,17 +256,21 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       transcript: Array<{ role: "user" | "assistant"; content: string }>;
       index: Array<{ slug: string; title: string; tags: string[]; isPlaceholder?: boolean }>;
       relatedNotes: Awaited<ReturnType<typeof searchRelevantNotes>>;
+      sessionPriorNoteSlugs?: string[];
+      sessionPriorNoteContents?: Map<string, string>;
       preferredLocalModelId?: string;
       debugRunId?: string;
       retryThorough?: boolean;
+      sessionModel: string;
     }
   ) {
-    const mode = resolveExtractionMode(job.mode);
+    const mode = resolveExtractionMode(input.sessionModel);
+    const chatProvider: ChatProvider | null = providerForChatModel(input.sessionModel);
     const runtimeStatus = await getExtractionRuntimeStatus({
-      mode
+      chatModel: input.sessionModel
     });
     const strategy = resolveExtractionExecutionStrategy(mode, runtimeStatus.providers);
-    const requestedProviderOrder = buildRequestedProviderOrder(mode);
+    const requestedProviderOrder = buildRequestedProviderOrder(mode, chatProvider);
     const patchDebugRun = (
       patch: Parameters<typeof updateExtractionDebugRun>[1]
     ) => {
@@ -312,10 +365,13 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       return runExtraction(
         {
           mode,
+          chatModel: input.sessionModel,
           sessionId: job.sessionId,
           transcript: input.transcript,
           index: input.index,
           relatedNotes: input.relatedNotes,
+          sessionPriorNoteSlugs: input.sessionPriorNoteSlugs,
+          sessionPriorNoteContents: input.sessionPriorNoteContents,
           preferredLocalModelId: input.preferredLocalModelId,
           retryThorough: input.retryThorough ?? false
         },
@@ -346,6 +402,15 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       throw lastError ?? new Error("On-device note processing failed.");
     }
 
+    if (strategy.initialMode === "cloud") {
+      try {
+        return await attemptMode("cloud");
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error("Cloud note processing failed.");
+      }
+      throw lastError ?? new Error("Cloud note processing failed.");
+    }
+
     throw new Error("No note processing strategy.");
   }
 
@@ -356,7 +421,21 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       return;
     }
 
-    const jobMode = resolveExtractionMode(job.mode);
+    const session = await getSessionById(job.sessionId);
+
+    if (!session) {
+      const failedJob = await updateExtractionJob({
+        id: job.id,
+        status: "failed",
+        errorMessage: "That chat session no longer exists.",
+        finishedAt: Date.now()
+      });
+      options.notifyJobUpdate(failedJob);
+      return;
+    }
+
+    const jobMode = resolveExtractionMode(session.model);
+    const chatProvider = providerForChatModel(session.model);
     const debugRun = createExtractionDebugRun({
       scope: "job",
       mode: jobMode,
@@ -367,26 +446,9 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       transcriptMessageCount: Math.max(0, job.transcriptEndIndex - job.transcriptStartIndex),
       transcriptStartIndex: job.transcriptStartIndex,
       transcriptEndIndex: job.transcriptEndIndex,
-      requestedProviderOrder: buildRequestedProviderOrder(jobMode)
+      requestedProviderOrder: buildRequestedProviderOrder(jobMode, chatProvider),
+      chatProviderForOrder: chatProvider
     });
-
-    const session = await getSessionById(job.sessionId);
-
-    if (!session) {
-      updateExtractionDebugRun(debugRun.id, {
-        status: "failed",
-        finishedAt: Date.now(),
-        errorMessage: "That chat session no longer exists."
-      });
-      const failedJob = await updateExtractionJob({
-        id: job.id,
-        status: "failed",
-        errorMessage: "That chat session no longer exists.",
-        finishedAt: Date.now()
-      });
-      options.notifyJobUpdate(failedJob);
-      return;
-    }
 
     const runningJob = await updateExtractionJob({
       id: job.id,
@@ -483,14 +545,23 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         return;
       }
 
-      const storedConfig = await getExtractionJobConfig(job.id);
+      const prepStartedAt = Date.now();
       const vault = resolveVault(options.getSettings(), session.vaultId);
-      const snapshot = await buildSnapshot(vault.path, vault.id, vault.name);
+      const jobMode = resolveExtractionMode(session.model);
+      const isCloud = jobMode === "cloud";
+
+      const [storedConfig, snapshot, priorSessionSlugs] = await Promise.all([
+        getExtractionJobConfig(job.id),
+        buildSnapshot(vault.path, vault.id, vault.name),
+        getSessionNoteSlugs(job.sessionId)
+      ]);
+
       const sourceMessages = filterDirectNoteActionMessages(messages).slice(
         job.transcriptStartIndex,
         job.transcriptEndIndex
       );
-      const explicitSlugs = findExplicitReferenceSlugs(sourceMessages, snapshot.notes);
+      const bracketSlugs = findExplicitReferenceSlugs(sourceMessages, snapshot.notes);
+      const explicitSlugs = [...new Set([...priorSessionSlugs, ...bracketSlugs])];
       const retrievalQuery = buildExtractionRetrievalQuery(transcript);
       const relatedNotes = await searchRelevantNotes({
         vaultId: vault.id,
@@ -502,21 +573,79 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         jobId: job.id.slice(0, 8),
         relatedNoteCount: relatedNotes.length,
         explicitSlugCount: explicitSlugs.length,
+        priorSessionSlugCount: priorSessionSlugs.length,
         queryChars: retrievalQuery.length
       });
+
+      const enrichedNotes = isCloud
+        ? await enrichTopRelatedNotes(vault.path, relatedNotes, {
+            topN: 3,
+            maxFullBodyChars: 6000
+          })
+        : relatedNotes;
+      const noteUpdatedMap = new Map(snapshot.notes.map((n) => [n.slug, n.updated]));
+      const notesForExtraction: ExtractionContextNote[] = enrichedNotes.map((note) => ({
+        ...note,
+        updatedAt: noteUpdatedMap.get(note.slug)
+      }));
       const index = buildExtractionIndex(snapshot);
+      const noteTitleBySlug = new Map(index.map((entry) => [entry.slug, entry.title]));
+      const sessionPriorNoteSlugs =
+        priorSessionSlugs.length > 0 ? priorSessionSlugs : undefined;
+
+      let sessionPriorNoteContents: Map<string, string> | undefined;
+      if (isCloud && priorSessionSlugs.length > 0) {
+        const priorPairs = await Promise.all(
+          priorSessionSlugs.map(async (slug) => {
+            try {
+              const note = await readNoteIfExists(vault.path, slug);
+              return { slug, content: note?.content ?? null };
+            } catch {
+              return { slug, content: null };
+            }
+          })
+        );
+        sessionPriorNoteContents = new Map();
+        for (const { slug, content } of priorPairs) {
+          if (content !== null) {
+            sessionPriorNoteContents.set(slug, content);
+          }
+        }
+      }
+
+      const prepDurationMs = Date.now() - prepStartedAt;
+      logExtraction("processJob.prep", {
+        jobId: job.id.slice(0, 8),
+        prepDurationMs,
+        mode: jobMode
+      });
+
+      const llmPrimaryStartedAt = Date.now();
       let extraction = await runWithStrategy(job, {
         transcript,
         index,
-        relatedNotes,
+        relatedNotes: notesForExtraction,
+        sessionPriorNoteSlugs,
+        sessionPriorNoteContents,
         preferredLocalModelId: storedConfig?.preferredLocalModelId ?? undefined,
         debugRunId: debugRun.id,
-        retryThorough: false
+        retryThorough: false,
+        sessionModel: session.model
       });
+      const llmPrimaryDurationMs = Date.now() - llmPrimaryStartedAt;
 
       if (!extraction) {
         return;
       }
+
+      extraction = {
+        ...extraction,
+        response: foldIncrementalCreatesOntoSessionAnchor(extraction.response, {
+          transcriptStartIndex: job.transcriptStartIndex,
+          priorSessionSlugs,
+          noteTitleBySlug
+        })
+      };
 
       let modelUpdateCount = countNonNoopUpdates(extraction.response);
       logExtraction("processJob.model_pass", {
@@ -525,27 +654,44 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         nonNoopUpdates: modelUpdateCount
       });
 
+      let llmRetryThoroughDurationMs: number | null = null;
+
       if (
         modelUpdateCount === 0 &&
-        (job.trigger === "idle" ||
-          job.trigger === "session-switch" ||
-          job.trigger === "manual")
+        shouldRunRetryThoroughPass({
+          trigger: job.trigger,
+          primaryProvider: extraction.provider,
+          transcriptTurnCount: transcript.length
+        })
       ) {
         logExtraction("processJob.retry_thorough_begin", {
           jobId: job.id.slice(0, 8),
-          trigger: job.trigger
+          trigger: job.trigger,
+          primaryProvider: extraction.provider
         });
+        const retryStartedAt = Date.now();
         const second = await runWithStrategy(job, {
           transcript,
           index,
-          relatedNotes,
+          relatedNotes: notesForExtraction,
+          sessionPriorNoteSlugs,
+          sessionPriorNoteContents,
           preferredLocalModelId: storedConfig?.preferredLocalModelId ?? undefined,
           debugRunId: debugRun.id,
-          retryThorough: true
+          retryThorough: true,
+          sessionModel: session.model
         });
+        llmRetryThoroughDurationMs = Date.now() - retryStartedAt;
         if (second) {
-          extraction = second;
-          modelUpdateCount = countNonNoopUpdates(second.response);
+          extraction = {
+            ...second,
+            response: foldIncrementalCreatesOntoSessionAnchor(second.response, {
+              transcriptStartIndex: job.transcriptStartIndex,
+              priorSessionSlugs,
+              noteTitleBySlug
+            })
+          };
+          modelUpdateCount = countNonNoopUpdates(extraction.response);
           logExtraction("processJob.model_pass", {
             jobId: job.id.slice(0, 8),
             pass: "retry_thorough",
@@ -558,7 +704,8 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         vault,
         extraction.response,
         job.sessionId,
-        index
+        index,
+        session.title
       );
 
       if (job.trigger === "manual" && applied.appliedUpdateCount === 0) {
@@ -573,7 +720,8 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
           vault,
           fallbackResponse,
           job.sessionId,
-          index
+          index,
+          session.title
         );
       }
 
@@ -598,7 +746,8 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
           vault,
           fallbackResponse,
           job.sessionId,
-          index
+          index,
+          session.title
         );
       }
       const completedJob = await updateExtractionJob({
@@ -614,21 +763,43 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
       const requestedUpdateCount = extraction.response.updates.filter(
         (update) => update.operation !== "noop"
       ).length;
+      const finishedAt = completedJob.finishedAt ?? Date.now();
       updateExtractionDebugRun(debugRun.id, {
         status: "completed",
-        finishedAt: completedJob.finishedAt ?? Date.now(),
+        finishedAt,
         selectedProvider: extraction.provider,
         model: extraction.model,
         requestedUpdateCount,
         appliedUpdateCount: applied.appliedUpdateCount,
         guardrailDropCount: Math.max(0, requestedUpdateCount - applied.appliedUpdateCount),
+        prepDurationMs,
+        llmPrimaryDurationMs,
+        llmRetryThoroughDurationMs,
         errorMessage: null
+      });
+      const attemptedProvidersSummary = formatAttemptedProvidersSummary(
+        getExtractionDebugRun(debugRun.id)?.attemptedProviders
+      );
+      const startedWall = runningJob.startedAt ?? finishedAt;
+      logExtractionTimingSummary({
+        jobId: job.id.slice(0, 8),
+        prepDurationMs,
+        llmPrimaryDurationMs,
+        llmRetryThoroughDurationMs,
+        totalWallMs: Math.max(0, finishedAt - startedWall),
+        provider: extraction.provider,
+        model: extraction.model ?? "",
+        attemptedProvidersSummary
       });
       logExtraction("processJob.complete", {
         jobId: job.id.slice(0, 8),
         requestedUpdateCount,
         appliedUpdateCount: applied.appliedUpdateCount,
-        guardrailDropped: Math.max(0, requestedUpdateCount - applied.appliedUpdateCount)
+        guardrailDropped: Math.max(0, requestedUpdateCount - applied.appliedUpdateCount),
+        prepDurationMs,
+        llmPrimaryDurationMs,
+        llmRetryThoroughDurationMs,
+        attemptedProvidersSummary
       });
       options.notifyJobUpdate({
         ...completedJob,
@@ -691,14 +862,13 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
 
       const messages = await getMessagesBySession(session.id);
       const latestCompletedJob = await getLatestCompletedExtractionJob(session.id);
-      const planOptions = {
-        fullTranscriptWhenChanged: input.trigger === "idle" || input.trigger === "session-switch"
-      };
+      // Always use incremental slicing: send only turns since the last completed job
+      // (with a 2-turn overlap for context). Prior session notes are pinned in retrieval
+      // so the model reliably updates existing notes instead of creating duplicates.
       const { plan, ineligibleReason } = computeSessionExtractionPlan(
         messages,
         latestCompletedJob,
-        input.force ?? false,
-        planOptions
+        input.force ?? false
       );
 
       if (!plan) {
@@ -733,12 +903,10 @@ export function createExtractionOrchestrator(options: CreateExtractionOrchestrat
         sessionId: session.id,
         vaultId: session.vaultId,
         trigger: input.trigger ?? "manual",
-        mode: resolveExtractionMode(input.mode),
+        mode: resolveExtractionMode(session.model),
         transcriptStartIndex: plan.transcriptStartIndex,
         transcriptEndIndex: plan.transcriptEndIndex,
         transcriptDigest: plan.transcriptDigest,
-        cloudFunctionsBaseUrl: null,
-        cloudPublishableKey: null,
         preferredLocalModelId: input.preferredLocalModelId ?? null
       });
 

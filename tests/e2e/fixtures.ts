@@ -58,12 +58,7 @@ export { expect };
 export async function dismissLocalNoteProcessorFirstRun(page: Page): Promise<void> {
   const dialog = page.getByTestId("local-note-processor-first-run");
 
-  const dialogVisible = await dialog
-    .waitFor({ state: "visible", timeout: 3_000 })
-    .then(() => true)
-    .catch(() => false);
-
-  if (!dialogVisible) {
+  if (!(await dialog.isVisible().catch(() => false))) {
     return;
   }
 

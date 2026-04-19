@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import type { ExtractionContextNote } from "@shared/extraction/contracts";
 import type { RetrievalRebuildResult, WikiNote } from "../../ipc/types";
-import { relatedNotesRetrievalDefaultLimit } from "../../../shared/extraction/config";
+import {
+  relatedNotesRetrievalDefaultLimit,
+  retrievalLexicalWeights
+} from "../../../shared/extraction/config";
 import {
   deleteMissingNoteEmbeddings,
   listNoteEmbeddings,
@@ -104,16 +107,18 @@ function lexicalScore(query: string, row: StoredNoteEmbedding): number {
   let score = 0;
 
   if (titlePhrase.length >= 8 && normalizedQuery.includes(titlePhrase)) {
-    score += 18;
+    score += retrievalLexicalWeights.titlePhraseMatch;
   }
 
   if (headingPhrase.length >= 8 && normalizedQuery.includes(headingPhrase)) {
-    score += 10;
+    score += retrievalLexicalWeights.headingPhraseMatch;
   }
 
   for (const token of queryTokens) {
     if (searchableTokens.has(token)) {
-      score += row.noteTitle.toLowerCase().includes(token) ? 4 : 2;
+      score += row.noteTitle.toLowerCase().includes(token)
+        ? retrievalLexicalWeights.tokenHitInTitle
+        : retrievalLexicalWeights.tokenHitElsewhere;
     }
   }
 

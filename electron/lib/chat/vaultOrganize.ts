@@ -219,7 +219,8 @@ export async function executeVaultOrganize(
         tags: existing.tags,
         type: existing.type,
         sources: existing.sources
-      }
+      },
+      strandRevision: { actor: "trellis" }
     });
     moveCount += 1;
     if (!movedNote) {

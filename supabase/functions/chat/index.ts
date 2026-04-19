@@ -6,13 +6,14 @@ import {
   type ChatModel
 } from "../_shared/chat-models.ts";
 import { corsHeaders } from "../_shared/http.ts";
-import { assertMaxJsonBodyBytes } from "../_shared/requestLimits.ts";
+import { assertMaxJsonBodyBytes, readJsonBodyWithByteLimit } from "../_shared/requestLimits.ts";
 import { getChatModelMediaCapabilities } from "../../../shared/chat/capabilities.ts";
 import {
-  generateChatReply,
+  streamChatReply,
   type ChatMessage,
   type ChatReference
 } from "../_shared/models.ts";
+import { deriveSessionTitle } from "../../../shared/chat/deriveSessionTitle.ts";
 
 const encoder = new TextEncoder();
 
@@ -186,10 +187,10 @@ Deno.serve(async (request) => {
   try {
     assertMaxJsonBodyBytes(request);
     const { user, profile, admin } = await requireUser(request);
-    const parsed = parseBody(await request.json());
+    const parsed = parseBody(await readJsonBodyWithByteLimit(request));
     const previewWorkspaceRequest =
       request.headers.get("x-trellis-preview-workspace") === "1" || parsed.previewWorkspace;
-    assertEntitlement(profile, "message", { previewWorkspaceRequest });
+    assertEntitlement(profile, "message");
     assertChatModelAccess(profile, parsed.model);
 
     const mediaCaps = getChatModelMediaCapabilities(parsed.model);
@@ -278,33 +279,43 @@ Deno.serve(async (request) => {
       }
     }
 
-    const reply = await generateChatReply(parsed.messages, parsed.model, parsed.references, {
-      providerApiKey: byok.providerApiKey ?? undefined
-    });
-
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         controller.enqueue(sseEvent("status", "Thinking"));
-        controller.enqueue(sseEvent("title", reply.sessionTitle));
+        let fullText = "";
 
-        for (const token of reply.text.split(/(\s+)/)) {
-          if (token.length === 0) {
-            continue;
+        try {
+          for await (const piece of streamChatReply(parsed.messages, parsed.model, parsed.references, {
+            providerApiKey: byok.providerApiKey ?? undefined
+          })) {
+            fullText += piece;
+            controller.enqueue(sseEvent("token", piece));
           }
-
-          controller.enqueue(sseEvent("token", token));
-          await new Promise((resolve) => setTimeout(resolve, 10));
+        } catch (streamError) {
+          controller.error(streamError);
+          return;
         }
+
+        if (fullText.trim().length === 0) {
+          controller.error(new Error("The model returned an empty response."));
+          return;
+        }
+
+        const sessionTitle = deriveSessionTitle(parsed.messages, { assistantReply: fullText });
+        const tokenCount = Math.ceil(fullText.length / 4);
+        controller.enqueue(sseEvent("title", sessionTitle));
 
         await incrementUsage(admin, user.id, "message", 1, {
           sessionId: parsed.sessionId,
-          tokenCount: reply.tokenCount,
+          tokenCount,
           billing_mode: byok.billingMode,
           provider: modelProvider,
           model: parsed.model,
-          ...(previewWorkspaceRequest ? { preview_workspace: true } : {})
+          ...(previewWorkspaceRequest && profile.is_admin === true ? { preview_workspace: true } : {})
         }, {
-          skipCounterUpdate: byok.billingMode === "byok" || previewWorkspaceRequest
+          skipCounterUpdate:
+            byok.billingMode === "byok" ||
+            (previewWorkspaceRequest && profile.is_admin === true)
         });
         controller.enqueue(sseEvent("done", "ok"));
         controller.close();

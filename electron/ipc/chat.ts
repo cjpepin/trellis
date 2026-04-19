@@ -19,11 +19,11 @@ import { buildChatContextPacket } from "../lib/chat/context";
 import { proposeChatNoteActions } from "../lib/chat/noteActions";
 import { executeVaultOrganize } from "../lib/chat/vaultOrganize";
 import { storeTurnMemory } from "../lib/chat/memory";
-import { runLocalChatReply } from "../lib/chat/local";
+import { runLocalChatReply, runLocalChatReplyStream } from "../lib/chat/local";
 import {
   deleteProviderKey,
-  getProviderKey,
   getProviderKeyStatusSnapshot,
+  resolveProviderApiKey,
   setProviderKey
 } from "../lib/providerKeys";
 import { readMediaCacheBase64ForApi } from "../lib/chatMediaCache";
@@ -114,6 +114,14 @@ const chatStreamRequestSchema = z.object({
   messages: z.array(chatStreamPayloadMessageSchema).min(1),
   references: z.array(chatContextReferenceSchema).optional(),
   previewWorkspace: z.boolean().optional()
+});
+
+const chatStreamLocalRequestSchema = z.object({
+  requestId: z.string().uuid(),
+  model: z.enum(chatModelIds),
+  sessionId: z.string().uuid(),
+  messages: z.array(chatStreamPayloadMessageSchema).min(1),
+  references: z.array(chatContextReferenceSchema).optional()
 });
 
 async function enrichStreamMessagesForEdge(
@@ -344,6 +352,26 @@ export function registerChatIpc(options: {
     runLocalChatReply(runLocalReplySchema.parse(input) as LocalChatRunInput)
   );
 
+  ipcMain.handle(ipcChannels.chatStreamLocal, async (event, input: unknown) => {
+    const parsed = chatStreamLocalRequestSchema.parse(input);
+    await runLocalChatReplyStream(
+      {
+        model: parsed.model,
+        messages: parsed.messages.map((message) => ({ role: message.role, content: message.content })),
+        references: parsed.references
+      },
+      (type, payload) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send(ipcChannels.chatStreamEvent, {
+            requestId: parsed.requestId,
+            type,
+            payload
+          });
+        }
+      }
+    );
+  });
+
   ipcMain.handle(ipcChannels.providerKeysGet, async () =>
     getProviderKeyStatusSnapshot(options.getWorkspaceId())
   );
@@ -374,12 +402,17 @@ export function registerChatIpc(options: {
     };
 
     if (parsed.subscriptionTier === "byok") {
-      const providerApiKey = getProviderKey(options.getWorkspaceId(), provider);
+      const providerApiKey = resolveProviderApiKey(
+        options.getWorkspaceId(),
+        provider,
+        parsed.subscriptionTier
+      );
 
       if (!providerApiKey) {
         const providerLabel = provider === "openai" ? "OpenAI" : "Anthropic";
+        const envName = provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
         throw new Error(
-          `Add your ${providerLabel} API key in Settings before using ${providerLabel} models on the BYOK plan.`
+          `Add your ${providerLabel} API key in Settings (BYOK) or set ${envName} in the environment.`
         );
       }
 
