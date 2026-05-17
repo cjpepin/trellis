@@ -17,7 +17,7 @@ test("reviews proposed wiki note actions from chat", async ({ page }) => {
 
   const seeded = await page.evaluate(async (commonDraft: string) => {
     const settings = await window.trellis.app.getSettings();
-    const vault = settings.vaults[0];
+    const vault = settings.buckets[0];
 
     if (!vault) {
       throw new Error("Missing preview vault.");
@@ -25,7 +25,7 @@ test("reviews proposed wiki note actions from chat", async ({ page }) => {
 
     const session = await window.trellis.db.createSession({
       model: "gpt-4.1-mini",
-      vaultId: vault.id
+      bucketId: vault.id
     });
     const draftedMessageId = crypto.randomUUID();
     const saveRequestId = crypto.randomUUID();

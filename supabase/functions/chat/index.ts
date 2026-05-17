@@ -14,6 +14,7 @@ import {
   type ChatReference
 } from "../_shared/models.ts";
 import { deriveSessionTitle } from "../../../shared/chat/deriveSessionTitle.ts";
+import { getStoredProviderCredentialSecret } from "../_shared/cloud.ts";
 
 const encoder = new TextEncoder();
 
@@ -177,6 +178,41 @@ function getByokHeaders(request: Request): {
   };
 }
 
+async function resolveByokProviderApiKey(input: {
+  admin: Awaited<ReturnType<typeof requireUser>>["admin"];
+  request: Request;
+  userId: string;
+  modelProvider: "openai" | "anthropic";
+}): Promise<{
+  billingMode: "hosted" | "byok";
+  provider: "openai" | "anthropic" | null;
+  providerApiKey: string | null;
+}> {
+  const byok = getByokHeaders(input.request);
+
+  if (byok.billingMode !== "byok") {
+    return byok;
+  }
+
+  if (byok.provider && byok.provider !== input.modelProvider) {
+    return byok;
+  }
+
+  if (byok.providerApiKey) {
+    return byok;
+  }
+
+  return {
+    billingMode: "byok",
+    provider: input.modelProvider,
+    providerApiKey: await getStoredProviderCredentialSecret(
+      input.admin,
+      input.userId,
+      input.modelProvider
+    )
+  };
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", {
@@ -190,7 +226,9 @@ Deno.serve(async (request) => {
     const parsed = parseBody(await readJsonBodyWithByteLimit(request));
     const previewWorkspaceRequest =
       request.headers.get("x-trellis-preview-workspace") === "1" || parsed.previewWorkspace;
-    assertEntitlement(profile, "message");
+    assertEntitlement(profile, "message", {
+      isAnonymousUser: user.is_anonymous === true
+    });
     assertChatModelAccess(profile, parsed.model);
 
     const mediaCaps = getChatModelMediaCapabilities(parsed.model);
@@ -214,8 +252,13 @@ Deno.serve(async (request) => {
       );
     }
 
-    const byok = getByokHeaders(request);
     const modelProvider = getChatModelProvider(parsed.model);
+    const byok = await resolveByokProviderApiKey({
+      admin,
+      request,
+      userId: user.id,
+      modelProvider
+    });
 
     if (profile.subscription_tier === "byok" && byok.billingMode !== "byok") {
       throw new Response(

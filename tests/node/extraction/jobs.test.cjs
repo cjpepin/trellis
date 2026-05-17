@@ -10,7 +10,7 @@ const {
   planSessionExtraction,
   resolveExtractionExecutionStrategy,
   shouldRunRetryThoroughPass
-} = require(fromRepoRoot("electron", "lib", "extraction", "jobs.ts"));
+} = require(fromRepoRoot("apps", "desktop", "electron", "lib", "extraction", "jobs.ts"));
 
 function createMessage(id, role, content) {
   return {
@@ -27,7 +27,7 @@ function createCompletedJob(overrides = {}) {
   return {
     id: "job-1",
     sessionId: "session-1",
-    vaultId: "vault-1",
+    bucketId: "vault-1",
     status: "completed",
     trigger: "idle",
     mode: "local",

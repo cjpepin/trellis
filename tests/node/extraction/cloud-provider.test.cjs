@@ -3,13 +3,15 @@ const test = require("node:test");
 const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
 const { createCloudExtractionProvider } = require(fromRepoRoot(
+  "apps",
+  "desktop",
   "electron",
   "lib",
   "extraction",
   "providers",
   "cloudApi.ts"
 ));
-const { fetchSafeHttpsPost } = require(fromRepoRoot("electron", "lib", "fetchSafe.ts"));
+const { fetchSafeHttpsPost } = require(fromRepoRoot("apps", "desktop", "electron", "lib", "fetchSafe.ts"));
 
 test("createCloudExtractionProvider getStatus reflects API key presence", async () => {
   const withoutKey = createCloudExtractionProvider("openai", () => null);

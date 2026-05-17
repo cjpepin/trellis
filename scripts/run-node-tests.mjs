@@ -53,7 +53,9 @@ if (testFiles.length === 0) {
   process.exit(1);
 }
 
-const child = spawn(process.execPath, ["-r", "sucrase/register/ts", "--test", ...testFiles], {
+const pathsHook = fromRepoRoot("scripts", "node-test-paths.cjs");
+
+const child = spawn(process.execPath, ["-r", pathsHook, "-r", "sucrase/register/ts", "--test", ...testFiles], {
   stdio: "inherit"
 });
 

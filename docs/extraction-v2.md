@@ -493,7 +493,7 @@ Tasks:
 Files to touch:
 
 - `electron/lib/database.ts`
-- `electron/ipc/vault.ts`
+- `electron/ipc/bucket.ts`
 - new `electron/lib/retrieval/*`
 - new typed IPC methods if renderer needs retrieval status
 
@@ -599,7 +599,7 @@ Tasks:
 Files to touch:
 
 - `src/hooks/useApplyExtraction.ts`
-- `electron/ipc/vault.ts`
+- `electron/ipc/bucket.ts`
 - new `electron/lib/extraction/guardrails.ts`
 
 Exit criteria:

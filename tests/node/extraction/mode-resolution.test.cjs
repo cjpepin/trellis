@@ -6,7 +6,7 @@ const { providerForChatModel } = require(fromRepoRoot("shared", "chat", "provide
 const {
   resolveExtractionMode,
   buildExtractionProviderIdsForOrder
-} = require(fromRepoRoot("electron", "lib", "extraction", "providerOrder.ts"));
+} = require(fromRepoRoot("apps", "desktop", "electron", "lib", "extraction", "providerOrder.ts"));
 const { extractionFeatureFlagNames } = require(fromRepoRoot("shared", "extraction", "config.ts"));
 
 test("providerForChatModel maps known vendor prefixes", () => {

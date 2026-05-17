@@ -37,6 +37,10 @@ Trellis includes a small wrapper around the Supabase CLI so the common workflows
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_PUBLISHABLE_KEY` for the renderer
+- `VITE_SITE_URL`
+- `VITE_SUPPORT_EMAIL`
+- `VITE_DOWNLOAD_MAC_URL`
+- `VITE_DOWNLOAD_MAC_VERSION`
 - `SUPABASE_PROJECT_REF`
 - `SUPABASE_ACCESS_TOKEN`
 - `SUPABASE_DB_PASSWORD`
@@ -52,6 +56,7 @@ Trellis includes a small wrapper around the Supabase CLI so the common workflows
 
 ## Notes
 
+- **Anonymous sign-ins:** Guest mode in the desktop app calls `supabase.auth.signInAnonymously()`. Enable **Anonymous sign-ins** under Authentication → Providers in the Supabase dashboard, or guest bootstrap will fail and users will need a full sign-in to chat.
 - Never expose `SUPABASE_SERVICE_ROLE_KEY` or an `sb_secret_...` key through a `VITE_` variable. The renderer must use a publishable key only.
 - Chat requests send conversation text to your Supabase `chat` Edge Function, which may forward it to OpenAI or Anthropic depending on the selected model.
 - The chat model comes from the UI selector for each request rather than a server-side chat model env var.

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 
 const result = spawnSync(
   "deno",
-  ["test", "-A", "supabase/functions/_shared/auth.test.ts"],
+  ["test", "-A", "supabase/functions/_shared"],
   {
     stdio: "inherit",
     shell: false

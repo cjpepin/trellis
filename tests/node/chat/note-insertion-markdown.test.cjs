@@ -6,7 +6,7 @@ const {
   wantsAiRichMarkdownInstruction,
   stripLeadingMarkdownFence,
   extractMarkdownSectionExcerpt
-} = require(fromRepoRoot("electron", "lib", "chat", "noteInsertionMarkdown.ts"));
+} = require(fromRepoRoot("apps", "desktop", "electron", "lib", "chat", "noteInsertionMarkdown.ts"));
 
 test("wantsAiRichMarkdownInstruction detects tables, formatting, and multiline asks", () => {
   assert.equal(wantsAiRichMarkdownInstruction("Update [[X]] to include hello"), false);

@@ -5,7 +5,7 @@ const { fromRepoRoot } = require("../support/repo-paths.cjs");
 const {
   prepareExtractionWrite,
   skipIfDuplicatePreparedExtractionContent
-} = require(fromRepoRoot("electron", "lib", "extraction", "guardrails.ts"));
+} = require(fromRepoRoot("packages", "contracts", "src", "extraction", "guardrails.ts"));
 
 function createUpdate(overrides = {}) {
   return {

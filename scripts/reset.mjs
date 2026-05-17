@@ -98,12 +98,12 @@ function readVaultPaths(settingsPath) {
   try {
     const raw = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
 
-    if (typeof raw.vaultPath === "string" && raw.vaultPath.length > 0) {
-      return [raw.vaultPath];
+    if (typeof raw.bucketPath === "string" && raw.bucketPath.length > 0) {
+      return [raw.bucketPath];
     }
 
-    if (Array.isArray(raw.vaults)) {
-      return raw.vaults
+    if (Array.isArray(raw.buckets)) {
+      return raw.buckets
         .map((v) => (v && typeof v.path === "string" ? v.path : null))
         .filter((p) => p !== null);
     }
@@ -189,19 +189,19 @@ const settingsPaths =
           path.join(userDataDir, "workspaces", workspaceId, "settings.json")
         )
       ];
-const vaultPaths = [
+const bucketPaths = [
   ...new Set([
     ...settingsPaths.flatMap((settingsPath) => readVaultPaths(settingsPath)),
     ...extraVaults
   ])
 ];
 
-if (vaultPaths.length === 0) {
+if (bucketPaths.length === 0) {
   console.log("No vault paths found (missing or empty settings.json). Skipping wiki/raw.");
   console.log("Set TRELLIS_EXTRA_VAULT_PATHS to a colon-separated list to clear specific vaults.\n");
 } else {
-  for (const vaultPath of vaultPaths) {
-    const resolved = path.resolve(vaultPath);
+  for (const bucketPath of bucketPaths) {
+    const resolved = path.resolve(bucketPath);
     console.log(`Vault: ${resolved}`);
 
     for (const sub of ["wiki", "raw"]) {

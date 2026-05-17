@@ -1,0 +1,40 @@
+{
+  "name": "@trellis/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "../../out/build/electron/main.js",
+  "scripts": {
+    "postinstall": "electron-builder install-app-deps",
+    "check": "cd ../.. && tsc --noEmit",
+    "dev": "cd ../.. && vite --config config/vite.config.ts",
+    "build:test-app": "cd ../.. && vite build --config config/vite.config.ts",
+    "build": "cd ../.. && vite build --config config/vite.config.ts && electron-builder",
+    "build:all": "cd ../.. && vite build --config config/vite.config.ts && electron-builder -mwl",
+    "rebuild:native": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "@trellis/contracts": "workspace:*",
+    "@trellis/shared": "workspace:*",
+    "better-sqlite3": "^11.8.1",
+    "@supabase/supabase-js": "^2.49.4",
+    "gray-matter": "^4.0.3",
+    "jsdom": "^26.1.0",
+    "node-llama-cpp": "^3.18.1",
+    "pdf-parse": "^1.1.1",
+    "uuid": "^11.1.0",
+    "yaml": "^2.7.1",
+    "zod": "^3.24.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.13.14",
+    "electron": "^35.1.5",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.3",
+    "vite-plugin-electron": "^0.29.0",
+    "@vitejs/plugin-react": "^4.3.4"
+  }
+}

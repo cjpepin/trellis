@@ -6,7 +6,7 @@ const {
   buildRequestedProviderOrder,
   createExtractionDebugRun,
   updateExtractionDebugRun
-} = require(fromRepoRoot("electron", "lib", "extraction", "debug.ts"));
+} = require(fromRepoRoot("apps", "desktop", "electron", "lib", "extraction", "debug.ts"));
 
 test("buildRequestedProviderOrder prefers cloud then embedded when mode and vendor match", () => {
   assert.deepEqual(buildRequestedProviderOrder("local"), ["embedded"]);

@@ -6,7 +6,7 @@
       "createdAt": 1719763200000,
       "updatedAt": 1719764435000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ee1",
@@ -14,7 +14,7 @@
       "createdAt": 1720972800000,
       "updatedAt": 1720974225000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ee2",
@@ -22,7 +22,7 @@
       "createdAt": 1722182400000,
       "updatedAt": 1722184015000,
       "model": "claude-3-7-sonnet-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ee3",
@@ -30,7 +30,7 @@
       "createdAt": 1723392000000,
       "updatedAt": 1723393805000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ee4",
@@ -38,7 +38,7 @@
       "createdAt": 1724601600000,
       "updatedAt": 1724603595000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ee5",
@@ -46,7 +46,7 @@
       "createdAt": 1725811200000,
       "updatedAt": 1725813385000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ee6",
@@ -54,7 +54,7 @@
       "createdAt": 1727020800000,
       "updatedAt": 1727023175000,
       "model": "claude-3-7-sonnet-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ee7",
@@ -62,7 +62,7 @@
       "createdAt": 1728230400000,
       "updatedAt": 1728232965000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ee8",
@@ -70,7 +70,7 @@
       "createdAt": 1729440000000,
       "updatedAt": 1729442755000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ee9",
@@ -78,7 +78,7 @@
       "createdAt": 1730649600000,
       "updatedAt": 1730652545000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002eea",
@@ -86,7 +86,7 @@
       "createdAt": 1731859200000,
       "updatedAt": 1731862335000,
       "model": "claude-3-7-sonnet-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002eeb",
@@ -94,7 +94,7 @@
       "createdAt": 1733068800000,
       "updatedAt": 1733070035000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002eec",
@@ -102,7 +102,7 @@
       "createdAt": 1734278400000,
       "updatedAt": 1734279825000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002eed",
@@ -110,7 +110,7 @@
       "createdAt": 1735488000000,
       "updatedAt": 1735489615000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002eee",
@@ -118,7 +118,7 @@
       "createdAt": 1736697600000,
       "updatedAt": 1736699405000,
       "model": "claude-3-7-sonnet-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002eef",
@@ -126,7 +126,7 @@
       "createdAt": 1737907200000,
       "updatedAt": 1737909195000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ef0",
@@ -134,7 +134,7 @@
       "createdAt": 1739116800000,
       "updatedAt": 1739118985000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ef1",
@@ -142,7 +142,7 @@
       "createdAt": 1740326400000,
       "updatedAt": 1740328775000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ef2",
@@ -150,7 +150,7 @@
       "createdAt": 1741536000000,
       "updatedAt": 1741538565000,
       "model": "claude-3-7-sonnet-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ef3",
@@ -158,7 +158,7 @@
       "createdAt": 1742745600000,
       "updatedAt": 1742748355000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ef4",
@@ -166,7 +166,7 @@
       "createdAt": 1743955200000,
       "updatedAt": 1743958145000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ef5",
@@ -174,7 +174,7 @@
       "createdAt": 1745164800000,
       "updatedAt": 1745167935000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ef6",
@@ -182,7 +182,7 @@
       "createdAt": 1746374400000,
       "updatedAt": 1746375635000,
       "model": "claude-3-7-sonnet-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ef7",
@@ -190,7 +190,7 @@
       "createdAt": 1747584000000,
       "updatedAt": 1747585425000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ef8",
@@ -198,7 +198,7 @@
       "createdAt": 1748793600000,
       "updatedAt": 1748795215000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002ef9",
@@ -206,7 +206,7 @@
       "createdAt": 1750003200000,
       "updatedAt": 1750005005000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002efa",
@@ -214,7 +214,7 @@
       "createdAt": 1751212800000,
       "updatedAt": 1751214795000,
       "model": "claude-3-7-sonnet-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002efb",
@@ -222,7 +222,7 @@
       "createdAt": 1752422400000,
       "updatedAt": 1752424585000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002efc",
@@ -230,7 +230,7 @@
       "createdAt": 1753632000000,
       "updatedAt": 1753634375000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002efd",
@@ -238,7 +238,7 @@
       "createdAt": 1754841600000,
       "updatedAt": 1754844165000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002efe",
@@ -246,7 +246,7 @@
       "createdAt": 1756051200000,
       "updatedAt": 1756053955000,
       "model": "claude-3-7-sonnet-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002eff",
@@ -254,7 +254,7 @@
       "createdAt": 1757260800000,
       "updatedAt": 1757263745000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f00",
@@ -262,7 +262,7 @@
       "createdAt": 1758470400000,
       "updatedAt": 1758473535000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f01",
@@ -270,7 +270,7 @@
       "createdAt": 1759680000000,
       "updatedAt": 1759681235000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f02",
@@ -278,7 +278,7 @@
       "createdAt": 1760889600000,
       "updatedAt": 1760891025000,
       "model": "claude-3-7-sonnet-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f03",
@@ -286,7 +286,7 @@
       "createdAt": 1762099200000,
       "updatedAt": 1762100815000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f04",
@@ -294,7 +294,7 @@
       "createdAt": 1763308800000,
       "updatedAt": 1763310605000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f05",
@@ -302,7 +302,7 @@
       "createdAt": 1764518400000,
       "updatedAt": 1764520395000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f06",
@@ -310,7 +310,7 @@
       "createdAt": 1765728000000,
       "updatedAt": 1765730185000,
       "model": "claude-3-7-sonnet-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f07",
@@ -318,7 +318,7 @@
       "createdAt": 1766937600000,
       "updatedAt": 1766939975000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f08",
@@ -326,7 +326,7 @@
       "createdAt": 1768147200000,
       "updatedAt": 1768149765000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f09",
@@ -334,7 +334,7 @@
       "createdAt": 1769356800000,
       "updatedAt": 1769359555000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f0a",
@@ -342,7 +342,7 @@
       "createdAt": 1770566400000,
       "updatedAt": 1770569345000,
       "model": "claude-3-7-sonnet-latest",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f0b",
@@ -350,7 +350,7 @@
       "createdAt": 1771776000000,
       "updatedAt": 1771779135000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     },
     {
       "id": "00000000-0000-4000-8000-000000002f0c",
@@ -358,7 +358,7 @@
       "createdAt": 1772985600000,
       "updatedAt": 1772986835000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-heavy-main-vault"
+      "bucketId": "preview-heavy-main-vault"
     }
   ],
   "messages": [

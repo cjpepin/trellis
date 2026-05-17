@@ -14,6 +14,7 @@ function baseProfile(over: Partial<ProfileRow> = {}): ProfileRow {
     stripe_customer_id: null,
     trial_message_window_started_at: null,
     is_admin: false,
+    deleted_at: null,
     ...over
   };
 }
@@ -58,4 +59,26 @@ Deno.test("assertEntitlement: pro bypasses quota", () => {
     }),
     "message"
   );
+});
+
+Deno.test("assertEntitlement: guest limit uses the smaller allowance", () => {
+  let caught: Response | null = null;
+  try {
+    assertEntitlement(
+      baseProfile({
+        messages_used: 5,
+        message_limit: 25
+      }),
+      "message",
+      { isAnonymousUser: true }
+    );
+  } catch (error) {
+    if (error instanceof Response) {
+      caught = error;
+    } else {
+      throw error;
+    }
+  }
+
+  assertEquals(caught?.status, 402);
 });

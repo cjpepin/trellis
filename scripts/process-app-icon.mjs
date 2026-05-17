@@ -1,7 +1,8 @@
 /**
  * Trims the icon: pads for safe alpha-erosion (removes light semi-transparent fringe),
  * fits to a square canvas, applies a smooth rounded-rectangle mask, and writes
- * `build/icon.png` (1024×1024) for electron-builder and the dev window icon.
+ * `build/icon.png` (1024×1024) for electron-builder and the dev window icon, and
+ * a flattened 1024×1024 iOS `AppIcon.appiconset` file (no transparent corner holes; see `iosAppIcon.mjs`).
  * Art is scaled to a fraction of the canvas so the Dock size matches typical macOS icons (full-bleed PNGs read oversized).
  *
  * Usage: node scripts/process-app-icon.mjs [input.png]
@@ -11,6 +12,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
+import { flattenPngForIosAppStore, IOS_APPIcon_PATH } from "./iosAppIcon.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -139,6 +141,10 @@ async function main() {
   console.log(
     `Wrote ${OUTPUT} (${SIZE}×${SIZE}, trimmed ${trimmed.info.width}×${trimmed.info.height} after fringe cleanup)`
   );
+
+  const iosOut = await flattenPngForIosAppStore(out);
+  await fs.writeFile(IOS_APPIcon_PATH, iosOut);
+  console.log(`Wrote ${IOS_APPIcon_PATH} (iOS: transparent corners filled to match plate)`);
 }
 
 main().catch((err) => {

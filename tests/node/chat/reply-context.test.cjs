@@ -3,7 +3,7 @@ const test = require("node:test");
 const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
 const { buildChatReplyContext } = require(fromRepoRoot("shared", "chat", "replyContext.ts"));
-const { WIKI_NOTE_INDEX_MEMORY_TITLE } = require(fromRepoRoot("shared", "chat", "vaultIndex.ts"));
+const { WIKI_NOTE_INDEX_MEMORY_TITLE } = require(fromRepoRoot("shared", "chat", "bucketIndex.ts"));
 
 test("buildChatReplyContext keeps explicit notes and drops pure retrieval-only notes", () => {
   const result = buildChatReplyContext(

@@ -2,9 +2,9 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
-const { chunkNote } = require(fromRepoRoot("electron", "lib", "retrieval", "chunkNote.ts"));
-const { searchRelevantNotes } = require(fromRepoRoot("electron", "lib", "retrieval", "index.ts"));
-const database = require(fromRepoRoot("electron", "lib", "database.ts"));
+const { chunkNote } = require(fromRepoRoot("apps", "desktop", "electron", "lib", "retrieval", "chunkNote.ts"));
+const { searchRelevantNotes } = require(fromRepoRoot("apps", "desktop", "electron", "lib", "retrieval", "index.ts"));
+const database = require(fromRepoRoot("apps", "desktop", "electron", "lib", "database.ts"));
 
 test("chunkNote splits markdown into heading-aware chunks", () => {
   const chunks = chunkNote({
@@ -41,7 +41,7 @@ test("searchRelevantNotes includes explicit matches and ranks lexical hits witho
 
   database.listNoteEmbeddings = async () => [
     {
-      vaultId: "vault-1",
+      bucketId: "vault-1",
       noteSlug: "product-strategy",
       chunkId: "0",
       noteTitle: "Product Strategy",
@@ -54,7 +54,7 @@ test("searchRelevantNotes includes explicit matches and ranks lexical hits witho
       updatedAt: Date.now()
     },
     {
-      vaultId: "vault-1",
+      bucketId: "vault-1",
       noteSlug: "api-design",
       chunkId: "0",
       noteTitle: "API Design",
@@ -70,7 +70,7 @@ test("searchRelevantNotes includes explicit matches and ranks lexical hits witho
 
   try {
     const results = await searchRelevantNotes({
-      vaultId: "vault-1",
+      bucketId: "vault-1",
       query: "How should product strategy inform onboarding?",
       explicitSlugs: ["api-design"],
       limit: 6
@@ -90,7 +90,7 @@ test("searchRelevantNotes boosts prioritySlugs when lexical match is weak", asyn
 
   database.listNoteEmbeddings = async () => [
     {
-      vaultId: "vault-1",
+      bucketId: "vault-1",
       noteSlug: "hub-note",
       chunkId: "0",
       noteTitle: "Hub Note",
@@ -103,7 +103,7 @@ test("searchRelevantNotes boosts prioritySlugs when lexical match is weak", asyn
       updatedAt: Date.now()
     },
     {
-      vaultId: "vault-1",
+      bucketId: "vault-1",
       noteSlug: "other-note",
       chunkId: "0",
       noteTitle: "Other Note",
@@ -119,7 +119,7 @@ test("searchRelevantNotes boosts prioritySlugs when lexical match is weak", asyn
 
   try {
     const results = await searchRelevantNotes({
-      vaultId: "vault-1",
+      bucketId: "vault-1",
       query: "zzzzzz unrelated query tokens",
       explicitSlugs: [],
       prioritySlugs: ["hub-note"],

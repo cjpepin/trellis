@@ -160,14 +160,14 @@ For the top 3 related notes by score, read the full note body and replace the ch
 
 ```ts
 async function enrichTopRelatedNotes(
-  vaultPath: string,
+  bucketPath: string,
   relatedNotes: ExtractionContextNote[],
   options: { topN: number; maxFullBodyChars: number }
 ): Promise<ExtractionContextNote[]> {
   const enriched = [...relatedNotes];
   for (let i = 0; i < Math.min(options.topN, enriched.length); i++) {
     const note = enriched[i];
-    const fullNote = await readNoteIfExists(vaultPath, note.slug);
+    const fullNote = await readNoteIfExists(bucketPath, note.slug);
     if (fullNote && fullNote.body.length <= options.maxFullBodyChars) {
       enriched[i] = { ...note, content: fullNote.body };
     }

@@ -1,0 +1,2 @@
+export const FREE_ACCOUNT_MESSAGE_LIMIT = 25;
+export const GUEST_MESSAGE_LIMIT = 5;

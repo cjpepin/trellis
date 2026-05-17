@@ -1,0 +1,16 @@
+{
+  "name": "@trellis/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build:cap": "pnpm --filter @trellis/web run build && cap sync ios",
+    "cap:open:ios": "cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.2.0",
+    "@capacitor/ios": "^7.2.0"
+  }
+}

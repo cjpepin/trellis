@@ -6,7 +6,7 @@ const { buildExtractionUserMessage } = require(
   fromRepoRoot("shared", "extraction", "buildPrompt.ts")
 );
 const { pickSelectedProviderId } = require(
-  fromRepoRoot("electron", "lib", "extraction", "providerSelection.ts")
+  fromRepoRoot("apps", "desktop", "electron", "lib", "extraction", "providerSelection.ts")
 );
 
 test("buildExtractionUserMessage includes related notes and transcript context", () => {

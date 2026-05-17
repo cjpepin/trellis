@@ -1,5 +1,9 @@
 import { createClient, type SupabaseClient, type User } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import {
+  FREE_ACCOUNT_MESSAGE_LIMIT,
+  GUEST_MESSAGE_LIMIT
+} from "../../../shared/billing/freeTier.ts";
+import {
   effectiveTrialMessagesUsed,
   trialMessageWindowResetAtIso
 } from "../../../shared/billing/trialMessageWindow.ts";
@@ -15,6 +19,8 @@ export interface ProfileRow {
   ingests_used: number;
   ingest_limit: number;
   stripe_customer_id: string | null;
+  /** Set while the account is in a deletion / recovery window. */
+  deleted_at?: string | null;
   /** Start of the current 24h window for trial `messages_used` (trial tier only). */
   trial_message_window_started_at?: string | null;
   /** Set in DB only via service role / SQL; enables preview sandbox entitlements. */
@@ -115,8 +121,64 @@ async function resolveUserFromToken(
   return user;
 }
 
+export async function auditAccountAction(
+  admin: SupabaseClient,
+  payload: {
+    userId: string;
+    action: string;
+    request: Request;
+    metadata?: Record<string, unknown>;
+  }
+): Promise<void> {
+  const fwd = payload.request.headers.get("x-forwarded-for");
+  const rawIp =
+    fwd && fwd.length > 0 ? fwd.split(",")[0]?.trim() : payload.request.headers.get("cf-connecting-ip") ?? null;
+
+  await admin.from("account_action_audit").insert({
+    user_id: payload.userId,
+    action: payload.action,
+    ip: rawIp ?? null,
+    user_agent: payload.request.headers.get("user-agent") ?? null,
+    metadata: payload.metadata ?? {}
+  });
+}
+
+/** Rate limit destructive account endpoints (~10 calls / rolling hour per user id). */
+export async function enforceAccountDestructiveRateLimit(
+  admin: SupabaseClient,
+  userId: string
+): Promise<Response | null> {
+  const windowStart = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const maxPerHour = 10;
+
+  const { count, error } = await admin
+    .from("account_action_audit")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .gte("created_at", windowStart)
+    .like("action", "account_%");
+
+  if (error) {
+    console.warn("account audit rate query failed.", error.message);
+    return null;
+  }
+
+  if (typeof count === "number" && count >= maxPerHour) {
+    return new Response(JSON.stringify({ error: "Too many attempts. Try again later." }), {
+      status: 429,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json"
+      }
+    });
+  }
+
+  return null;
+}
+
 export async function requireUser(
-  request: Request
+  request: Request,
+  options: { allowDeleted?: boolean } = {}
 ): Promise<{ user: User; profile: ProfileRow; admin: SupabaseClient }> {
   const admin = getAdminClient();
   const token = getBearerToken(request);
@@ -138,10 +200,29 @@ export async function requireUser(
     throw profileError;
   }
 
+  const allowDeleted = options.allowDeleted === true;
+
   if (existingProfile) {
+    const profile = existingProfile as ProfileRow;
+    const deletedAt = profile.deleted_at ?? null;
+    if (deletedAt && !allowDeleted) {
+      throw new Response(
+        JSON.stringify({
+          error: "account_pending_deletion",
+          deleted_at: deletedAt
+        }),
+        {
+          status: 403,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
     return {
       user,
-      profile: existingProfile as ProfileRow,
+      profile,
       admin
     };
   }
@@ -159,14 +240,36 @@ export async function requireUser(
     throw insertError ?? new Error("Could not create a profile for the authenticated user.");
   }
 
+  const profile = createdProfile as ProfileRow;
+
+  if (profile.deleted_at && !allowDeleted) {
+    throw new Response(
+      JSON.stringify({
+        error: "account_pending_deletion",
+        deleted_at: profile.deleted_at
+      }),
+      {
+        status: 403,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  }
+
   return {
     user,
-    profile: createdProfile as ProfileRow,
+    profile,
     admin
   };
 }
 
-export function assertEntitlement(profile: ProfileRow, kind: "message" | "ingest"): void {
+export function assertEntitlement(
+  profile: ProfileRow,
+  kind: "message" | "ingest",
+  options?: { isAnonymousUser?: boolean }
+): void {
   // `x-trellis-preview-workspace` / body.previewWorkspace do not affect entitlement; only
   // `profile.is_admin` and subscription/BYOK state do (see docs/agents/entitlements.md).
 
@@ -199,7 +302,12 @@ export function assertEntitlement(profile: ProfileRow, kind: "message" | "ingest
           profile.trial_message_window_started_at ?? null
         )
       : profile.ingests_used;
-  const limit = kind === "message" ? profile.message_limit : profile.ingest_limit;
+  const limit =
+    kind === "message"
+      ? options?.isAnonymousUser
+        ? GUEST_MESSAGE_LIMIT
+        : profile.message_limit || FREE_ACCOUNT_MESSAGE_LIMIT
+      : profile.ingest_limit;
 
   if (used >= limit) {
     const resetAt =

@@ -6,15 +6,15 @@
 
 ## 0. What We're Building
 
-**Trellis** is a local-first AI knowledge desktop app for Windows, Mac, and Linux.
+**Trellis** is an AI knowledge product: **cloud-backed** Strands (interlinked notes), chat, and graph, with **Electron** as one client (Windows, Mac, Linux) and a **shared React SPA** that can also run in the browser when Supabase env vars are present.
 
 The core loop is simple:
-1. User chats with an AI assistant (model routed through Trellis's backend)
-2. After each conversation, a background agent extracts entities, claims, and concepts
-3. These are compiled into a persistent, interlinked markdown wiki stored on the user's machine
-4. The user browses their growing knowledge graph in real time — watching ideas connect
+1. User chats with an AI assistant (routed through **Supabase Edge Functions** with OpenAI / Anthropic)
+2. After conversation turns, **extraction** proposes durable updates; cloud sessions use **server-side** extraction (`chat-session-extract`) plus renderer apply; desktop-local workspaces may still use on-device extraction where enabled
+3. Strands are stored as **canonical rows** in Postgres (`notes`, `note_links`, …); markdown remains a useful **export/import** shape, not the sole source of truth
+4. The user browses the **knowledge graph** from cloud-backed link data
 
-The key insight: **AI conversations should compound, not evaporate.** Every chat makes the knowledge base richer. The wiki is a living artifact, not a chat log.
+The key insight: **AI conversations should compound, not evaporate.** Every chat can enrich the shared knowledge base. Strands are the living artifact, not the chat log.
 
 ---
 
@@ -22,22 +22,23 @@ The key insight: **AI conversations should compound, not evaporate.** Every chat
 
 | Layer | Technology | Rationale |
 |---|---|---|
-| Desktop shell | **Electron** (latest stable) | Cross-platform, mature ecosystem |
+| Clients | **Electron** + **Web** (Vite SPA; iOS via Capacitor planned) | Same React app; desktop adds IPC for shell and legacy/local tooling |
 | Frontend | **React 18 + TypeScript** | Type safety, component reuse |
 | Styling | **Tailwind CSS v3** + CSS variables | Utility-first, consistent theming |
 | State management | **Zustand** | Lightweight, no boilerplate |
-| Local persistence | **SQLite via better-sqlite3** (main process) | Fast, file-based, portable |
-| Markdown storage | **Local filesystem** (user-configured vault path) | Files owned by the user, git-compatible |
+| Cloud persistence | **Supabase Postgres + Storage** | RLS-scoped workspaces, `note-assets` / `source-files` / `exports` buckets |
+| Local persistence (desktop / migration) | **SQLite via better-sqlite3** (main process) | Legacy sessions, migration, preview seeds |
+| Markdown / vault files | **Local filesystem** (optional) | Import/export, Obsidian bridges, desktop vault UX during transition |
 | Graph visualization | **D3.js force graph** | Full control, no vendor lock |
-| PDF parsing | **pdf-parse** | Lightweight, no native deps |
+| PDF parsing | **pdf-parse** | Lightweight, no native deps (desktop ingest) |
 | Web clipping | **Readability.js** (Mozilla) | Same engine as Firefox Reader Mode |
 | IPC | Electron contextBridge + typed ipc channels | Secure renderer ↔ main communication |
-| Backend API | **Express + TypeScript** (separate Node service, deployed by founder) | Handles auth, billing, model routing |
-| Auth | **Clerk** (JWT, social login) | Fast to integrate, handles edge cases |
-| Billing | **Stripe** | Subscriptions, usage metering |
-| AI routing | **Anthropic SDK + OpenAI SDK** | Claude Sonnet 4 as default, GPT-4o as fallback |
+| Backend | **Supabase Edge Functions** (Deno) | Chat, chat-data, notes, graph, extraction, migration, billing hooks |
+| Auth | **Supabase Auth** | Sessions for web and desktop |
+| Billing | **Stripe** (via Supabase / Edge) | Subscriptions, usage metering |
+| AI routing | **Anthropic + OpenAI HTTP APIs** | Peer chat providers; parity and limits documented in UI where needed |
 
-> **No Python. No Rust. No native addons beyond better-sqlite3.** Keep the build simple.
+> **No Python. No Rust. No native addons beyond better-sqlite3** in the desktop shell. Keep the build simple.
 
 ---
 

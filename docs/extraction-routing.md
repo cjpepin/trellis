@@ -4,11 +4,13 @@ This document matches the product direction in [cloud-extraction-plan.md](cloud-
 
 ## Which model runs
 
-1. **Cloud chat sessions** (OpenAI / Anthropic chat models): when `TRELLIS_FEATURE_CLOUD_EXTRACTION=1`, extraction prefers **cheap cloud models** (see `cloudExtractionModels` in `shared/extraction/config.ts`) using the user’s **BYOK** API key from Settings. That path is the main way to reach strong **create / append / rewrite** judgment on long threads.
+1. **Cloud-backed chat (Supabase sessions):** the `chat-session-extract` Edge Function runs the same **cheap cloud extraction models** (`cloudExtractionModels` in `shared/extraction/config.ts`) using the user’s **BYOK** key from `provider_credentials`. The function returns structured JSON; the renderer applies writes via `useApplyExtraction` (shared guardrails). This path does not use `TRELLIS_FEATURE_CLOUD_EXTRACTION` in Electron; that flag still applies to **desktop-orchestrated** cloud extraction when local SQLite is canonical.
 
-2. **Local-only chat** (e.g. privacy mode or models that are not cloud-backed): extraction uses the **on-device** GGUF via `node-llama-cpp` (`embedded` provider). No transcript is sent to third-party APIs for that path.
+2. **Desktop cloud extraction (legacy flag):** when `TRELLIS_FEATURE_CLOUD_EXTRACTION=1`, the Electron orchestrator can prefer **cheap cloud models** using the user’s **BYOK** API key from Settings for sessions that are still stored locally. That path is the main way to reach strong **create / append / rewrite** judgment on long threads **before** full cloud cutover.
 
-3. **Fallback**: if cloud extraction is unavailable (missing key, rate limit, HTTP errors, offline), the app **falls back** to the same on-device model so something can still run.
+3. **Local-only chat** (e.g. privacy mode or models that are not cloud-backed): extraction uses the **on-device** GGUF via `node-llama-cpp` (`embedded` provider). No transcript is sent to third-party APIs for that path.
+
+4. **Fallback** (desktop orchestrator): if cloud extraction is unavailable (missing key, rate limit, HTTP errors, offline), the app **falls back** to the same on-device model so something can still run.
 
 The embedded stack is **not** expected to match cloud quality on difficult merges; it exists for **local-first**, **offline**, and **resilience**.
 
@@ -16,7 +18,7 @@ The embedded stack is **not** expected to match cloud quality on difficult merge
 
 | Variable | Default | Role |
 |----------|---------|--------|
-| `TRELLIS_FEATURE_CLOUD_EXTRACTION` | off (`0`) | When enabled with a valid session provider + API key, try cloud extraction first for cloud chat sessions. |
+| `TRELLIS_FEATURE_CLOUD_EXTRACTION` | off (`0`) | When enabled, the **Electron** orchestrator tries hosted extraction first for **locally stored** chat sessions (see item 2 above). Supabase-only sessions use `chat-session-extract` regardless. |
 | `TRELLIS_FEATURE_LOCAL_EXTRACTION` | on (`1`) | When off, disables on-device note processing entirely (no cloud fallback path for local extraction). |
 
 See `.env.example` and `AGENTS.md` for full env documentation.

@@ -131,7 +131,7 @@ test("notes editor persists tables, local link previews, and pasted images", asy
   await expect(editor.locator("img")).toHaveCount(1);
   await page.waitForTimeout(900);
 
-  const saved = await page.evaluate((slug) => window.trellis.vault.readNote(slug), noteSlug);
+  const saved = await page.evaluate((slug) => window.trellis.bucket.readNote(slug), noteSlug);
   expect(saved.content).toContain("https://example.com/research");
   expect(saved.content).toContain("<table");
   expect(saved.content).toMatch(/src="\.\.\/\.trellis-note-assets\/note-/);

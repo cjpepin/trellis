@@ -3,7 +3,7 @@ const test = require("node:test");
 const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
 const { scoreVaultNoteAgainstExtractionQuery } = require(
-  fromRepoRoot("electron", "lib", "extraction", "relatedNotesLexical.ts")
+  fromRepoRoot("apps", "desktop", "electron", "lib", "extraction", "relatedNotesLexical.ts")
 );
 
 function note(overrides) {

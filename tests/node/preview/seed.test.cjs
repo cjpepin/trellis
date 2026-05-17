@@ -8,8 +8,8 @@ const { fromRepoRoot } = require("../support/repo-paths.cjs");
 const seedDir = fromRepoRoot("fixtures", "preview-seed");
 const manifestPath = path.join(seedDir, "manifest.json");
 const databasePath = path.join(seedDir, "db.json");
-const wikiDir = path.join(seedDir, "vault", "wiki");
-const rawDir = path.join(seedDir, "vault", "raw");
+const wikiDir = path.join(seedDir, "bucket", "wiki");
+const rawDir = path.join(seedDir, "bucket", "raw");
 
 function listMarkdownFilesRecursive(rootPath) {
   const results = [];
@@ -50,7 +50,7 @@ test("preview seed fixture is complete and internally consistent", () => {
   const rawFiles = fs.readdirSync(rawDir).sort();
 
   assert.equal(manifest.version, "preview-v4");
-  assert.equal(manifest.vaultName, "Preview Vault");
+  assert.equal(manifest.bucketName, "Preview Vault");
   assert.equal(database.sessions.length, 18);
   assert.equal(wikiFiles.length, 42);
   assert.equal(rawFiles.length, 10);
@@ -117,8 +117,8 @@ test("preview seed fixture is complete and internally consistent", () => {
 const heavySeedDir = fromRepoRoot("fixtures", "preview-heavy-seed");
 const heavyManifestPath = path.join(heavySeedDir, "manifest.json");
 const heavyDatabasePath = path.join(heavySeedDir, "db.json");
-const heavyWikiDir = path.join(heavySeedDir, "vault", "wiki");
-const heavyRawDir = path.join(heavySeedDir, "vault", "raw");
+const heavyWikiDir = path.join(heavySeedDir, "bucket", "wiki");
+const heavyRawDir = path.join(heavySeedDir, "bucket", "raw");
 
 test("heavy preview seed fixture is complete and internally consistent", () => {
   const manifest = JSON.parse(fs.readFileSync(heavyManifestPath, "utf8"));
@@ -127,7 +127,7 @@ test("heavy preview seed fixture is complete and internally consistent", () => {
   const rawFiles = fs.readdirSync(heavyRawDir).sort();
 
   assert.equal(manifest.version, "preview-heavy-v1");
-  assert.equal(manifest.vaultName, "Heavy Preview Vault");
+  assert.equal(manifest.bucketName, "Heavy Preview Vault");
   assert.equal(wikiFiles.length, 750);
   assert.equal(rawFiles.length, 10);
   assert.ok(database.sessions.length >= 40);

@@ -3,13 +3,13 @@ const test = require("node:test");
 const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
 const { prepareExtractionWrite } = require(
-  fromRepoRoot("electron", "lib", "extraction", "guardrails.ts")
+  fromRepoRoot("packages", "contracts", "src", "extraction", "guardrails.ts")
 );
 const {
   buildAutomaticChatCaptureFallbackResponse,
   buildManualSaveFallbackResponse,
   shouldAutoCaptureStrandFromTranscript
-} = require(fromRepoRoot("electron", "lib", "extraction", "manualSaveFallback.ts"));
+} = require(fromRepoRoot("apps", "desktop", "electron", "lib", "extraction", "manualSaveFallback.ts"));
 
 test("manual save fallback body passes extraction guardrails", () => {
   const response = buildManualSaveFallbackResponse({
@@ -28,7 +28,7 @@ test("manual save fallback body passes extraction guardrails", () => {
       updatedAt: Date.now(),
       model: "gpt-4o-mini",
       messageCount: 2,
-      vaultId: "vault-1"
+      bucketId: "vault-1"
     },
     suggestedSessionTitle: "",
     existingSlugs: new Set(),
@@ -67,7 +67,7 @@ test("fallback note title ignores model session placeholders like Brief Chat", (
       updatedAt: Date.now(),
       model: "gpt-4o-mini",
       messageCount: 2,
-      vaultId: "vault-1"
+      bucketId: "vault-1"
     },
     suggestedSessionTitle: "Brief Chat",
     existingSlugs: new Set(),
@@ -94,7 +94,7 @@ test("automatic capture fallback also skips Brief Chat for note title", () => {
       updatedAt: Date.now(),
       model: "gpt-4o-mini",
       messageCount: 2,
-      vaultId: "vault-1"
+      bucketId: "vault-1"
     },
     suggestedSessionTitle: "Brief Chat",
     existingSlugs: new Set(),
@@ -127,7 +127,7 @@ test("fallback title avoids raw user-style session titles", () => {
       updatedAt: Date.now(),
       model: "gpt-4o-mini",
       messageCount: 2,
-      vaultId: "vault-1"
+      bucketId: "vault-1"
     },
     suggestedSessionTitle: "",
     existingSlugs: new Set(),
@@ -157,7 +157,7 @@ test("automatic idle fallback body passes guardrails and defaults to vault root"
       updatedAt: Date.now(),
       model: "gpt-4o-mini",
       messageCount: 2,
-      vaultId: "vault-1"
+      bucketId: "vault-1"
     },
     suggestedSessionTitle: "",
     existingSlugs: new Set(),

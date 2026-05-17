@@ -16,10 +16,21 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@electron/*": ["electron/*"],
-      "@shared/*": ["shared/*"]
+      "@/*": ["apps/web/src/*"],
+      "@electron/*": ["apps/desktop/electron/*"],
+      "@shared/*": ["packages/shared/src/*"],
+      "@trellis/shared/*": ["packages/shared/src/*"],
+      "@trellis/contracts": ["packages/contracts/src/index.ts"],
+      "@trellis/contracts/*": ["packages/contracts/src/*"]
     }
   },
-  "include": ["src", "electron", "shared", "tests/e2e", "vite.config.ts", "playwright.config.ts"]
+  "include": [
+    "apps/web/src",
+    "apps/desktop/electron",
+    "packages/shared/src",
+    "packages/contracts/src",
+    "tests/e2e",
+    "config/vite.config.ts",
+    "config/playwright.config.ts"
+  ]
 }

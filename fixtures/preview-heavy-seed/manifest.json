@@ -1,6 +1,6 @@
 {
   "version": "preview-heavy-v1",
-  "vaultName": "Heavy Preview Vault",
-  "vaultFolder": "vault",
+  "bucketName": "Heavy Preview Vault",
+  "bucketFolder": "bucket",
   "databaseFile": "db.json"
 }

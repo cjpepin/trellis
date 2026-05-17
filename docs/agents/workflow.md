@@ -25,8 +25,9 @@ Use `repo-refactor-agent` only as a separate maintenance or cleanup pass, not as
 
 ## Trellis-specific concerns to carry through every phase
 
-- Local-first behavior must remain useful when cloud services are unavailable.
-- Vault writes must stay within the configured vault boundary.
-- Renderer and main process responsibilities stay separated through typed IPC.
+- **Canonical data** for signed-in users lives in **Supabase** (Postgres + Storage + Edge Functions). Desktop IPC is for shell capabilities and legacy/local paths during migration—not for bypassing RLS or cloud contracts.
+- When cloud APIs fail, UX should **degrade clearly** (retry, sign-in, read-only where appropriate); do not assume offline SQLite/vault parity for cloud-primary flows.
+- Vault and SQLite writes on desktop must stay within **configured boundaries** and prefix checks where those code paths still run.
+- Renderer and main process responsibilities stay separated through typed IPC where Electron is involved.
 - Loading, empty, error, and degraded states are part of feature completeness.
 - Private message content and secrets must not leak to logs or cloud tables.

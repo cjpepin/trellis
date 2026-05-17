@@ -9,7 +9,7 @@ const test = require("node:test");
 const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
 const { validateExtractionResponse } = require(fromRepoRoot("shared", "extraction", "validate.ts"));
-const { prepareExtractionWrite } = require(fromRepoRoot("electron", "lib", "extraction", "guardrails.ts"));
+const { prepareExtractionWrite } = require(fromRepoRoot("packages", "contracts", "src", "extraction", "guardrails.ts"));
 const { extractKnowledgeHeuristic } = require(fromRepoRoot("shared", "extraction", "heuristicKnowledge.ts"));
 
 const marathonIndex = [

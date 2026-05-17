@@ -1,16 +1,17 @@
 # AGENTS.md
 
-This repository follows [`mvp.md`](/Users/connorpepin/Cursor/mnemo/mvp.md) as the product source of truth. The one intentional architectural change is that Supabase replaces the bespoke backend service: use Supabase Auth for identity, Postgres for account and billing state, and Edge Functions for AI chat, extraction, and webhook handling.
+This repository follows **[`docs/mvp.md`](docs/mvp.md)** as the product specification for agents. **Supabase** is the system of record for identity, billing, and the **cloud-backed** product dataset (workspaces, notes, chat, Strands metadata, provider keys, and preferences). Edge Functions implement chat, session extraction, notes CRUD, graph, migration import, and related HTTP APIs.
 
 ## Working Principles
 
-- Preserve the local-first contract. Chats persist in SQLite, notes live in the user’s vault, and the app remains useful when cloud services are unavailable.
+- **Cloud-first product data.** Signed-in users sync Strands (notes), chat sessions, graph links, and preferences through Postgres and Supabase Storage. Electron remains a **client**: IPC covers desktop-only capabilities (secure storage, filesystem pickers, local preview workspaces, legacy bucket-on-disk tooling). A **web** build can boot with `TrellisApiClient` + Supabase when `VITE_*` is configured; IPC-only flows still require the desktop app.
+- **Transition:** Local SQLite and on-disk bucket folders may still exist for migration and desktop-only paths until cutover is complete; new features should target the shared cloud layer (`src/lib/cloud/`, `shared/cloud/types.ts`, Edge Functions) unless explicitly desktop-scoped.
 - Treat UX as a feature. Empty states, loading states, error recovery, and first-run setup are part of the MVP, not polish.
 - Keep TypeScript in strict mode. Do not introduce `any`; use `unknown` and narrow at boundaries.
 - Favor small files with one primary export. Split helpers before functions become difficult to scan.
-- No inline styles. Tailwind classes plus `src/globals.css` variables only.
+- No inline styles. Tailwind classes plus `apps/web/src/globals.css` variables only.
 - Respect secure boundaries. The renderer never touches Node APIs directly; all privileged work goes through typed IPC.
-- Keep note writes inside the configured vault. Enforce prefix checks before every write or copy operation.
+- Keep note writes inside the configured bucket. Enforce prefix checks before every write or copy operation.
 
 ## Agent Workflow
 
@@ -21,19 +22,21 @@ This repository follows [`mvp.md`](/Users/connorpepin/Cursor/mnemo/mvp.md) as th
 
 ## Architecture Rules
 
-- Electron owns local capabilities: SQLite, vault reads and writes, secure token storage, PDF parsing, and web clipping.
+- Electron owns local capabilities: SQLite, bucket reads and writes, secure token storage, PDF parsing, and web clipping.
 - React owns presentation, route composition, and optimistic UX.
 - Zustand owns app state. Avoid prop drilling past two levels.
 - Supabase owns auth sessions, subscription metadata, usage counters, and AI orchestration through Edge Functions.
 - Prompts live only in `supabase/functions/_shared/prompts.ts`.
-- IPC channel names and payload contracts live only in `electron/ipc/types.ts`.
-- Default on-device extraction uses `node-llama-cpp` in the Electron main process against a single GGUF path under app user data (`embeddedExtractionGgufFilename` / `defaultLocalExtractionModelId` in `shared/extraction/config.ts`); weights are not bundled—first run downloads once (override URL with `TRELLIS_EMBEDDED_EXTRACTION_MODEL_URL`). The local extraction feature flag defaults **on**; set `TRELLIS_FEATURE_LOCAL_EXTRACTION=0` to disable on-device note processing entirely. Optional **cloud extraction** for sessions that already use OpenAI or Anthropic chat models is controlled with `TRELLIS_FEATURE_CLOUD_EXTRACTION` (default off); see [`docs/extraction-routing.md`](docs/extraction-routing.md). Dev eval against a running HTTP chat API: `npm run eval:extraction:ollama` (optional; override with `TRELLIS_EXTRACTION_MODEL`).
+- IPC channel names and payload contracts live in the **`@trellis/contracts`** package (`packages/contracts`, also re-exported from `apps/desktop/electron/ipc/types.ts` for the preload/main boundary).
+- **Strands extraction:** Cloud-backed chats run **server-side** session extraction via the `chat-session-extract` Edge Function (BYOK keys in `provider_credentials`); the renderer applies structured updates with the same guardrails as desktop (`useApplyExtraction`). On-device extraction via `node-llama-cpp` still exists for **local-only / desktop** workspaces (`embeddedExtractionGgufFilename` / `defaultLocalExtractionModelId` in `packages/shared/src/extraction/config.ts`); see [`docs/extraction-routing.md`](docs/extraction-routing.md). Dev eval: `pnpm run eval:extraction:ollama` (optional).
+- **Guest sessions (desktop + web):** When Supabase is configured and “stay signed in” is on, the client may create a **Supabase anonymous** session so users can use hosted chat within trial limits without an email. On **Electron personal**, Strands and chat history stay **local** until the user signs up and enables **cloud sync** (`settings.cloudSyncEnabled`, default on for registered users). The **web** client still uses the cloud workspace for guests (no browser local bucket yet). **Upgrading a guest** uses `supabase.auth.updateUser({ email, password })` so the **same user id** and **`profiles` row** (quota) stay tied to the account. Signing **in** with an existing email while still anonymous signs the anonymous session out first, then uses `signInWithPassword`. **`cloudSyncEnabled`** is also stored under **`user_preferences.platform_json`** (merged on PATCH) so multiple desktops can pick up the same toggle when cloud sync is active.
+- **Web vs Electron detection and Vite stub:** `apps/web/src/main.tsx` may install a rejecting `window.trellis` proxy for `pnpm run dev:web` in a plain browser. That stub sets `TRELLIS_VITE_DEV_STUB_MARK` on its target (see `apps/web/src/lib/platform/runtime.ts`). **`hasElectronPreloadBridge()`** treats the stub as non-Electron so web bootstrap always runs; do not detect desktop by “any truthy `window.trellis.*`” because nested proxies can lie. The real preload in `apps/desktop/electron/preload.ts` must never set that symbol. First-load bootstrap (web placeholder vs IPC `bootstrap()`, Supabase subscriptions, cleanup) lives in **`apps/web/src/lib/bootstrap/runInitialBootstrap.ts`**; `App.tsx` wires it into React state only.
 
 ### AI providers (OpenAI and Anthropic)
 
 Chat models from **OpenAI and Anthropic** are both first-class. Ancillary cloud features (speech, transcription, inline images, and similar) may be implemented against one vendor’s HTTP API behind Supabase Edge Functions today, but implementations must stay **easy to extend** and **honest about parity**.
 
-- **Avoid one-sided product and code assumptions.** Do not bake in “always OpenAI” or “always Anthropic” for shared user flows unless the capability is truly exclusive to that API. Prefer capability checks, shared IPC types, and neutral naming at boundaries (`electron/ipc/types.ts`, preload contracts).
+- **Avoid one-sided product and code assumptions.** Do not bake in “always OpenAI” or “always Anthropic” for shared user flows unless the capability is truly exclusive to that API. Prefer capability checks, shared IPC types (`@trellis/contracts`), preload contracts, and neutral naming at boundaries.
 - **Isolate provider-specific HTTP.** Keep vendor request bodies, headers, and parsing in dedicated server-side helpers or branches; keep Electron IPC and renderer types **provider-neutral** (audio bytes and MIME type, not raw OpenAI response shapes).
 - **Call out provider gaps in handoffs.** If a feature only works with a given key, plan, or API today, document that explicitly and what would be needed for the other provider or a second backend.
 - **Routing and prompts** that differ by provider belong alongside the Edge Function chat or media orchestration layer, not scattered through the React tree.
@@ -48,11 +51,11 @@ Chat models from **OpenAI and Anthropic** are both first-class. Ancillary cloud 
 
 ## Verification Expectations
 
-- Every behavior change must run `npm run check`.
+- Every behavior change must run `pnpm run check`.
 - Canonical automated verification commands are:
-  - `npm run test:node`
-  - `npm run test:e2e`
-  - `npm run verify`
+  - `pnpm run test:node`
+  - `pnpm run test:e2e`
+  - `pnpm run verify`
 - Pick the lightest useful layer for the risk, but do not skip automated coverage when the repo already has a suitable seam.
 - New UI behavior should extend Playwright E2E coverage when the flow is user-critical, regression-prone, or difficult to validate reliably through lower layers.
 
@@ -72,8 +75,8 @@ Chat models from **OpenAI and Anthropic** are both first-class. Ancillary cloud 
 
 ## Security And Boundaries
 
-- Keep renderer and main-process boundaries typed and centralized through `electron/ipc/types.ts` and the preload bridge.
-- Never widen vault write scope or bypass prefix validation.
+- Keep renderer and main-process boundaries typed and centralized through **`@trellis/contracts`** (desktop re-exports via `apps/desktop/electron/ipc/types.ts`) and the preload bridge.
+- Never widen bucket write scope or bypass prefix validation.
 - Treat auth sessions, provider keys, and filesystem access as sensitive paths that deserve narrow, explicit handling.
 - Never log raw secrets, provider keys, or private chat bodies to the console or cloud tables.
 

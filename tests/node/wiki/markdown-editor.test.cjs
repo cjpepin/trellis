@@ -77,3 +77,137 @@ test("renderWikiMarkdown preserves safe table sizing styles", () => {
   assert.match(rendered.html, /width: 120px/);
   assert.match(rendered.html, /Alpha/);
 });
+
+test("renderWikiMarkdown renders $$ display math with KaTeX", () => {
+  const rendered = renderWikiMarkdown("$$\n(AB)_{ij} = \\sum_{k=1}^{n} A_{ik} B_{kj}\n$$", new Set());
+
+  assert.match(rendered.html, /trellis-math-display/);
+  assert.match(rendered.html, /\bkatex\b/);
+  assert.match(rendered.html, /data-trellis-tex=/);
+});
+
+test("renderWikiMarkdown renders fenced latex code blocks as math", () => {
+  const rendered = renderWikiMarkdown(["```latex", "x^2 + y^2 = r^2", "```"].join("\n"), new Set());
+
+  assert.match(rendered.html, /trellis-math-display/);
+  assert.match(rendered.html, /data-trellis-math-origin="fence-latex"/);
+  assert.doesNotMatch(rendered.html, /<pre><code class="[^"]*language-latex/);
+});
+
+test("renderWikiMarkdown does not treat $$ inside fenced code as math", () => {
+  const rendered = renderWikiMarkdown(["```", "$$not-math$$", "```"].join("\n"), new Set());
+
+  assert.match(rendered.html, /\$\$not-math\$\$/);
+  assert.doesNotMatch(rendered.html, /trellis-math-display/);
+});
+
+test("htmlToMarkdown restores display math from trellis-math-display", () => {
+  const rendered = renderWikiMarkdown("$$\na+b\n$$", new Set());
+  const roundTrip = htmlToMarkdown(rendered.html);
+
+  assert.match(roundTrip, /\$\$\s*\na\+b\n\$\$/);
+});
+
+test("renderWikiMarkdown treats legacy AI bracket display blocks as math", () => {
+  const md = ["[", "(AB)_{ij} = \\sum_{k=1}^{n} A_{ik} B_{kj}", "]"].join("\n");
+  const rendered = renderWikiMarkdown(md, new Set());
+
+  assert.match(rendered.html, /trellis-math-display/);
+  assert.match(rendered.html, /\bkatex\b/);
+});
+
+test("renderWikiMarkdown renders undelimited \\begin{bmatrix}…\\end{bmatrix}", () => {
+  const md = "A=\\begin{bmatrix} 1 & 2 \\\\ 3 & 4 \\end{bmatrix}";
+  const rendered = renderWikiMarkdown(md, new Set());
+
+  assert.match(rendered.html, /trellis-math-display/);
+  assert.match(rendered.html, /\bkatex\b/);
+});
+
+test("renderWikiMarkdown merges $…\\begin{bmatrix}…\\end{bmatrix}…$ into one display (OpenAI-style)", () => {
+  const md = "$A = \\begin{bmatrix}1 & 2 \\\\ 3 & 4\\end{bmatrix}$";
+  const rendered = renderWikiMarkdown(md, new Set());
+  assert.doesNotMatch(rendered.html, /katex-error/);
+  assert.match(rendered.html, /trellis-math-display/);
+  assert.doesNotMatch(rendered.html, /TRELLIS_MATH_S/);
+});
+
+test("renderWikiMarkdown merges multiline $…$ around bmatrix (newlines before \\begin)", () => {
+  const md = [
+    "$A = ",
+    "",
+    " \\begin{bmatrix}1 & 2 \\\\ 3 & 4\\end{bmatrix}$"
+  ].join("\n");
+  const rendered = renderWikiMarkdown(md, new Set());
+  assert.doesNotMatch(rendered.html, /katex-error/);
+  assert.match(rendered.html, /trellis-math-display/);
+});
+
+test("renderWikiMarkdown merges three $…bmatrix…$ in example + = pattern", () => {
+  const inner = "\\begin{bmatrix}1&0\\\\0&1\\end{bmatrix}";
+  const md = "Example: $" + inner + "$ + $" + inner + "$ = $" + inner + "$";
+  const rendered = renderWikiMarkdown(md, new Set());
+  assert.doesNotMatch(rendered.html, /katex-error/);
+  assert.equal((rendered.html.match(/trellis-math-display/g) ?? []).length, 3);
+});
+
+test("renderWikiMarkdown stashes \\begin in a single $$…$$ block (no KaTeX on TRELLIS_* placeholders)", () => {
+  const inner = "\\begin{bmatrix}1&0\\\\0&1\\end{bmatrix}";
+  const md = "$$" + inner + " + " + inner + " = " + inner + "$$";
+  const rendered = renderWikiMarkdown(md, new Set());
+  assert.doesNotMatch(rendered.html, /katex-error/);
+  assert.doesNotMatch(rendered.html, /TRELLIS_MATH_S/);
+  assert.equal((rendered.html.match(/trellis-math-display/g) ?? []).length, 3);
+});
+
+test("renderWikiMarkdown normalizes bogus single-backslash row breaks (avoids red KaTeX error HTML)", () => {
+  const md = "A=\\begin{bmatrix}1 & 2 & 3\\\n4 & 5 & 6\\end{bmatrix}";
+  const rendered = renderWikiMarkdown(md, new Set());
+
+  assert.doesNotMatch(rendered.html, /katex-error/);
+  assert.match(rendered.html, /\bkatex\b/);
+});
+
+test("renderWikiMarkdown decodes HTML entities inside LaTeX before KaTeX", () => {
+  const md = "A=\\begin{bmatrix}1 &amp; 2 &amp; 3 \\\\ 4 &amp; 5 &amp; 6\\end{bmatrix}";
+  const rendered = renderWikiMarkdown(md, new Set());
+
+  assert.doesNotMatch(rendered.html, /katex-error/);
+  assert.match(rendered.html, /\bkatex\b/);
+});
+
+test("renderWikiMarkdown does not leave math slot stubs in output", () => {
+  const md = ["$$x+1$$", "", "Inline $y$ here."].join("\n");
+  const rendered = renderWikiMarkdown(md, new Set());
+
+  assert.doesNotMatch(rendered.html, /data-trellis-math-slot=/);
+  assert.doesNotMatch(rendered.html, /TRELLIS_MATH_S_\d+_(?:BLK|INL)/);
+  assert.doesNotMatch(rendered.html, /trellis-math:blk:/);
+  assert.doesNotMatch(rendered.html, /trellis-math:inl:/);
+});
+
+test("renderWikiMarkdown strips leaked stubs with unicode minus / glued div (persisted bad markup)", () => {
+  const md = ["Hello", '<divdata\u2212trellis\u2212math\u2212slot="0"></div>', "tail"].join("\n");
+  const rendered = renderWikiMarkdown(md, new Set());
+
+  assert.doesNotMatch(rendered.html, /trellis-math-slot/i);
+  assert.doesNotMatch(rendered.html, /\u2212trellis/);
+});
+
+test("renderWikiMarkdown removes glued div stub that marked escapes as entities (A=<divdata-…)", () => {
+  const md = 'A=<divdata-trellis-math-slot="0"></div>';
+  const rendered = renderWikiMarkdown(md, new Set());
+
+  assert.doesNotMatch(rendered.html, /trellis-math-slot/i);
+  assert.doesNotMatch(rendered.html, /divdata-trellis/);
+  assert.doesNotMatch(rendered.html, /&lt;div/);
+  assert.match(rendered.html, /A=/);
+});
+
+test("renderWikiMarkdown removes tab-indented legacy <!-- trellis-math:… --> left as entity text by marked", () => {
+  const md = "\t<!-- trellis-math:blk:0 -->\n";
+  const rendered = renderWikiMarkdown(md, new Set());
+  assert.doesNotMatch(rendered.html, /&lt;!--/);
+  assert.doesNotMatch(rendered.html, /TRELLIS_MATH_S/);
+  assert.doesNotMatch(rendered.html, /trellis-math:blk/);
+});

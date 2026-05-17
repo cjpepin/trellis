@@ -12,7 +12,7 @@ const {
   renderNoteSections,
   splitConnectedNotesFromBody,
   stripGfmPipeTables
-} = require(fromRepoRoot("electron", "lib", "extraction", "mergeNote.ts"));
+} = require(fromRepoRoot("packages", "contracts", "src", "extraction", "mergeNote.ts"));
 
 test("parseNoteSections round-trips simple headings", () => {
   const md = ["Intro line", "", "## One", "", "Body one", "", "### Two", "", "Nested"].join("\n");

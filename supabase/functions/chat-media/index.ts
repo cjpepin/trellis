@@ -7,6 +7,7 @@ import {
 } from "../_shared/auth.ts";
 import { corsHeaders } from "../_shared/http.ts";
 import { assertMaxJsonBodyBytes, readJsonBodyWithByteLimit } from "../_shared/requestLimits.ts";
+import { getStoredProviderCredentialSecret } from "../_shared/cloud.ts";
 
 function readEnvironmentValue(name: string): string | undefined {
   const deno = (globalThis as { Deno?: { env?: { get: (key: string) => string | undefined } } })
@@ -24,7 +25,11 @@ function readEnvironmentValue(name: string): string | undefined {
   return undefined;
 }
 
-function resolveOpenAiApiKey(request: Request): string | null {
+async function resolveOpenAiApiKey(
+  admin: SupabaseClient,
+  request: Request,
+  userId: string
+): Promise<string | null> {
   const billingMode = request.headers.get("x-trellis-billing-mode");
 
   if (billingMode === "byok") {
@@ -33,6 +38,10 @@ function resolveOpenAiApiKey(request: Request): string | null {
 
     if (provider === "openai" && providerApiKey) {
       return providerApiKey;
+    }
+
+    if (provider === "openai") {
+      return getStoredProviderCredentialSecret(admin, userId, "openai");
     }
 
     return null;
@@ -105,11 +114,13 @@ Deno.serve(async (request) => {
     assertMaxJsonBodyBytes(request);
     const { user, profile, admin } = await requireUser(request);
     const previewWorkspaceRequest = request.headers.get("x-trellis-preview-workspace") === "1";
-    assertEntitlement(profile, "message");
+    assertEntitlement(profile, "message", {
+      isAnonymousUser: user.is_anonymous === true
+    });
 
     const body = (await readJsonBodyWithByteLimit(request)) as Record<string, unknown>;
     const action = typeof body.action === "string" ? body.action : "";
-    const apiKey = resolveOpenAiApiKey(request);
+    const apiKey = await resolveOpenAiApiKey(admin, request, user.id);
 
     if (!apiKey) {
       throw new Response(

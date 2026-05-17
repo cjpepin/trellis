@@ -8,7 +8,7 @@ const wikiDir = path.join(vaultDir, "wiki");
 const rawDir = path.join(vaultDir, "raw");
 
 const baseDate = new Date("2026-04-01T16:00:00.000Z");
-const previewVaultId = "preview-main-vault";
+const previewVaultId = "preview-main-bucket";
 const noteFolderBySlug = {
   "ship-room-routine": "playbooks",
   "customer-advisory-cadence": "research",
@@ -505,7 +505,7 @@ function generateSessions() {
         createdAt,
         updatedAt: messages.at(-1).createdAt,
         model,
-        vaultId: previewVaultId
+        bucketId: previewVaultId
       },
       messages
     };
@@ -539,8 +539,8 @@ function generateStandardPreviewSeed() {
     `${JSON.stringify(
         {
         version: "preview-v4",
-        vaultName: "Preview Vault",
-        vaultFolder: "vault",
+        bucketName: "Preview Vault",
+        bucketFolder: "vault",
         databaseFile: "db.json"
       },
       null,
@@ -794,7 +794,7 @@ function generateHeavySessions(ledgerCount) {
         createdAt,
         updatedAt: messages.at(-1).createdAt,
         model,
-        vaultId: heavyPreviewVaultId
+        bucketId: heavyPreviewVaultId
       },
       messages
     };
@@ -833,8 +833,8 @@ function generateHeavyPreviewSeed() {
     `${JSON.stringify(
       {
         version: "preview-heavy-v1",
-        vaultName: "Heavy Preview Vault",
-        vaultFolder: "vault",
+        bucketName: "Heavy Preview Vault",
+        bucketFolder: "vault",
         databaseFile: "db.json"
       },
       null,

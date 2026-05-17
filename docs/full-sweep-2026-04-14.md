@@ -28,7 +28,7 @@ Highest-leverage next step: gate `previewWorkspaceRequest` on a server-verified 
 
 ### Layer 1 — Trust boundaries
 Files substantively reviewed:
-- `electron/main.ts`, `electron/preload.ts`, `electron/ipc/index.ts`, `electron/ipc/auth.ts`, `electron/ipc/chat.ts`, `electron/ipc/vault.ts` (partial — 600 of ~2000 lines), `electron/ipc/extraction.ts`, `electron/ipc/app.ts`, `electron/ipc/billing.ts`, `electron/ipc/thoughts.ts`
+- `electron/main.ts`, `electron/preload.ts`, `electron/ipc/index.ts`, `electron/ipc/auth.ts`, `electron/ipc/chat.ts`, `electron/ipc/bucket.ts` (partial — 600 of ~2000 lines), `electron/ipc/extraction.ts`, `electron/ipc/app.ts`, `electron/ipc/billing.ts`, `electron/ipc/thoughts.ts`
 - `electron/lib/fetchSafe.ts`, `electron/lib/externalShell.ts`
 - `shared/shell/externalHttpsUrl.ts`
 
@@ -37,10 +37,10 @@ Architecture note: The renderer process runs with `contextIsolation: true`, `nod
 | # | Severity | File | Issue | Why it matters | Fix | Test |
 |---|---|---|---|---|---|---|
 | 1 | P2 | `electron/lib/fetchSafe.ts` | DNS rebinding TOCTOU: address resolution happens once, then `fetch` makes its own resolution. An attacker-controlled domain can resolve to a public IP during the check and a link-local/loopback on the second query. | Renderer cannot directly call `fetchSafe`, but main-process usages from user-supplied URLs (e.g. ingest web page) could be tricked into localhost scans. | Use a low-level HTTP agent that reuses the resolved IP from the pre-flight check, or enforce a post-fetch check on the socket’s `remoteAddress`. | Add an integration test that serves a multi-A record with 1.1.1.1 + 127.0.0.1 and asserts the second fetch is blocked. |
-| 2 | P3 | `electron/ipc/vault.ts` line ~49 | `folderPathSchema` rejects `..` and absolute paths but does not reject a trailing slash or Windows drive letter (`C:/…`). | Defence-in-depth; `ensureInsideVault` still catches it, but schema-level rejection would fail loudly earlier. | Add `.refine((v) => !/^[a-zA-Z]:[\\/]/.test(v) && !v.endsWith("/"))`. | Unit test the schema with `"C:/foo"` and `"foo/"`. |
+| 2 | P3 | `electron/ipc/bucket.ts` line ~49 | `folderPathSchema` rejects `..` and absolute paths but does not reject a trailing slash or Windows drive letter (`C:/…`). | Defence-in-depth; `ensureInsideVault` still catches it, but schema-level rejection would fail loudly earlier. | Add `.refine((v) => !/^[a-zA-Z]:[\\/]/.test(v) && !v.endsWith("/"))`. | Unit test the schema with `"C:/foo"` and `"foo/"`. |
 | 3 | P3 | `electron/preload.ts` | None found — preload surface is minimal and fully wrapped through `contextBridge.exposeInMainWorld`. | — | — | — |
 
-Files listed but not line-by-line examined (insufficient time in window): full body of `electron/ipc/vault.ts` (lines 600–2000), `electron/ipc/billing.ts`, `electron/lib/externalShell.ts`. Schemas in those files are short and follow the same Zod pattern as the vault file.
+Files listed but not line-by-line examined (insufficient time in window): full body of `electron/ipc/bucket.ts` (lines 600–2000), `electron/ipc/billing.ts`, `electron/lib/externalShell.ts`. Schemas in those files are short and follow the same Zod pattern as the vault file.
 
 ### Layer 2 — Local-first core
 Files substantively reviewed:
@@ -56,7 +56,7 @@ Architecture note: SQLite runs in WAL mode with `foreign_keys=ON`. All queries a
 ### Layer 3 — Shared contracts
 Files substantively reviewed:
 - `shared/extraction/contracts.ts`, `shared/extraction/validate.ts`, `shared/extraction/config.ts`, `shared/extraction/wikiLinks.ts`, `shared/extraction/jsonSchema.ts`, `shared/extraction/buildPrompt.ts`, `shared/extraction/localModelInstall.ts`
-- `shared/vault/folderPath.ts`
+- `shared/bucket/folderPath.ts`
 - `shared/shell/externalHttpsUrl.ts`
 - `shared/chat/*.ts` (capabilities, formatMessage, attachmentLimits, deriveSessionTitle, vaultIndex, inferChatComplexity, assistantDraftCleanup, privacyVaultIntent, replyContext)
 - `shared/billing/trialMessageWindow.ts`
@@ -118,7 +118,7 @@ Architecture note: Zustand stores for auth, chat, and wiki state. IPC calls go t
 |---|---|---|---|---|---|---|
 | 20 | P2 | `src/lib/chatTranscriptFind.ts` `markdownWithTranscriptFindMark` | Injects raw HTML `<mark>…</mark>` into the markdown stream. Match text is HTML-escaped, but the surrounding markdown is not — splitting inside code fences or math blocks produces `<mark>` inside `<pre>` which the renderer treats literally. | Find-in-transcript produces unexpected rendering when the query lands inside fenced code. Authors acknowledge the tradeoff in the comment. | Detect fence state before injecting: skip match positions inside ``` ``` ``` regions, or render highlights as a client-side overlay that doesn't mutate the markdown. | Add test asserting a query inside a fenced code block is either skipped or renders as a span rather than literal `<mark>`. |
 | 21 | P2 | `src/hooks/useStream.ts` | Local-mode path calls `window.trellis.chat.runLocalReply` and then splits the full reply on whitespace to fake a stream. Same problem as the cloud fake-SSE. | Local reply already takes seconds for a 3B model — users see nothing until completion, then a delayed typewriter. | Have the main-process local provider emit token events over IPC as they stream out of `node-llama-cpp`, then `useStream` consumes them like the cloud path. | E2E timing test. |
-| 22 | P3 | `src/hooks/useApplyExtraction.ts` | `await window.trellis.vault.listIndex(options.vaultId)` is called unconditionally after applying updates, even when zero updates landed. | Extra IPC round-trip and store replacement on no-op. | Early-return before `shouldRefreshIndex` when `appliedUpdateCount === 0`. | Unit test with a mock `window.trellis`. |
+| 22 | P3 | `src/hooks/useApplyExtraction.ts` | `await window.trellis.bucket.listIndex(options.bucketId)` is called unconditionally after applying updates, even when zero updates landed. | Extra IPC round-trip and store replacement on no-op. | Early-return before `shouldRefreshIndex` when `appliedUpdateCount === 0`. | Unit test with a mock `window.trellis`. |
 | 23 | P3 | `src/components/chat/ChatTranscriptFindBar.tsx` | Clean. Minor nit: `labelId` from `useId()` is used for `aria-labelledby` but the `<span>` with that id is sr-only — fine, but the input itself also has a placeholder which becomes the accessible name via labelledby precedence. | — | — | — |
 
 ### Layer 7 — Tests & automation
@@ -234,7 +234,7 @@ Listed / surveyed but not line-by-line reviewed (recorded as "needs follow-up" f
 All files flagged as "not line-by-line reviewed" in the first pass were read end-to-end:
 
 **IPC handlers (full review):**
-- `electron/ipc/vault.ts` (all 1455 lines) — Every handler validates via Zod, every path uses `ensureInsideVault`. Graph building, Obsidian import/export, folder CRUD, note assets are all clean. `findNotePathBySlug` calls `readAllNotes` each time (linear scan), which is O(n) per note lookup; acceptable for small vaults but may need an index cache for 1000+ note vaults. No new findings.
+- `electron/ipc/bucket.ts` (all 1455 lines) — Every handler validates via Zod, every path uses `ensureInsideVault`. Graph building, Obsidian import/export, folder CRUD, note assets are all clean. `findNotePathBySlug` calls `readAllNotes` each time (linear scan), which is O(n) per note lookup; acceptable for small vaults but may need an index cache for 1000+ note vaults. No new findings.
 - `electron/ipc/db.ts` (197 lines) — 13 IPC handlers, all Zod-validated. `messageSchema` uses `.superRefine` to require at least one of text/attachment/media/noteAction. Clean.
 - `electron/ipc/media.ts` (all 340 lines) — Zod-validated, BYOK key passthrough via `x-trellis-provider-key` header. `isAppPreviewWorkspace(workspaceId)` gates setting `x-trellis-preview-workspace: "1"` — this is properly scoped to the main process's workspace state (not user-controlled), so the renderer cannot forge it independently.
 - `electron/ipc/ingest.ts` (200 lines) — `assertPublicHostname` calls `dns/promises.lookup()` before each redirect hop, rejecting private addresses. Still has the TOCTOU gap noted in finding #1 (fetch re-resolves DNS), but defense-in-depth with `fetchSafe` makes exploitation harder. Clean otherwise.
@@ -255,8 +255,8 @@ All files flagged as "not line-by-line reviewed" in the first pass were read end
 
 | # | Severity | File | Issue | Why it matters | Fix | Test |
 |---|---|---|---|---|---|---|
-| 28 | P2 | `electron/ipc/vault.ts` `findNotePathBySlug` | Calls `readAllNotes` (full vault walk + parse) on every single-note lookup. Operations like `writeNoteFile` and `readNoteOrCreateIfMissing` trigger this, creating O(n) reads per note write during extraction. | Extraction processing n updates × full-vault walk = O(n²) filesystem reads. Acceptable for small vaults (<200 notes) but will degrade at scale. | Cache note paths in memory after the first vault walk; invalidate on write/delete/folder rename. Or use a slug-to-path SQLite index. | Benchmark with a 500-note fixture vault. |
-| 29 | P2 | `electron/ipc/vault.ts` `buildSnapshot` | Calls `walkWikiTree` twice (once in `readAllNotes`, once directly for folder paths), then `buildGraph` twice (once inside `readAllNotes` via side-effect, once explicitly). | Doubles the filesystem and computation work on every index refresh. | Merge into a single call: `readAllNotes` should return `{ notes, folderPaths }` and `buildSnapshot` should call `buildGraph` once. | Profile `vault.listIndex` latency with a 300-note vault and confirm ≤50% improvement. |
+| 28 | P2 | `electron/ipc/bucket.ts` `findNotePathBySlug` | Calls `readAllNotes` (full vault walk + parse) on every single-note lookup. Operations like `writeNoteFile` and `readNoteOrCreateIfMissing` trigger this, creating O(n) reads per note write during extraction. | Extraction processing n updates × full-vault walk = O(n²) filesystem reads. Acceptable for small vaults (<200 notes) but will degrade at scale. | Cache note paths in memory after the first vault walk; invalidate on write/delete/folder rename. Or use a slug-to-path SQLite index. | Benchmark with a 500-note fixture vault. |
+| 29 | P2 | `electron/ipc/bucket.ts` `buildSnapshot` | Calls `walkWikiTree` twice (once in `readAllNotes`, once directly for folder paths), then `buildGraph` twice (once inside `readAllNotes` via side-effect, once explicitly). | Doubles the filesystem and computation work on every index refresh. | Merge into a single call: `readAllNotes` should return `{ notes, folderPaths }` and `buildSnapshot` should call `buildGraph` once. | Profile `vault.listIndex` latency with a 300-note vault and confirm ≤50% improvement. |
 | 30 | P3 | `src/routes/Chat.tsx` | `readAloudAutoPlay` + `stopReadAloud` share mutable refs (`readAloudStreamGenRef`, `readAloudPlaybackRef`) across the auto-play path (line ~1041) and the manual-play path (line ~1971). Both paths correctly guard with the generation counter, but the pattern is fragile — extracting a `useReadAloud` hook would centralize the invariant. | Not a bug today, but a maintenance hazard as more TTS features land. | Extract a `useReadAloud` hook that owns the ref, start, stop, and generation-counter logic. | Covered by existing manual testing of read-aloud toggle. |
 
 **Coverage summary after second pass:**

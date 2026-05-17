@@ -6,7 +6,7 @@ const test = require("node:test");
 const { fromRepoRoot } = require("../support/repo-paths.cjs");
 
 const { hasDirectNoteActionIntent, proposeChatNoteActions } = require(
-  fromRepoRoot("electron", "lib", "chat", "noteActions.ts")
+  fromRepoRoot("apps", "desktop", "electron", "lib", "chat", "noteActions.ts")
 );
 
 function makeMessage(role, content) {
@@ -17,18 +17,19 @@ function makeMessage(role, content) {
   };
 }
 
-function makeSettings(vaultPath) {
+function makeSettings(bucketPath) {
   return {
-    vaults: [
+    buckets: [
       {
         id: "vault-1",
-        name: "Test Vault",
-        path: vaultPath
+        name: "Test bucket",
+        path: bucketPath
       }
     ],
-    activeVaultId: "vault-1",
+    activeBucketId: "vault-1",
     theme: "dark",
     rememberSession: true,
+    cloudSyncEnabled: true,
     chat: {
       privacyMode: "auto"
     },
@@ -49,10 +50,10 @@ test("hasDirectNoteActionIntent does not treat bare affirmations as save intent"
 });
 
 test("proposeChatNoteActions merges assistant draft into pinned note", async () => {
-  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-pinned-"));
+  const bucketPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-pinned-"));
 
   try {
-    const wikiPath = path.join(vaultPath, "wiki");
+    const wikiPath = path.join(bucketPath, "wiki");
     fs.mkdirSync(wikiPath, { recursive: true });
     fs.writeFileSync(
       path.join(wikiPath, "roadmap.md"),
@@ -80,10 +81,10 @@ test("proposeChatNoteActions merges assistant draft into pinned note", async () 
     );
     const user = makeMessage("user", "Save that into my wiki note please");
     const result = await proposeChatNoteActions(
-      () => makeSettings(vaultPath),
+      () => makeSettings(bucketPath),
       {
         mode: "local",
-        vaultId: "vault-1",
+        bucketId: "vault-1",
         pinnedNoteSlugs: ["roadmap"],
         messages: [opener, assistant, user]
       }
@@ -95,15 +96,15 @@ test("proposeChatNoteActions merges assistant draft into pinned note", async () 
     assert.equal(result.actions[0].targetSlug, "roadmap");
     assert.match(result.actions[0].afterMarkdown, /New section from chat/);
   } finally {
-    fs.rmSync(vaultPath, { recursive: true, force: true });
+    fs.rmSync(bucketPath, { recursive: true, force: true });
   }
 });
 
 test("proposeChatNoteActions proposes update for active note when user says this note", async () => {
-  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-active-"));
+  const bucketPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-active-"));
 
   try {
-    const wikiPath = path.join(vaultPath, "wiki");
+    const wikiPath = path.join(bucketPath, "wiki");
     fs.mkdirSync(wikiPath, { recursive: true });
     fs.writeFileSync(
       path.join(wikiPath, "focus.md"),
@@ -126,10 +127,10 @@ test("proposeChatNoteActions proposes update for active note when user says this
     const assistant = makeMessage("assistant", "## Addendum\n\nMore from the thread.");
     const user = makeMessage("user", "Save changes to the active note");
     const result = await proposeChatNoteActions(
-      () => makeSettings(vaultPath),
+      () => makeSettings(bucketPath),
       {
         mode: "local",
-        vaultId: "vault-1",
+        bucketId: "vault-1",
         activeNoteSlug: "focus",
         messages: [opener, assistant, user]
       }
@@ -139,48 +140,48 @@ test("proposeChatNoteActions proposes update for active note when user says this
     assert.equal(result.actions[0].kind, "update_note");
     assert.equal(result.actions[0].targetSlug, "focus");
   } finally {
-    fs.rmSync(vaultPath, { recursive: true, force: true });
+    fs.rmSync(bucketPath, { recursive: true, force: true });
   }
 });
 
 test("proposeChatNoteActions returns no actions without pins or active-note targeting", async () => {
-  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-none-"));
+  const bucketPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-none-"));
 
   try {
     const opener = makeMessage("user", "Draft something.");
     const assistant = makeMessage("assistant", "## Draft\n\nHello.");
     const user = makeMessage("user", "Save that to a note");
     const result = await proposeChatNoteActions(
-      () => makeSettings(vaultPath),
+      () => makeSettings(bucketPath),
       {
         mode: "local",
-        vaultId: "vault-1",
+        bucketId: "vault-1",
         messages: [opener, assistant, user]
       }
     );
 
     assert.equal(result.actions.length, 0);
   } finally {
-    fs.rmSync(vaultPath, { recursive: true, force: true });
+    fs.rmSync(bucketPath, { recursive: true, force: true });
   }
 });
 
 test("proposeChatNoteActions does not propose without paired assistant draft", async () => {
-  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-solo-"));
+  const bucketPath = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-note-action-solo-"));
 
   try {
     const user = makeMessage("user", "Update [[Roadmap]] to include approvals.");
     const result = await proposeChatNoteActions(
-      () => makeSettings(vaultPath),
+      () => makeSettings(bucketPath),
       {
         mode: "auto",
-        vaultId: "vault-1",
+        bucketId: "vault-1",
         messages: [user]
       }
     );
 
     assert.equal(result.actions.length, 0);
   } finally {
-    fs.rmSync(vaultPath, { recursive: true, force: true });
+    fs.rmSync(bucketPath, { recursive: true, force: true });
   }
 });

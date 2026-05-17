@@ -1,27 +1,40 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { dismissLocalNoteProcessorFirstRun, expect, test, selectWorkspace } from "./fixtures";
+
+function commandPaletteShortcut(mod: "Meta" | "Control"): string {
+  return `${mod}+k`;
+}
 
 test("switches workspace modes and shows logged-out chat fallback", async ({ page }) => {
   await selectWorkspace(page, "preview");
 
   await page.getByTestId("sidebar-nav-settings").click();
   await expect(page.getByTestId("route-settings")).toBeVisible();
-  await expect(page.getByTestId("reset-preview-workspace")).toBeVisible();
 
-  await page.getByTestId("workspace-switch-personal").click();
+  const mod = os.platform() === "darwin" ? "Meta" : "Control";
+  await page.keyboard.press(commandPaletteShortcut(mod));
+  await page.getByPlaceholder(/Search Strands/i).waitFor({ state: "visible" });
+  await page.getByText("Switch to Personal workspace").click();
   await dismissLocalNoteProcessorFirstRun(page);
-  await expect(page.getByTestId("route-settings")).toBeVisible();
-  await expect(page.getByTestId("reset-preview-workspace")).toHaveCount(0);
+  await page.getByTestId("sidebar-nav-settings").click();
+  await expect(page.getByTestId("settings-workspace-mode")).toHaveCount(0);
 
+  await page.keyboard.press(commandPaletteShortcut(mod));
+  await page.getByText("Switch to Preview workspace").click();
   await dismissLocalNoteProcessorFirstRun(page);
-  await page.getByTestId("workspace-switch-preview").click();
-  await dismissLocalNoteProcessorFirstRun(page);
-  await expect(page.getByTestId("reset-preview-workspace")).toBeVisible();
 
   await page.getByTestId("sidebar-nav-chat").click();
   await expect(page.getByTestId("route-chat")).toBeVisible();
-  await expect(page.getByTestId("chat-auth-banner")).toBeVisible();
+  const composer = page.getByPlaceholder("What are you thinking about?");
+  const authBanner = page.getByTestId("chat-auth-banner");
+  // Guest auto sign-in (Supabase anonymous) enables chat without the banner; without Supabase the banner stays up.
+  if (await authBanner.isVisible()) {
+    await expect(composer).toBeDisabled();
+  } else {
+    await expect(composer).toBeEnabled();
+  }
 });
 
 test("imports from and exports to an Obsidian vault from settings", async ({

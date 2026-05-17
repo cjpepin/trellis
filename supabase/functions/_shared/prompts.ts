@@ -1,4 +1,4 @@
-import { WIKI_NOTE_INDEX_MEMORY_TITLE } from "../../../shared/chat/vaultIndex.ts";
+import { WIKI_NOTE_INDEX_MEMORY_TITLE } from "../../../shared/chat/bucketIndex.ts";
 
 export interface ChatPromptReference {
   type: "note" | "memory";

@@ -1,0 +1,7 @@
+/chat /app/chat 302
+/thoughts /app/thoughts 302
+/notes /app/notes 302
+/wiki /app/notes 302
+/graph /app/graph 302
+/settings /app/settings 302
+/* /index.html 200

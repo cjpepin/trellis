@@ -6,7 +6,7 @@
       "createdAt": 1760284800000,
       "updatedAt": 1760285070000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-000000000002",
@@ -14,7 +14,7 @@
       "createdAt": 1761235200000,
       "updatedAt": 1761235470000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-000000000003",
@@ -22,7 +22,7 @@
       "createdAt": 1762185600000,
       "updatedAt": 1762185870000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-000000000004",
@@ -30,7 +30,7 @@
       "createdAt": 1763136000000,
       "updatedAt": 1763136270000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-000000000005",
@@ -38,7 +38,7 @@
       "createdAt": 1764000000000,
       "updatedAt": 1764000270000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-000000000006",
@@ -46,7 +46,7 @@
       "createdAt": 1764864000000,
       "updatedAt": 1764864270000,
       "model": "claude-3-7-sonnet-latest",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-000000000007",
@@ -54,7 +54,7 @@
       "createdAt": 1765728000000,
       "updatedAt": 1765728270000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-000000000008",
@@ -62,7 +62,7 @@
       "createdAt": 1766678400000,
       "updatedAt": 1766678670000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-000000000009",
@@ -70,7 +70,7 @@
       "createdAt": 1767456000000,
       "updatedAt": 1767456270000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-00000000000a",
@@ -78,7 +78,7 @@
       "createdAt": 1768406400000,
       "updatedAt": 1768406670000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-00000000000b",
@@ -86,7 +86,7 @@
       "createdAt": 1769356800000,
       "updatedAt": 1769357070000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-00000000000c",
@@ -94,7 +94,7 @@
       "createdAt": 1770307200000,
       "updatedAt": 1770307470000,
       "model": "claude-3-5-haiku-latest",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-00000000000d",
@@ -102,7 +102,7 @@
       "createdAt": 1771344000000,
       "updatedAt": 1771344270000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-00000000000e",
@@ -110,7 +110,7 @@
       "createdAt": 1772294400000,
       "updatedAt": 1772294670000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-00000000000f",
@@ -118,7 +118,7 @@
       "createdAt": 1773244800000,
       "updatedAt": 1773245430000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-000000000010",
@@ -126,7 +126,7 @@
       "createdAt": 1773936000000,
       "updatedAt": 1773936630000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-000000000011",
@@ -134,7 +134,7 @@
       "createdAt": 1774454400000,
       "updatedAt": 1774455030000,
       "model": "gpt-4.1-mini",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     },
     {
       "id": "00000000-0000-4000-8000-000000000012",
@@ -142,7 +142,7 @@
       "createdAt": 1774800000000,
       "updatedAt": 1774800630000,
       "model": "claude-sonnet-4-20250514",
-      "vaultId": "preview-main-vault"
+      "bucketId": "preview-main-bucket"
     }
   ],
   "messages": [

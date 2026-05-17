@@ -16,11 +16,74 @@ port = 54323
 [functions.chat]
 verify_jwt = false
 
+[functions.chat-data]
+verify_jwt = false
+
 [functions.chat-media]
+verify_jwt = false
+
+[functions.public-page-fetch]
+verify_jwt = false
+
+[functions.thought-enrich]
+verify_jwt = false
+
+[functions.composer-source-extract]
+verify_jwt = false
+
+[functions.app-bootstrap]
+verify_jwt = false
+
+[functions.notes]
+verify_jwt = false
+
+[functions.folders]
+verify_jwt = false
+
+[functions.graph]
+verify_jwt = false
+
+[functions.provider-credentials]
+verify_jwt = false
+
+[functions.migration-import]
+verify_jwt = false
+
+[functions.user-preferences]
+verify_jwt = false
+
+[functions.chat-session-extract]
+verify_jwt = false
+
+[functions.chat-note-actions]
+verify_jwt = false
+
+[functions.chat-memory-turn]
+verify_jwt = false
+
+[functions.chat-bucket-organize]
+verify_jwt = false
+
+[functions.chat-retrieval]
+verify_jwt = false
+
+[functions.note-revisions]
 verify_jwt = false
 
 [functions.checkout]
 verify_jwt = false
 
 [functions.stripe-webhook]
+verify_jwt = false
+
+[functions.account-soft-delete]
+verify_jwt = false
+
+[functions.account-recover]
+verify_jwt = false
+
+[functions.account-abandon-deletion]
+verify_jwt = false
+
+[functions.account-expire-deletions]
 verify_jwt = false
