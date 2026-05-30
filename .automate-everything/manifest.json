@@ -1,0 +1,113 @@
+{
+  "schemaVersion": "ae.iac.v1",
+  "aeVersion": "0.1.0",
+  "generatedAt": "2026-05-30T18:46:23.336Z",
+  "platformProjectId": "1d51271b-dd01-4499-9a2e-9f25791d997c",
+  "deployIntent": "web",
+  "workspaceRoot": "apps/web",
+  "hostedInfrastructure": {
+    "vercel": {
+      "projectId": "prj_Dcd5UQTLqtL2Iyxuq5vjLq1gx2PT",
+      "projectName": "trellis-tst"
+    },
+    "supabase": {
+      "projectRef": "kdumcfjwmdcugjdpmimx"
+    },
+    "sourceDeploymentId": "c3befc9e-9069-4ad6-b976-0ef4c5b44634"
+  },
+  "environment": [
+    {
+      "name": "DATABASE_URL",
+      "targets": [
+        "local",
+        "vercel"
+      ],
+      "secret": false
+    },
+    {
+      "name": "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+      "targets": [
+        "local",
+        "vercel",
+        "supabase"
+      ],
+      "secret": false,
+      "description": "Semi-public client env var"
+    },
+    {
+      "name": "NEXT_PUBLIC_SUPABASE_URL",
+      "targets": [
+        "local",
+        "vercel",
+        "supabase"
+      ],
+      "secret": false,
+      "description": "Semi-public client env var"
+    },
+    {
+      "name": "SUPABASE_ACCESS_TOKEN",
+      "targets": [
+        "supabase",
+        "local"
+      ],
+      "secret": true,
+      "description": "Supabase access token for OpenTofu provider"
+    },
+    {
+      "name": "SUPABASE_DB_PASSWORD",
+      "targets": [
+        "supabase",
+        "local"
+      ],
+      "secret": true,
+      "description": "Supabase database password"
+    },
+    {
+      "name": "SUPABASE_ORGANIZATION_ID",
+      "targets": [
+        "supabase",
+        "local"
+      ],
+      "secret": false,
+      "description": "Supabase organization ID"
+    },
+    {
+      "name": "SUPABASE_SERVICE_ROLE_KEY",
+      "targets": [
+        "local",
+        "vercel",
+        "supabase"
+      ],
+      "secret": true
+    },
+    {
+      "name": "VERCEL_API_TOKEN",
+      "targets": [
+        "vercel",
+        "local"
+      ],
+      "secret": true,
+      "description": "Vercel API token for OpenTofu provider"
+    }
+  ],
+  "files": {
+    "manifest": "manifest.json",
+    "readme": "README.md",
+    "envExample": "env.example",
+    "infrastructure": {
+      "providers": "infrastructure/providers.tf",
+      "vercel": "infrastructure/vercel.tf",
+      "supabase": "infrastructure/supabase.tf"
+    }
+  },
+  "deploymentProfile": {
+    "includeBackendSetup": true,
+    "databaseMode": "none",
+    "buildCommand": "pnpm -w run build:web:hosted",
+    "outputDirectory": "out/build/renderer",
+    "installCommand": "corepack enable && pnpm install --frozen-lockfile --filter @trellis/web...",
+    "vercelRootDirectory": "apps/web",
+    "apiHost": null
+  },
+  "infrastructureFingerprint": "sha256:facbe121920c6496e21df73e9b182c1b14d3691416d28a032a908114302fc603"
+}
