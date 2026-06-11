@@ -1,0 +1,36 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Generated app, installers, and test output
+out
+dist
+dist-electron
+dist/web-demo
+playwright-report
+test-results
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Generated Supabase metadata
+supabase/.temp
+
+# Local databases and logs
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Signing credentials
+*.p8
+*.p12
+*.mobileprovision
+credentials.json
+
+# OS metadata
+.DS_Store
+
+.claude/

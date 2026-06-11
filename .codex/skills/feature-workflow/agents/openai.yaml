@@ -1,0 +1,3 @@
+interface:
+  display_name: "Feature Workflow"
+  short_description: "Routes Trellis work through product, dev, tester, and QA roles"

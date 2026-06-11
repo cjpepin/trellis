@@ -1,0 +1,297 @@
+[
+  {
+    "id": "trivial-chat",
+    "title": "Trivial chat should noop",
+    "input": {
+      "transcript": [
+        {
+          "role": "user",
+          "content": "Hey, thanks for the quick help earlier."
+        },
+        {
+          "role": "assistant",
+          "content": "Any time. Happy to help."
+        }
+      ],
+      "index": [
+        {
+          "slug": "product-strategy",
+          "title": "Product Strategy",
+          "tags": ["product"]
+        }
+      ]
+    },
+    "expectations": {
+      "expectNoop": true,
+      "maxWrites": 0
+    }
+  },
+  {
+    "id": "single-durable-concept",
+    "title": "One durable concept should become one note",
+    "input": {
+      "transcript": [
+        {
+          "role": "user",
+          "content": "I think the core extraction principle for Trellis is that note creation should be editorial, not summarization. The default should be append, not create, because duplicate notes erode trust."
+        },
+        {
+          "role": "assistant",
+          "content": "That sounds like a durable product principle: treat extraction like careful editing, prefer note evolution over note proliferation, and only create a new page when no existing note is a credible home."
+        }
+      ],
+      "index": []
+    },
+    "expectations": {
+      "minWrites": 1,
+      "maxWrites": 1,
+      "requiredTargetTypes": ["concept"],
+      "minBodyWords": 14
+    }
+  },
+  {
+    "id": "follow-up-append",
+    "title": "Follow-up should append to an existing note",
+    "input": {
+      "transcript": [
+        {
+          "role": "user",
+          "content": "Add one more point to our Habit Loop note: reducing activation friction matters more than variable rewards during the first-run experience."
+        },
+        {
+          "role": "assistant",
+          "content": "That belongs as a follow-up section on the existing Habit Loop note, not as a new sibling page."
+        }
+      ],
+      "index": [
+        {
+          "slug": "habit-loop",
+          "title": "Habit Loop",
+          "tags": ["behavior", "product"]
+        }
+      ],
+      "relatedNotes": [
+        {
+          "slug": "habit-loop",
+          "title": "Habit Loop",
+          "tags": ["behavior", "product"],
+          "headingPath": "Habit Loop > Core Mechanics",
+          "content": "A durable habit loop needs a clear trigger, an easy first action, and feedback that reinforces return behavior.",
+          "score": 27.4
+        }
+      ]
+    },
+    "expectations": {
+      "minWrites": 1,
+      "maxWrites": 1,
+      "requireTargetSlugs": ["habit-loop"],
+      "requiredOperationsByTarget": {
+        "habit-loop": "append"
+      },
+      "forbidCreate": true
+    }
+  },
+  {
+    "id": "placeholder-reuse",
+    "title": "Placeholder target should be reused",
+    "input": {
+      "transcript": [
+        {
+          "role": "user",
+          "content": "Let's finally flesh out [[Memory Capture Pipeline]]. It should cover capture, triage, extraction, and weekly cleanup so the vault stays coherent."
+        },
+        {
+          "role": "assistant",
+          "content": "That sounds like a strong candidate for filling the existing placeholder instead of inventing a nearby duplicate."
+        }
+      ],
+      "index": [
+        {
+          "slug": "memory-capture-pipeline",
+          "title": "Memory Capture Pipeline",
+          "tags": ["workflow"],
+          "isPlaceholder": true
+        },
+        {
+          "slug": "weekly-review",
+          "title": "Weekly Review",
+          "tags": ["workflow"]
+        }
+      ]
+    },
+    "expectations": {
+      "minWrites": 1,
+      "maxWrites": 1,
+      "requireTargetSlugs": ["memory-capture-pipeline"]
+    }
+  },
+  {
+    "id": "multi-note-linking",
+    "title": "Synthesis note should connect related existing notes",
+    "input": {
+      "transcript": [
+        {
+          "role": "user",
+          "content": "I think our onboarding work should connect Product Strategy, Habit Loop, and Onboarding Friction. The insight is that calmer onboarding improves retention because it helps users complete the first loop before we ask them for anything extra."
+        },
+        {
+          "role": "assistant",
+          "content": "That sounds like a synthesis worth saving, especially if it links the existing notes instead of scattering the idea across three shallow updates."
+        }
+      ],
+      "index": [
+        {
+          "slug": "product-strategy",
+          "title": "Product Strategy",
+          "tags": ["product", "strategy"]
+        },
+        {
+          "slug": "habit-loop",
+          "title": "Habit Loop",
+          "tags": ["behavior", "product"]
+        },
+        {
+          "slug": "onboarding-friction",
+          "title": "Onboarding Friction",
+          "tags": ["ux", "product"]
+        }
+      ],
+      "relatedNotes": [
+        {
+          "slug": "product-strategy",
+          "title": "Product Strategy",
+          "tags": ["product", "strategy"],
+          "headingPath": "Product Strategy > Focus",
+          "content": "Retention matters more than feature breadth during the MVP window.",
+          "score": 25.1
+        },
+        {
+          "slug": "habit-loop",
+          "title": "Habit Loop",
+          "tags": ["behavior", "product"],
+          "headingPath": "Habit Loop > First Session",
+          "content": "The first successful loop matters more than long-term reward shaping during activation.",
+          "score": 22.9
+        }
+      ]
+    },
+    "expectations": {
+      "minWrites": 1,
+      "maxWrites": 1,
+      "minLinksOnWrites": 2
+    }
+  },
+  {
+    "id": "correction-existing-note",
+    "title": "Correction should update the existing note",
+    "input": {
+      "transcript": [
+        {
+          "role": "user",
+          "content": "We need to correct the Pricing Model note. We are not launching with annual plans first anymore. We decided monthly first, then annual after usage patterns settle."
+        },
+        {
+          "role": "assistant",
+          "content": "That should update the existing note directly and capture the correction clearly."
+        }
+      ],
+      "index": [
+        {
+          "slug": "pricing-model",
+          "title": "Pricing Model",
+          "tags": ["business", "pricing"]
+        }
+      ],
+      "relatedNotes": [
+        {
+          "slug": "pricing-model",
+          "title": "Pricing Model",
+          "tags": ["business", "pricing"],
+          "headingPath": "Pricing Model > Launch Plan",
+          "content": "The earlier plan assumed annual plans would ship first to maximize early cash collection.",
+          "score": 29.2
+        }
+      ]
+    },
+    "expectations": {
+      "minWrites": 1,
+      "maxWrites": 1,
+      "requireTargetSlugs": ["pricing-model"],
+      "forbidCreate": true
+    }
+  },
+  {
+    "id": "source-summary",
+    "title": "Source ingest should create a source summary",
+    "input": {
+      "transcript": [],
+      "index": [
+        {
+          "slug": "note-taking-systems",
+          "title": "Note-Taking Systems",
+          "tags": ["knowledge", "workflow"]
+        }
+      ],
+      "sourceType": "web",
+      "sourceTitle": "Review of Networked Note-Taking Systems",
+      "sourcePath": "https://example.com/networked-notes-review",
+      "sourceContent": "The article argues that the best note-taking systems are built around progressive summarization, retrieval, and contextual links rather than pure archival storage. It compares lightweight inbox capture with slower editorial synthesis and recommends treating notes as evolving assets."
+    },
+    "expectations": {
+      "minWrites": 1,
+      "maxWrites": 1,
+      "requiredTargetTypes": ["source-summary"],
+      "minBodyWords": 12
+    }
+  },
+  {
+    "id": "retrieval-disambiguation",
+    "title": "Retrieved note should disambiguate the right target",
+    "input": {
+      "transcript": [
+        {
+          "role": "user",
+          "content": "Add this to the retrieval ranking note: when multiple note chunks are plausible, exact user-linked notes should get a fixed boost before semantic similarity decides the rest."
+        },
+        {
+          "role": "assistant",
+          "content": "That belongs in retrieval ranking, not the more general retrieval index note."
+        }
+      ],
+      "index": [
+        {
+          "slug": "retrieval-index",
+          "title": "Retrieval Index",
+          "tags": ["retrieval", "search"]
+        },
+        {
+          "slug": "retrieval-ranking",
+          "title": "Retrieval Ranking",
+          "tags": ["retrieval", "ranking"]
+        },
+        {
+          "slug": "search-infrastructure",
+          "title": "Search Infrastructure",
+          "tags": ["search", "infra"]
+        }
+      ],
+      "relatedNotes": [
+        {
+          "slug": "retrieval-ranking",
+          "title": "Retrieval Ranking",
+          "tags": ["retrieval", "ranking"],
+          "headingPath": "Retrieval Ranking > Candidate Selection",
+          "content": "Ranking should combine explicit references, semantic similarity, and lightweight lexical matches rather than relying on a single score.",
+          "score": 31.1
+        }
+      ]
+    },
+    "expectations": {
+      "minWrites": 1,
+      "maxWrites": 1,
+      "requireTargetSlugs": ["retrieval-ranking"],
+      "forbiddenTargetSlugs": ["retrieval-index"],
+      "forbidCreate": true
+    }
+  }
+]

@@ -1,0 +1,269 @@
+{
+  "mode": "ollama",
+  "generatedAt": "2026-04-07T22:49:55.579Z",
+  "corpusPath": "fixtures/eval/extraction-corpus.json",
+  "totals": {
+    "score": 13,
+    "maxScore": 35,
+    "passedCases": 0,
+    "erroredCases": 8,
+    "caseCount": 8
+  },
+  "cases": [
+    {
+      "id": "trivial-chat",
+      "title": "Trivial chat should noop",
+      "response": null,
+      "error": "fetch failed",
+      "score": 2,
+      "maxScore": 3,
+      "checks": [
+        {
+          "label": "No-op behavior",
+          "passed": true,
+          "details": "writes=0"
+        },
+        {
+          "label": "Maximum writes",
+          "passed": true,
+          "details": "writes=0, max=0"
+        },
+        {
+          "label": "Run completed",
+          "passed": false,
+          "details": "fetch failed"
+        }
+      ]
+    },
+    {
+      "id": "single-durable-concept",
+      "title": "One durable concept should become one note",
+      "response": null,
+      "error": "fetch failed",
+      "score": 1,
+      "maxScore": 4,
+      "checks": [
+        {
+          "label": "Minimum writes",
+          "passed": false,
+          "details": "writes=0, min=1"
+        },
+        {
+          "label": "Maximum writes",
+          "passed": true,
+          "details": "writes=0, max=1"
+        },
+        {
+          "label": "Required note types",
+          "passed": false,
+          "details": "types=none"
+        },
+        {
+          "label": "Run completed",
+          "passed": false,
+          "details": "fetch failed"
+        }
+      ]
+    },
+    {
+      "id": "follow-up-append",
+      "title": "Follow-up should append to an existing note",
+      "response": null,
+      "error": "fetch failed",
+      "score": 2,
+      "maxScore": 6,
+      "checks": [
+        {
+          "label": "Minimum writes",
+          "passed": false,
+          "details": "writes=0, min=1"
+        },
+        {
+          "label": "Maximum writes",
+          "passed": true,
+          "details": "writes=0, max=1"
+        },
+        {
+          "label": "Required targets",
+          "passed": false,
+          "details": "targets=none"
+        },
+        {
+          "label": "Required operations",
+          "passed": false,
+          "details": "habit-loop:missing (expected append)"
+        },
+        {
+          "label": "Create avoided",
+          "passed": true,
+          "details": "ops=none"
+        },
+        {
+          "label": "Run completed",
+          "passed": false,
+          "details": "fetch failed"
+        }
+      ]
+    },
+    {
+      "id": "placeholder-reuse",
+      "title": "Placeholder target should be reused",
+      "response": null,
+      "error": "fetch failed",
+      "score": 1,
+      "maxScore": 4,
+      "checks": [
+        {
+          "label": "Minimum writes",
+          "passed": false,
+          "details": "writes=0, min=1"
+        },
+        {
+          "label": "Maximum writes",
+          "passed": true,
+          "details": "writes=0, max=1"
+        },
+        {
+          "label": "Required targets",
+          "passed": false,
+          "details": "targets=none"
+        },
+        {
+          "label": "Run completed",
+          "passed": false,
+          "details": "fetch failed"
+        }
+      ]
+    },
+    {
+      "id": "multi-note-linking",
+      "title": "Synthesis note should connect related existing notes",
+      "response": null,
+      "error": "fetch failed",
+      "score": 1,
+      "maxScore": 3,
+      "checks": [
+        {
+          "label": "Minimum writes",
+          "passed": false,
+          "details": "writes=0, min=1"
+        },
+        {
+          "label": "Maximum writes",
+          "passed": true,
+          "details": "writes=0, max=1"
+        },
+        {
+          "label": "Run completed",
+          "passed": false,
+          "details": "fetch failed"
+        }
+      ]
+    },
+    {
+      "id": "correction-existing-note",
+      "title": "Correction should update the existing note",
+      "response": null,
+      "error": "fetch failed",
+      "score": 2,
+      "maxScore": 5,
+      "checks": [
+        {
+          "label": "Minimum writes",
+          "passed": false,
+          "details": "writes=0, min=1"
+        },
+        {
+          "label": "Maximum writes",
+          "passed": true,
+          "details": "writes=0, max=1"
+        },
+        {
+          "label": "Required targets",
+          "passed": false,
+          "details": "targets=none"
+        },
+        {
+          "label": "Create avoided",
+          "passed": true,
+          "details": "ops=none"
+        },
+        {
+          "label": "Run completed",
+          "passed": false,
+          "details": "fetch failed"
+        }
+      ]
+    },
+    {
+      "id": "source-summary",
+      "title": "Source ingest should create a source summary",
+      "response": null,
+      "error": "fetch failed",
+      "score": 1,
+      "maxScore": 4,
+      "checks": [
+        {
+          "label": "Minimum writes",
+          "passed": false,
+          "details": "writes=0, min=1"
+        },
+        {
+          "label": "Maximum writes",
+          "passed": true,
+          "details": "writes=0, max=1"
+        },
+        {
+          "label": "Required note types",
+          "passed": false,
+          "details": "types=none"
+        },
+        {
+          "label": "Run completed",
+          "passed": false,
+          "details": "fetch failed"
+        }
+      ]
+    },
+    {
+      "id": "retrieval-disambiguation",
+      "title": "Retrieved note should disambiguate the right target",
+      "response": null,
+      "error": "fetch failed",
+      "score": 3,
+      "maxScore": 6,
+      "checks": [
+        {
+          "label": "Minimum writes",
+          "passed": false,
+          "details": "writes=0, min=1"
+        },
+        {
+          "label": "Maximum writes",
+          "passed": true,
+          "details": "writes=0, max=1"
+        },
+        {
+          "label": "Required targets",
+          "passed": false,
+          "details": "targets=none"
+        },
+        {
+          "label": "Forbidden targets avoided",
+          "passed": true,
+          "details": "targets=none"
+        },
+        {
+          "label": "Create avoided",
+          "passed": true,
+          "details": "ops=none"
+        },
+        {
+          "label": "Run completed",
+          "passed": false,
+          "details": "fetch failed"
+        }
+      ]
+    }
+  ]
+}

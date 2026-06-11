@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "corepack enable && pnpm install --frozen-lockfile --filter @trellis/web...",
+  "buildCommand": "pnpm -w run build:web:hosted",
+  "outputDirectory": "out/build/renderer",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

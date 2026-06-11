@@ -1,0 +1,21 @@
+appId: com.trellis.app
+productName: Trellis
+icon: build/icon.png
+directories:
+  buildResources: build
+  output: out/release
+extraResources:
+  - from: build/icon.png
+    to: icon.png
+files:
+  - out/build/renderer/**
+  - out/build/electron/**
+  - package.json
+  - fixtures/preview-seed/**
+mac:
+  category: public.app-category.productivity
+  hardenedRuntime: true
+win:
+  target: nsis
+linux:
+  target: AppImage

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Senior Tester Agent"
+  short_description: "Turns acceptance criteria into automated Trellis coverage"

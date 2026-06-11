@@ -1,0 +1,2274 @@
+{
+  "version": "trellis-web-demo-vault-v1",
+  "notes": [
+    {
+      "slug": "activation-metrics",
+      "title": "Activation Metrics",
+      "updated": "2025-11-23",
+      "tags": [
+        "growth",
+        "metrics"
+      ],
+      "type": "concept",
+      "excerpt": "The app earns its keep when first value is visible, repeatable, and easy to explain back to a teammate. It keeps resurfacing alongside [[Onboarding Friction]], ",
+      "inboundCount": 8,
+      "folderPath": "wiki",
+      "relativePath": "wiki/activation-metrics.md",
+      "links": [
+        "onboarding-friction",
+        "retention-loop",
+        "pricing-notes",
+        "synthesis-activation-and-trust"
+      ],
+      "vaultPath": "activation-metrics.md"
+    },
+    {
+      "slug": "ada-chen",
+      "title": "Ada Chen",
+      "updated": "2026-03-31",
+      "tags": [
+        "people",
+        "design-partner"
+      ],
+      "type": "entity",
+      "excerpt": "Ada runs operations with unusually clear product instincts and tends to notice trust gaps before she names them directly. It keeps resurfacing alongside [[Field",
+      "inboundCount": 3,
+      "folderPath": "wiki/entities",
+      "relativePath": "wiki/entities/ada-chen.md",
+      "links": [
+        "field-notes-design-partners",
+        "source-summary-founder-interview",
+        "hiring-product-engineer",
+        "customer-advisory-cadence"
+      ],
+      "vaultPath": "entities/ada-chen.md"
+    },
+    {
+      "slug": "maple-clinic",
+      "title": "Maple Clinic",
+      "updated": "2026-03-31",
+      "tags": [
+        "customers",
+        "healthcare"
+      ],
+      "type": "entity",
+      "excerpt": "A clinic team evaluating how local-first note handling changes their comfort with AI-assisted knowledge tools. It keeps resurfacing alongside [[Field Notes Desi",
+      "inboundCount": 2,
+      "folderPath": "wiki/entities",
+      "relativePath": "wiki/entities/maple-clinic.md",
+      "links": [
+        "field-notes-design-partners",
+        "source-summary-privacy-report",
+        "trust-signals",
+        "local-first-principles"
+      ],
+      "vaultPath": "entities/maple-clinic.md"
+    },
+    {
+      "slug": "river-studio",
+      "title": "River Studio",
+      "updated": "2026-03-31",
+      "tags": [
+        "customers",
+        "agency"
+      ],
+      "type": "entity",
+      "excerpt": "A small design agency using Trellis to keep project context from falling back into chat history alone. It keeps resurfacing alongside [[Source Summary Usage Stu",
+      "inboundCount": 2,
+      "folderPath": "wiki/entities",
+      "relativePath": "wiki/entities/river-studio.md",
+      "links": [
+        "source-summary-usage-study",
+        "hiring-product-engineer",
+        "trust-signals",
+        "voice-of-customer-april"
+      ],
+      "vaultPath": "entities/river-studio.md"
+    },
+    {
+      "slug": "founder-os",
+      "title": "Founder OS",
+      "updated": "2025-10-23",
+      "tags": [
+        "founder",
+        "systems"
+      ],
+      "type": "concept",
+      "excerpt": "A lightweight operating system for the week that keeps planning, feedback, and recovery in one place. It keeps resurfacing alongside [[Weekly Review Rhythm]], [",
+      "inboundCount": 7,
+      "folderPath": "wiki",
+      "relativePath": "wiki/founder-os.md",
+      "links": [
+        "weekly-review-rhythm",
+        "ship-room-routine",
+        "activation-metrics",
+        "product-council"
+      ],
+      "vaultPath": "founder-os.md"
+    },
+    {
+      "slug": "local-first-principles",
+      "title": "Local First Principles",
+      "updated": "2026-01-04",
+      "tags": [
+        "architecture",
+        "local-first"
+      ],
+      "type": "concept",
+      "excerpt": "Local-first means the product remains useful when the network is gone and transparent when it returns. It keeps resurfacing alongside [[Vault Layout]], [[Ambien",
+      "inboundCount": 6,
+      "folderPath": "wiki",
+      "relativePath": "wiki/local-first-principles.md",
+      "links": [
+        "vault-layout",
+        "ambient-capture",
+        "source-summary-privacy-report",
+        "source-summary-local-first-paper"
+      ],
+      "vaultPath": "local-first-principles.md"
+    },
+    {
+      "slug": "notes-from-chats",
+      "title": "Notes From Chats",
+      "updated": "2026-03-31",
+      "tags": [
+        "synthesis",
+        "workflow"
+      ],
+      "type": "synthesis",
+      "excerpt": "Chats become durable when the product turns moments of clarity into notes that are easy to re-enter later. It keeps resurfacing alongside [[Trellis Roadmap]], [",
+      "inboundCount": 6,
+      "folderPath": "wiki",
+      "relativePath": "wiki/notes-from-chats.md",
+      "links": [
+        "trellis-roadmap",
+        "assistant-voice-and-tone",
+        "vault-layout",
+        "meeting-distillation"
+      ],
+      "vaultPath": "notes-from-chats.md"
+    },
+    {
+      "slug": "edge-function-retries",
+      "title": "Edge Function Retries",
+      "updated": "2026-01-31",
+      "tags": [
+        "backend",
+        "reliability"
+      ],
+      "type": "concept",
+      "excerpt": "Retries need guardrails so intermittent failure does not turn into noisy duplicate work. It keeps resurfacing alongside [[Supabase Usage Notes]], [[Trellis Road",
+      "inboundCount": 3,
+      "folderPath": "wiki/operations",
+      "relativePath": "wiki/operations/edge-function-retries.md",
+      "links": [
+        "supabase-usage-notes",
+        "trellis-roadmap",
+        "source-summary-usage-study",
+        "trust-signals"
+      ],
+      "vaultPath": "operations/edge-function-retries.md"
+    },
+    {
+      "slug": "supabase-usage-notes",
+      "title": "Supabase Usage Notes",
+      "updated": "2026-02-11",
+      "tags": [
+        "backend",
+        "supabase"
+      ],
+      "type": "concept",
+      "excerpt": "Supabase is best used for identity, usage, and orchestration while the device keeps ownership of user knowledge. It keeps resurfacing alongside [[Edge Function ",
+      "inboundCount": 2,
+      "folderPath": "wiki/operations",
+      "relativePath": "wiki/operations/supabase-usage-notes.md",
+      "links": [
+        "edge-function-retries",
+        "vault-layout",
+        "local-first-principles",
+        "trellis-roadmap"
+      ],
+      "vaultPath": "operations/supabase-usage-notes.md"
+    },
+    {
+      "slug": "ambient-capture",
+      "title": "Ambient Capture",
+      "updated": "2026-01-15",
+      "tags": [
+        "capture",
+        "workflow"
+      ],
+      "type": "concept",
+      "excerpt": "Capture should feel quieter than opening a blank page but richer than dropping raw transcripts into a folder. It keeps resurfacing alongside [[Meeting Distillat",
+      "inboundCount": 4,
+      "folderPath": "wiki/playbooks",
+      "relativePath": "wiki/playbooks/ambient-capture.md",
+      "links": [
+        "meeting-distillation",
+        "retention-loop",
+        "founder-os",
+        "vault-layout"
+      ],
+      "vaultPath": "playbooks/ambient-capture.md"
+    },
+    {
+      "slug": "graph-reading-ritual",
+      "title": "Graph Reading Ritual",
+      "updated": "2026-03-05",
+      "tags": [
+        "graph",
+        "sensemaking"
+      ],
+      "type": "concept",
+      "excerpt": "The graph is most useful as a reading surface for weak signals rather than a dashboard for vanity complexity. It keeps resurfacing alongside [[Vault Layout]], [",
+      "inboundCount": 3,
+      "folderPath": "wiki/playbooks",
+      "relativePath": "wiki/playbooks/graph-reading-ritual.md",
+      "links": [
+        "vault-layout",
+        "retention-loop",
+        "notes-from-chats",
+        "reading-list-systems"
+      ],
+      "vaultPath": "playbooks/graph-reading-ritual.md"
+    },
+    {
+      "slug": "hiring-product-engineer",
+      "title": "Hiring Product Engineer",
+      "updated": "2026-01-22",
+      "tags": [
+        "hiring",
+        "team"
+      ],
+      "type": "concept",
+      "excerpt": "The role needs taste for product edges, not just throughput on isolated tickets. It keeps resurfacing alongside [[Product Council]], [[Trellis Roadmap]], [[Rive",
+      "inboundCount": 4,
+      "folderPath": "wiki/playbooks",
+      "relativePath": "wiki/playbooks/hiring-product-engineer.md",
+      "links": [
+        "product-council",
+        "trellis-roadmap",
+        "river-studio",
+        "ada-chen"
+      ],
+      "vaultPath": "playbooks/hiring-product-engineer.md"
+    },
+    {
+      "slug": "launch-week-checklist",
+      "title": "Launch Week Checklist",
+      "updated": "2026-01-13",
+      "tags": [
+        "launch",
+        "operations"
+      ],
+      "type": "concept",
+      "excerpt": "Launches stay calm when the checklist protects support, documentation, and rollback paths as much as marketing. It keeps resurfacing alongside [[Ship Room Routi",
+      "inboundCount": 3,
+      "folderPath": "wiki/playbooks",
+      "relativePath": "wiki/playbooks/launch-week-checklist.md",
+      "links": [
+        "ship-room-routine",
+        "trust-signals",
+        "product-council",
+        "onboarding-friction"
+      ],
+      "vaultPath": "playbooks/launch-week-checklist.md"
+    },
+    {
+      "slug": "meeting-distillation",
+      "title": "Meeting Distillation",
+      "updated": "2025-12-22",
+      "tags": [
+        "meetings",
+        "notes"
+      ],
+      "type": "concept",
+      "excerpt": "Conversation becomes useful when the residue is shorter than the meeting and easier to revisit than a recording. It keeps resurfacing alongside [[Ambient Captur",
+      "inboundCount": 4,
+      "folderPath": "wiki/playbooks",
+      "relativePath": "wiki/playbooks/meeting-distillation.md",
+      "links": [
+        "ambient-capture",
+        "support-inbox-patterns",
+        "onboarding-friction",
+        "notes-from-chats"
+      ],
+      "vaultPath": "playbooks/meeting-distillation.md"
+    },
+    {
+      "slug": "office-hours-format",
+      "title": "Office Hours Format",
+      "updated": "2025-12-26",
+      "tags": [
+        "support",
+        "research"
+      ],
+      "type": "concept",
+      "excerpt": "Office hours work best when every conversation leaves behind patterns worth folding into the product. It keeps resurfacing alongside [[Customer Advisory Cadence",
+      "inboundCount": 3,
+      "folderPath": "wiki/playbooks",
+      "relativePath": "wiki/playbooks/office-hours-format.md",
+      "links": [
+        "customer-advisory-cadence",
+        "support-inbox-patterns",
+        "voice-of-customer-april",
+        "field-notes-design-partners"
+      ],
+      "vaultPath": "playbooks/office-hours-format.md"
+    },
+    {
+      "slug": "onboarding-friction",
+      "title": "Onboarding Friction",
+      "updated": "2025-12-04",
+      "tags": [
+        "onboarding",
+        "ux"
+      ],
+      "type": "concept",
+      "excerpt": "Cold-start friction usually hides inside too many decisions in the first five minutes. It keeps resurfacing alongside [[Activation Metrics]], [[Meeting Distilla",
+      "inboundCount": 3,
+      "folderPath": "wiki/playbooks",
+      "relativePath": "wiki/playbooks/onboarding-friction.md",
+      "links": [
+        "activation-metrics",
+        "meeting-distillation",
+        "trust-signals",
+        "launch-week-checklist"
+      ],
+      "vaultPath": "playbooks/onboarding-friction.md"
+    },
+    {
+      "slug": "retention-loop",
+      "title": "Retention Loop",
+      "updated": "2025-12-15",
+      "tags": [
+        "retention",
+        "product"
+      ],
+      "type": "concept",
+      "excerpt": "People come back when each interaction leaves behind structure they can reuse later. It keeps resurfacing alongside [[Activation Metrics]], [[Ambient Capture]],",
+      "inboundCount": 3,
+      "folderPath": "wiki/playbooks",
+      "relativePath": "wiki/playbooks/retention-loop.md",
+      "links": [
+        "activation-metrics",
+        "ambient-capture",
+        "graph-reading-ritual",
+        "founder-os"
+      ],
+      "vaultPath": "playbooks/retention-loop.md"
+    },
+    {
+      "slug": "ship-room-routine",
+      "title": "Ship Room Routine",
+      "updated": "2025-11-25",
+      "tags": [
+        "shipping",
+        "cadence"
+      ],
+      "type": "concept",
+      "excerpt": "Small launch rituals keep the team moving without manufacturing urgency. It keeps resurfacing alongside [[Launch Week Checklist]], [[Weekly Review Rhythm]], [[F",
+      "inboundCount": 3,
+      "folderPath": "wiki/playbooks",
+      "relativePath": "wiki/playbooks/ship-room-routine.md",
+      "links": [
+        "launch-week-checklist",
+        "weekly-review-rhythm",
+        "founder-os",
+        "trust-signals"
+      ],
+      "vaultPath": "playbooks/ship-room-routine.md"
+    },
+    {
+      "slug": "support-inbox-patterns",
+      "title": "Support Inbox Patterns",
+      "updated": "2026-01-02",
+      "tags": [
+        "support",
+        "operations"
+      ],
+      "type": "concept",
+      "excerpt": "A support inbox becomes strategic once similar requests are clustered into product signals instead of one-off answers. It keeps resurfacing alongside [[Office H",
+      "inboundCount": 4,
+      "folderPath": "wiki/playbooks",
+      "relativePath": "wiki/playbooks/support-inbox-patterns.md",
+      "links": [
+        "office-hours-format",
+        "synthesis-support-signals",
+        "voice-of-customer-april",
+        "meeting-distillation"
+      ],
+      "vaultPath": "playbooks/support-inbox-patterns.md"
+    },
+    {
+      "slug": "pricing-notes",
+      "title": "Pricing Notes",
+      "updated": "2025-11-12",
+      "tags": [
+        "pricing",
+        "growth"
+      ],
+      "type": "concept",
+      "excerpt": "Packaging should mirror value moments the product already proves instead of forcing artificial tiers. It keeps resurfacing alongside [[Activation Metrics]], [[T",
+      "inboundCount": 4,
+      "folderPath": "wiki",
+      "relativePath": "wiki/pricing-notes.md",
+      "links": [
+        "activation-metrics",
+        "trust-signals",
+        "voice-of-customer-april",
+        "synthesis-activation-and-trust"
+      ],
+      "vaultPath": "pricing-notes.md"
+    },
+    {
+      "slug": "product-council",
+      "title": "Product Council",
+      "updated": "2026-02-02",
+      "tags": [
+        "planning",
+        "team"
+      ],
+      "type": "concept",
+      "excerpt": "A small council can keep strategy coherent if it narrows disagreements into explicit tradeoffs. It keeps resurfacing alongside [[Founder OS]], [[Trellis Roadmap",
+      "inboundCount": 7,
+      "folderPath": "wiki",
+      "relativePath": "wiki/product-council.md",
+      "links": [
+        "founder-os",
+        "trellis-roadmap",
+        "hiring-product-engineer",
+        "launch-week-checklist"
+      ],
+      "vaultPath": "product-council.md"
+    },
+    {
+      "slug": "article-calm-software",
+      "title": "Article Calm Software",
+      "updated": "2026-03-03",
+      "tags": [
+        "articles",
+        "ux"
+      ],
+      "type": "source-summary",
+      "excerpt": "Highlights from an essay about software that signals steadiness through pace, wording, and visible state. It keeps resurfacing alongside [[Warm Product Language",
+      "inboundCount": 2,
+      "folderPath": "wiki/research",
+      "relativePath": "wiki/research/article-calm-software.md",
+      "links": [
+        "warm-product-language",
+        "trust-signals",
+        "reading-list-systems",
+        "assistant-voice-and-tone"
+      ],
+      "vaultPath": "research/article-calm-software.md"
+    },
+    {
+      "slug": "book-slow-product",
+      "title": "Book Slow Product",
+      "updated": "2026-02-20",
+      "tags": [
+        "books",
+        "product"
+      ],
+      "type": "source-summary",
+      "excerpt": "A short summary of notes on patient product-building, selective scope, and respecting user attention. It keeps resurfacing alongside [[Reading List Systems]], [",
+      "inboundCount": 1,
+      "folderPath": "wiki/research",
+      "relativePath": "wiki/research/book-slow-product.md",
+      "links": [
+        "reading-list-systems",
+        "founder-os",
+        "warm-product-language",
+        "product-council"
+      ],
+      "vaultPath": "research/book-slow-product.md"
+    },
+    {
+      "slug": "citation-hygiene",
+      "title": "Citation Hygiene",
+      "updated": "2025-12-24",
+      "tags": [
+        "research",
+        "writing"
+      ],
+      "type": "concept",
+      "excerpt": "Source notes should preserve enough provenance that later synthesis does not feel like folklore. It keeps resurfacing alongside [[Research Queue]], [[Source Sum",
+      "inboundCount": 4,
+      "folderPath": "wiki/research",
+      "relativePath": "wiki/research/citation-hygiene.md",
+      "links": [
+        "research-queue",
+        "source-summary-local-first-paper",
+        "doc-style-guide",
+        "source-summary-privacy-report"
+      ],
+      "vaultPath": "research/citation-hygiene.md"
+    },
+    {
+      "slug": "customer-advisory-cadence",
+      "title": "Customer Advisory Cadence",
+      "updated": "2025-12-06",
+      "tags": [
+        "research",
+        "customers"
+      ],
+      "type": "concept",
+      "excerpt": "A repeatable schedule for hearing from serious users before roadmap decisions harden. It keeps resurfacing alongside [[Field Notes Design Partners]], [[Voice Of",
+      "inboundCount": 3,
+      "folderPath": "wiki/research",
+      "relativePath": "wiki/research/customer-advisory-cadence.md",
+      "links": [
+        "field-notes-design-partners",
+        "voice-of-customer-april",
+        "activation-metrics",
+        "office-hours-format"
+      ],
+      "vaultPath": "research/customer-advisory-cadence.md"
+    },
+    {
+      "slug": "field-notes-design-partners",
+      "title": "Field Notes Design Partners",
+      "updated": "2026-01-24",
+      "tags": [
+        "customers",
+        "research"
+      ],
+      "type": "concept",
+      "excerpt": "Design partner notes work best as compact patterns, not exhaustive transcripts. It keeps resurfacing alongside [[Customer Advisory Cadence]], [[Voice Of Custome",
+      "inboundCount": 5,
+      "folderPath": "wiki/research",
+      "relativePath": "wiki/research/field-notes-design-partners.md",
+      "links": [
+        "customer-advisory-cadence",
+        "voice-of-customer-april",
+        "ada-chen",
+        "maple-clinic"
+      ],
+      "vaultPath": "research/field-notes-design-partners.md"
+    },
+    {
+      "slug": "reading-list-systems",
+      "title": "Reading List Systems",
+      "updated": "2026-03-16",
+      "tags": [
+        "reading",
+        "systems"
+      ],
+      "type": "concept",
+      "excerpt": "Reading lists need pruning rules or they quietly become guilt inventories. It keeps resurfacing alongside [[Research Queue]], [[Article Calm Software]], [[Book ",
+      "inboundCount": 4,
+      "folderPath": "wiki/research",
+      "relativePath": "wiki/research/reading-list-systems.md",
+      "links": [
+        "research-queue",
+        "article-calm-software",
+        "book-slow-product",
+        "graph-reading-ritual"
+      ],
+      "vaultPath": "research/reading-list-systems.md"
+    },
+    {
+      "slug": "research-queue",
+      "title": "Research Queue",
+      "updated": "2025-12-13",
+      "tags": [
+        "research",
+        "reading"
+      ],
+      "type": "concept",
+      "excerpt": "A queue is useful only if it narrows into the next few questions the team actually needs answered. It keeps resurfacing alongside [[Reading List Systems]], [[Ci",
+      "inboundCount": 3,
+      "folderPath": "wiki/research",
+      "relativePath": "wiki/research/research-queue.md",
+      "links": [
+        "reading-list-systems",
+        "citation-hygiene",
+        "local-first-principles",
+        "weekly-review-rhythm"
+      ],
+      "vaultPath": "research/research-queue.md"
+    },
+    {
+      "slug": "source-summary-founder-interview",
+      "title": "Source Summary Founder Interview",
+      "updated": "2026-03-12",
+      "tags": [
+        "founders",
+        "research"
+      ],
+      "type": "source-summary",
+      "excerpt": "A founder interview condensed into decisions about focus, cadence, and staying close to design partners. It keeps resurfacing alongside [[Founder OS]], [[Produc",
+      "inboundCount": 1,
+      "folderPath": "wiki/research",
+      "relativePath": "wiki/research/source-summary-founder-interview.md",
+      "links": [
+        "founder-os",
+        "product-council",
+        "ada-chen",
+        "hiring-product-engineer"
+      ],
+      "vaultPath": "research/source-summary-founder-interview.md"
+    },
+    {
+      "slug": "source-summary-local-first-paper",
+      "title": "Source Summary Local First Paper",
+      "updated": "2026-03-31",
+      "tags": [
+        "local-first",
+        "research"
+      ],
+      "type": "source-summary",
+      "excerpt": "Research paper notes about latency, resilience, and the product trust created by data locality. It keeps resurfacing alongside [[Local First Principles]], [[Vau",
+      "inboundCount": 2,
+      "folderPath": "wiki/research",
+      "relativePath": "wiki/research/source-summary-local-first-paper.md",
+      "links": [
+        "local-first-principles",
+        "vault-layout",
+        "citation-hygiene",
+        "supabase-usage-notes"
+      ],
+      "vaultPath": "research/source-summary-local-first-paper.md"
+    },
+    {
+      "slug": "source-summary-privacy-report",
+      "title": "Source Summary Privacy Report",
+      "updated": "2026-03-14",
+      "tags": [
+        "privacy",
+        "research"
+      ],
+      "type": "source-summary",
+      "excerpt": "Privacy report notes emphasizing explicit boundaries, local ownership, and predictable failure states. It keeps resurfacing alongside [[Local First Principles]]",
+      "inboundCount": 4,
+      "folderPath": "wiki/research",
+      "relativePath": "wiki/research/source-summary-privacy-report.md",
+      "links": [
+        "local-first-principles",
+        "trust-signals",
+        "maple-clinic",
+        "citation-hygiene"
+      ],
+      "vaultPath": "research/source-summary-privacy-report.md"
+    },
+    {
+      "slug": "source-summary-usage-study",
+      "title": "Source Summary Usage Study",
+      "updated": "2026-03-25",
+      "tags": [
+        "analytics",
+        "research"
+      ],
+      "type": "source-summary",
+      "excerpt": "Usage study excerpts on what makes users return after the first successful AI interaction. It keeps resurfacing alongside [[Activation Metrics]], [[Edge Functio",
+      "inboundCount": 3,
+      "folderPath": "wiki/research",
+      "relativePath": "wiki/research/source-summary-usage-study.md",
+      "links": [
+        "activation-metrics",
+        "edge-function-retries",
+        "river-studio",
+        "synthesis-activation-and-trust"
+      ],
+      "vaultPath": "research/source-summary-usage-study.md"
+    },
+    {
+      "slug": "synthesis-activation-and-trust",
+      "title": "Synthesis Activation And Trust",
+      "updated": "2026-03-23",
+      "tags": [
+        "synthesis",
+        "growth"
+      ],
+      "type": "synthesis",
+      "excerpt": "Activation and trust move together: users repeat behavior when first value feels legible and safe. It keeps resurfacing alongside [[Activation Metrics]], [[Trus",
+      "inboundCount": 4,
+      "folderPath": "wiki/synthesis",
+      "relativePath": "wiki/synthesis/synthesis-activation-and-trust.md",
+      "links": [
+        "activation-metrics",
+        "trust-signals",
+        "source-summary-usage-study",
+        "pricing-notes"
+      ],
+      "vaultPath": "synthesis/synthesis-activation-and-trust.md"
+    },
+    {
+      "slug": "synthesis-support-signals",
+      "title": "Synthesis Support Signals",
+      "updated": "2026-03-31",
+      "tags": [
+        "synthesis",
+        "support"
+      ],
+      "type": "synthesis",
+      "excerpt": "Support conversations become useful once they are compressed into a handful of recurring product signals. It keeps resurfacing alongside [[Support Inbox Pattern",
+      "inboundCount": 1,
+      "folderPath": "wiki/synthesis",
+      "relativePath": "wiki/synthesis/synthesis-support-signals.md",
+      "links": [
+        "support-inbox-patterns",
+        "voice-of-customer-april",
+        "trust-signals",
+        "office-hours-format"
+      ],
+      "vaultPath": "synthesis/synthesis-support-signals.md"
+    },
+    {
+      "slug": "trellis-roadmap",
+      "title": "Trellis Roadmap",
+      "updated": "2025-11-03",
+      "tags": [
+        "product",
+        "roadmap"
+      ],
+      "type": "concept",
+      "excerpt": "A running map of the few bets that compound the product instead of fragmenting it. It keeps resurfacing alongside [[Notes From Chats]], [[Trust Signals]], and [",
+      "inboundCount": 5,
+      "folderPath": "wiki",
+      "relativePath": "wiki/trellis-roadmap.md",
+      "links": [
+        "notes-from-chats",
+        "trust-signals",
+        "edge-function-retries",
+        "product-council"
+      ],
+      "vaultPath": "trellis-roadmap.md"
+    },
+    {
+      "slug": "trust-signals",
+      "title": "Trust Signals",
+      "updated": "2026-02-24",
+      "tags": [
+        "ux",
+        "trust"
+      ],
+      "type": "concept",
+      "excerpt": "Trust grows when the app makes state visible, handles failure calmly, and avoids pretending uncertainty is certainty. It keeps resurfacing alongside [[Pricing N",
+      "inboundCount": 15,
+      "folderPath": "wiki",
+      "relativePath": "wiki/trust-signals.md",
+      "links": [
+        "pricing-notes",
+        "activation-metrics",
+        "synthesis-activation-and-trust",
+        "source-summary-privacy-report"
+      ],
+      "vaultPath": "trust-signals.md"
+    },
+    {
+      "slug": "vault-layout",
+      "title": "Vault Layout",
+      "updated": "2026-02-22",
+      "tags": [
+        "vault",
+        "information-architecture"
+      ],
+      "type": "concept",
+      "excerpt": "A vault stays navigable when the filesystem mirrors durable concepts, not every temporary conversation. It keeps resurfacing alongside [[Local First Principles]",
+      "inboundCount": 6,
+      "folderPath": "wiki",
+      "relativePath": "wiki/vault-layout.md",
+      "links": [
+        "local-first-principles",
+        "graph-reading-ritual",
+        "notes-from-chats",
+        "ambient-capture"
+      ],
+      "vaultPath": "vault-layout.md"
+    },
+    {
+      "slug": "voice-of-customer-april",
+      "title": "Voice Of Customer April",
+      "updated": "2026-02-04",
+      "tags": [
+        "customers",
+        "insights"
+      ],
+      "type": "concept",
+      "excerpt": "April interviews kept repeating the same request: show compounding value earlier and explain it more plainly. It keeps resurfacing alongside [[Pricing Notes]], ",
+      "inboundCount": 7,
+      "folderPath": "wiki",
+      "relativePath": "wiki/voice-of-customer-april.md",
+      "links": [
+        "pricing-notes",
+        "support-inbox-patterns",
+        "trust-signals",
+        "field-notes-design-partners"
+      ],
+      "vaultPath": "voice-of-customer-april.md"
+    },
+    {
+      "slug": "weekly-review-rhythm",
+      "title": "Weekly Review Rhythm",
+      "updated": "2025-12-02",
+      "tags": [
+        "planning",
+        "systems"
+      ],
+      "type": "concept",
+      "excerpt": "Weekly review is the bridge between the founder's intuition and the team's shared plan. It keeps resurfacing alongside [[Founder OS]], [[Research Queue]], [[Pro",
+      "inboundCount": 3,
+      "folderPath": "wiki",
+      "relativePath": "wiki/weekly-review-rhythm.md",
+      "links": [
+        "founder-os",
+        "research-queue",
+        "product-council",
+        "ship-room-routine"
+      ],
+      "vaultPath": "weekly-review-rhythm.md"
+    },
+    {
+      "slug": "assistant-voice-and-tone",
+      "title": "Assistant Voice And Tone",
+      "updated": "2026-02-13",
+      "tags": [
+        "ux",
+        "assistant"
+      ],
+      "type": "concept",
+      "excerpt": "The assistant should sound observant, not overeager; helpful, not theatrical. It keeps resurfacing alongside [[Warm Product Language]], [[Doc Style Guide]], [[N",
+      "inboundCount": 4,
+      "folderPath": "wiki/writing",
+      "relativePath": "wiki/writing/assistant-voice-and-tone.md",
+      "links": [
+        "warm-product-language",
+        "doc-style-guide",
+        "notes-from-chats",
+        "trust-signals"
+      ],
+      "vaultPath": "writing/assistant-voice-and-tone.md"
+    },
+    {
+      "slug": "doc-style-guide",
+      "title": "Doc Style Guide",
+      "updated": "2026-01-11",
+      "tags": [
+        "writing",
+        "documentation"
+      ],
+      "type": "concept",
+      "excerpt": "Internal docs should read like a calm briefing rather than a brainstorm frozen in place. It keeps resurfacing alongside [[Warm Product Language]], [[Assistant V",
+      "inboundCount": 3,
+      "folderPath": "wiki/writing",
+      "relativePath": "wiki/writing/doc-style-guide.md",
+      "links": [
+        "warm-product-language",
+        "assistant-voice-and-tone",
+        "citation-hygiene",
+        "notes-from-chats"
+      ],
+      "vaultPath": "writing/doc-style-guide.md"
+    },
+    {
+      "slug": "warm-product-language",
+      "title": "Warm Product Language",
+      "updated": "2025-11-14",
+      "tags": [
+        "writing",
+        "ux"
+      ],
+      "type": "concept",
+      "excerpt": "Copy should feel calm, specific, and steady enough that the product earns trust before it asks for effort. It keeps resurfacing alongside [[Assistant Voice And ",
+      "inboundCount": 4,
+      "folderPath": "wiki/writing",
+      "relativePath": "wiki/writing/warm-product-language.md",
+      "links": [
+        "assistant-voice-and-tone",
+        "doc-style-guide",
+        "trust-signals",
+        "article-calm-software"
+      ],
+      "vaultPath": "writing/warm-product-language.md"
+    }
+  ],
+  "folders": [
+    {
+      "id": "wiki",
+      "name": "wiki",
+      "path": "wiki"
+    },
+    {
+      "id": "wiki/entities",
+      "name": "entities",
+      "path": "wiki/entities"
+    },
+    {
+      "id": "wiki/operations",
+      "name": "operations",
+      "path": "wiki/operations"
+    },
+    {
+      "id": "wiki/playbooks",
+      "name": "playbooks",
+      "path": "wiki/playbooks"
+    },
+    {
+      "id": "wiki/research",
+      "name": "research",
+      "path": "wiki/research"
+    },
+    {
+      "id": "wiki/synthesis",
+      "name": "synthesis",
+      "path": "wiki/synthesis"
+    },
+    {
+      "id": "wiki/writing",
+      "name": "writing",
+      "path": "wiki/writing"
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "activation-metrics",
+        "slug": "activation-metrics",
+        "title": "Activation Metrics",
+        "tags": [
+          "growth",
+          "metrics"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 8
+      },
+      {
+        "id": "ada-chen",
+        "slug": "ada-chen",
+        "title": "Ada Chen",
+        "tags": [
+          "people",
+          "design-partner"
+        ],
+        "type": "entity",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "maple-clinic",
+        "slug": "maple-clinic",
+        "title": "Maple Clinic",
+        "tags": [
+          "customers",
+          "healthcare"
+        ],
+        "type": "entity",
+        "size": 1,
+        "inboundCount": 2
+      },
+      {
+        "id": "river-studio",
+        "slug": "river-studio",
+        "title": "River Studio",
+        "tags": [
+          "customers",
+          "agency"
+        ],
+        "type": "entity",
+        "size": 1,
+        "inboundCount": 2
+      },
+      {
+        "id": "founder-os",
+        "slug": "founder-os",
+        "title": "Founder OS",
+        "tags": [
+          "founder",
+          "systems"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 7
+      },
+      {
+        "id": "local-first-principles",
+        "slug": "local-first-principles",
+        "title": "Local First Principles",
+        "tags": [
+          "architecture",
+          "local-first"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 6
+      },
+      {
+        "id": "notes-from-chats",
+        "slug": "notes-from-chats",
+        "title": "Notes From Chats",
+        "tags": [
+          "synthesis",
+          "workflow"
+        ],
+        "type": "synthesis",
+        "size": 1,
+        "inboundCount": 6
+      },
+      {
+        "id": "edge-function-retries",
+        "slug": "edge-function-retries",
+        "title": "Edge Function Retries",
+        "tags": [
+          "backend",
+          "reliability"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "supabase-usage-notes",
+        "slug": "supabase-usage-notes",
+        "title": "Supabase Usage Notes",
+        "tags": [
+          "backend",
+          "supabase"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 2
+      },
+      {
+        "id": "ambient-capture",
+        "slug": "ambient-capture",
+        "title": "Ambient Capture",
+        "tags": [
+          "capture",
+          "workflow"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 4
+      },
+      {
+        "id": "graph-reading-ritual",
+        "slug": "graph-reading-ritual",
+        "title": "Graph Reading Ritual",
+        "tags": [
+          "graph",
+          "sensemaking"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "hiring-product-engineer",
+        "slug": "hiring-product-engineer",
+        "title": "Hiring Product Engineer",
+        "tags": [
+          "hiring",
+          "team"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 4
+      },
+      {
+        "id": "launch-week-checklist",
+        "slug": "launch-week-checklist",
+        "title": "Launch Week Checklist",
+        "tags": [
+          "launch",
+          "operations"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "meeting-distillation",
+        "slug": "meeting-distillation",
+        "title": "Meeting Distillation",
+        "tags": [
+          "meetings",
+          "notes"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 4
+      },
+      {
+        "id": "office-hours-format",
+        "slug": "office-hours-format",
+        "title": "Office Hours Format",
+        "tags": [
+          "support",
+          "research"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "onboarding-friction",
+        "slug": "onboarding-friction",
+        "title": "Onboarding Friction",
+        "tags": [
+          "onboarding",
+          "ux"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "retention-loop",
+        "slug": "retention-loop",
+        "title": "Retention Loop",
+        "tags": [
+          "retention",
+          "product"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "ship-room-routine",
+        "slug": "ship-room-routine",
+        "title": "Ship Room Routine",
+        "tags": [
+          "shipping",
+          "cadence"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "support-inbox-patterns",
+        "slug": "support-inbox-patterns",
+        "title": "Support Inbox Patterns",
+        "tags": [
+          "support",
+          "operations"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 4
+      },
+      {
+        "id": "pricing-notes",
+        "slug": "pricing-notes",
+        "title": "Pricing Notes",
+        "tags": [
+          "pricing",
+          "growth"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 4
+      },
+      {
+        "id": "product-council",
+        "slug": "product-council",
+        "title": "Product Council",
+        "tags": [
+          "planning",
+          "team"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 7
+      },
+      {
+        "id": "article-calm-software",
+        "slug": "article-calm-software",
+        "title": "Article Calm Software",
+        "tags": [
+          "articles",
+          "ux"
+        ],
+        "type": "source-summary",
+        "size": 1,
+        "inboundCount": 2
+      },
+      {
+        "id": "book-slow-product",
+        "slug": "book-slow-product",
+        "title": "Book Slow Product",
+        "tags": [
+          "books",
+          "product"
+        ],
+        "type": "source-summary",
+        "size": 1,
+        "inboundCount": 1
+      },
+      {
+        "id": "citation-hygiene",
+        "slug": "citation-hygiene",
+        "title": "Citation Hygiene",
+        "tags": [
+          "research",
+          "writing"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 4
+      },
+      {
+        "id": "customer-advisory-cadence",
+        "slug": "customer-advisory-cadence",
+        "title": "Customer Advisory Cadence",
+        "tags": [
+          "research",
+          "customers"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "field-notes-design-partners",
+        "slug": "field-notes-design-partners",
+        "title": "Field Notes Design Partners",
+        "tags": [
+          "customers",
+          "research"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 5
+      },
+      {
+        "id": "reading-list-systems",
+        "slug": "reading-list-systems",
+        "title": "Reading List Systems",
+        "tags": [
+          "reading",
+          "systems"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 4
+      },
+      {
+        "id": "research-queue",
+        "slug": "research-queue",
+        "title": "Research Queue",
+        "tags": [
+          "research",
+          "reading"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "source-summary-founder-interview",
+        "slug": "source-summary-founder-interview",
+        "title": "Source Summary Founder Interview",
+        "tags": [
+          "founders",
+          "research"
+        ],
+        "type": "source-summary",
+        "size": 1,
+        "inboundCount": 1
+      },
+      {
+        "id": "source-summary-local-first-paper",
+        "slug": "source-summary-local-first-paper",
+        "title": "Source Summary Local First Paper",
+        "tags": [
+          "local-first",
+          "research"
+        ],
+        "type": "source-summary",
+        "size": 1,
+        "inboundCount": 2
+      },
+      {
+        "id": "source-summary-privacy-report",
+        "slug": "source-summary-privacy-report",
+        "title": "Source Summary Privacy Report",
+        "tags": [
+          "privacy",
+          "research"
+        ],
+        "type": "source-summary",
+        "size": 1,
+        "inboundCount": 4
+      },
+      {
+        "id": "source-summary-usage-study",
+        "slug": "source-summary-usage-study",
+        "title": "Source Summary Usage Study",
+        "tags": [
+          "analytics",
+          "research"
+        ],
+        "type": "source-summary",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "synthesis-activation-and-trust",
+        "slug": "synthesis-activation-and-trust",
+        "title": "Synthesis Activation And Trust",
+        "tags": [
+          "synthesis",
+          "growth"
+        ],
+        "type": "synthesis",
+        "size": 1,
+        "inboundCount": 4
+      },
+      {
+        "id": "synthesis-support-signals",
+        "slug": "synthesis-support-signals",
+        "title": "Synthesis Support Signals",
+        "tags": [
+          "synthesis",
+          "support"
+        ],
+        "type": "synthesis",
+        "size": 1,
+        "inboundCount": 1
+      },
+      {
+        "id": "trellis-roadmap",
+        "slug": "trellis-roadmap",
+        "title": "Trellis Roadmap",
+        "tags": [
+          "product",
+          "roadmap"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 5
+      },
+      {
+        "id": "trust-signals",
+        "slug": "trust-signals",
+        "title": "Trust Signals",
+        "tags": [
+          "ux",
+          "trust"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 15
+      },
+      {
+        "id": "vault-layout",
+        "slug": "vault-layout",
+        "title": "Vault Layout",
+        "tags": [
+          "vault",
+          "information-architecture"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 6
+      },
+      {
+        "id": "voice-of-customer-april",
+        "slug": "voice-of-customer-april",
+        "title": "Voice Of Customer April",
+        "tags": [
+          "customers",
+          "insights"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 7
+      },
+      {
+        "id": "weekly-review-rhythm",
+        "slug": "weekly-review-rhythm",
+        "title": "Weekly Review Rhythm",
+        "tags": [
+          "planning",
+          "systems"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "assistant-voice-and-tone",
+        "slug": "assistant-voice-and-tone",
+        "title": "Assistant Voice And Tone",
+        "tags": [
+          "ux",
+          "assistant"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 4
+      },
+      {
+        "id": "doc-style-guide",
+        "slug": "doc-style-guide",
+        "title": "Doc Style Guide",
+        "tags": [
+          "writing",
+          "documentation"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 3
+      },
+      {
+        "id": "warm-product-language",
+        "slug": "warm-product-language",
+        "title": "Warm Product Language",
+        "tags": [
+          "writing",
+          "ux"
+        ],
+        "type": "concept",
+        "size": 1,
+        "inboundCount": 4
+      }
+    ],
+    "edges": [
+      {
+        "id": "activation-metrics->onboarding-friction",
+        "source": "activation-metrics",
+        "target": "onboarding-friction"
+      },
+      {
+        "id": "activation-metrics->retention-loop",
+        "source": "activation-metrics",
+        "target": "retention-loop"
+      },
+      {
+        "id": "activation-metrics->pricing-notes",
+        "source": "activation-metrics",
+        "target": "pricing-notes"
+      },
+      {
+        "id": "activation-metrics->synthesis-activation-and-trust",
+        "source": "activation-metrics",
+        "target": "synthesis-activation-and-trust"
+      },
+      {
+        "id": "ada-chen->field-notes-design-partners",
+        "source": "ada-chen",
+        "target": "field-notes-design-partners"
+      },
+      {
+        "id": "ada-chen->source-summary-founder-interview",
+        "source": "ada-chen",
+        "target": "source-summary-founder-interview"
+      },
+      {
+        "id": "ada-chen->hiring-product-engineer",
+        "source": "ada-chen",
+        "target": "hiring-product-engineer"
+      },
+      {
+        "id": "ada-chen->customer-advisory-cadence",
+        "source": "ada-chen",
+        "target": "customer-advisory-cadence"
+      },
+      {
+        "id": "maple-clinic->field-notes-design-partners",
+        "source": "maple-clinic",
+        "target": "field-notes-design-partners"
+      },
+      {
+        "id": "maple-clinic->source-summary-privacy-report",
+        "source": "maple-clinic",
+        "target": "source-summary-privacy-report"
+      },
+      {
+        "id": "maple-clinic->trust-signals",
+        "source": "maple-clinic",
+        "target": "trust-signals"
+      },
+      {
+        "id": "maple-clinic->local-first-principles",
+        "source": "maple-clinic",
+        "target": "local-first-principles"
+      },
+      {
+        "id": "river-studio->source-summary-usage-study",
+        "source": "river-studio",
+        "target": "source-summary-usage-study"
+      },
+      {
+        "id": "river-studio->hiring-product-engineer",
+        "source": "river-studio",
+        "target": "hiring-product-engineer"
+      },
+      {
+        "id": "river-studio->trust-signals",
+        "source": "river-studio",
+        "target": "trust-signals"
+      },
+      {
+        "id": "river-studio->voice-of-customer-april",
+        "source": "river-studio",
+        "target": "voice-of-customer-april"
+      },
+      {
+        "id": "founder-os->weekly-review-rhythm",
+        "source": "founder-os",
+        "target": "weekly-review-rhythm"
+      },
+      {
+        "id": "founder-os->ship-room-routine",
+        "source": "founder-os",
+        "target": "ship-room-routine"
+      },
+      {
+        "id": "founder-os->activation-metrics",
+        "source": "founder-os",
+        "target": "activation-metrics"
+      },
+      {
+        "id": "founder-os->product-council",
+        "source": "founder-os",
+        "target": "product-council"
+      },
+      {
+        "id": "local-first-principles->vault-layout",
+        "source": "local-first-principles",
+        "target": "vault-layout"
+      },
+      {
+        "id": "local-first-principles->ambient-capture",
+        "source": "local-first-principles",
+        "target": "ambient-capture"
+      },
+      {
+        "id": "local-first-principles->source-summary-privacy-report",
+        "source": "local-first-principles",
+        "target": "source-summary-privacy-report"
+      },
+      {
+        "id": "local-first-principles->source-summary-local-first-paper",
+        "source": "local-first-principles",
+        "target": "source-summary-local-first-paper"
+      },
+      {
+        "id": "notes-from-chats->trellis-roadmap",
+        "source": "notes-from-chats",
+        "target": "trellis-roadmap"
+      },
+      {
+        "id": "notes-from-chats->assistant-voice-and-tone",
+        "source": "notes-from-chats",
+        "target": "assistant-voice-and-tone"
+      },
+      {
+        "id": "notes-from-chats->vault-layout",
+        "source": "notes-from-chats",
+        "target": "vault-layout"
+      },
+      {
+        "id": "notes-from-chats->meeting-distillation",
+        "source": "notes-from-chats",
+        "target": "meeting-distillation"
+      },
+      {
+        "id": "edge-function-retries->supabase-usage-notes",
+        "source": "edge-function-retries",
+        "target": "supabase-usage-notes"
+      },
+      {
+        "id": "edge-function-retries->trellis-roadmap",
+        "source": "edge-function-retries",
+        "target": "trellis-roadmap"
+      },
+      {
+        "id": "edge-function-retries->source-summary-usage-study",
+        "source": "edge-function-retries",
+        "target": "source-summary-usage-study"
+      },
+      {
+        "id": "edge-function-retries->trust-signals",
+        "source": "edge-function-retries",
+        "target": "trust-signals"
+      },
+      {
+        "id": "supabase-usage-notes->edge-function-retries",
+        "source": "supabase-usage-notes",
+        "target": "edge-function-retries"
+      },
+      {
+        "id": "supabase-usage-notes->vault-layout",
+        "source": "supabase-usage-notes",
+        "target": "vault-layout"
+      },
+      {
+        "id": "supabase-usage-notes->local-first-principles",
+        "source": "supabase-usage-notes",
+        "target": "local-first-principles"
+      },
+      {
+        "id": "supabase-usage-notes->trellis-roadmap",
+        "source": "supabase-usage-notes",
+        "target": "trellis-roadmap"
+      },
+      {
+        "id": "ambient-capture->meeting-distillation",
+        "source": "ambient-capture",
+        "target": "meeting-distillation"
+      },
+      {
+        "id": "ambient-capture->retention-loop",
+        "source": "ambient-capture",
+        "target": "retention-loop"
+      },
+      {
+        "id": "ambient-capture->founder-os",
+        "source": "ambient-capture",
+        "target": "founder-os"
+      },
+      {
+        "id": "ambient-capture->vault-layout",
+        "source": "ambient-capture",
+        "target": "vault-layout"
+      },
+      {
+        "id": "graph-reading-ritual->vault-layout",
+        "source": "graph-reading-ritual",
+        "target": "vault-layout"
+      },
+      {
+        "id": "graph-reading-ritual->retention-loop",
+        "source": "graph-reading-ritual",
+        "target": "retention-loop"
+      },
+      {
+        "id": "graph-reading-ritual->notes-from-chats",
+        "source": "graph-reading-ritual",
+        "target": "notes-from-chats"
+      },
+      {
+        "id": "graph-reading-ritual->reading-list-systems",
+        "source": "graph-reading-ritual",
+        "target": "reading-list-systems"
+      },
+      {
+        "id": "hiring-product-engineer->product-council",
+        "source": "hiring-product-engineer",
+        "target": "product-council"
+      },
+      {
+        "id": "hiring-product-engineer->trellis-roadmap",
+        "source": "hiring-product-engineer",
+        "target": "trellis-roadmap"
+      },
+      {
+        "id": "hiring-product-engineer->river-studio",
+        "source": "hiring-product-engineer",
+        "target": "river-studio"
+      },
+      {
+        "id": "hiring-product-engineer->ada-chen",
+        "source": "hiring-product-engineer",
+        "target": "ada-chen"
+      },
+      {
+        "id": "launch-week-checklist->ship-room-routine",
+        "source": "launch-week-checklist",
+        "target": "ship-room-routine"
+      },
+      {
+        "id": "launch-week-checklist->trust-signals",
+        "source": "launch-week-checklist",
+        "target": "trust-signals"
+      },
+      {
+        "id": "launch-week-checklist->product-council",
+        "source": "launch-week-checklist",
+        "target": "product-council"
+      },
+      {
+        "id": "launch-week-checklist->onboarding-friction",
+        "source": "launch-week-checklist",
+        "target": "onboarding-friction"
+      },
+      {
+        "id": "meeting-distillation->ambient-capture",
+        "source": "meeting-distillation",
+        "target": "ambient-capture"
+      },
+      {
+        "id": "meeting-distillation->support-inbox-patterns",
+        "source": "meeting-distillation",
+        "target": "support-inbox-patterns"
+      },
+      {
+        "id": "meeting-distillation->onboarding-friction",
+        "source": "meeting-distillation",
+        "target": "onboarding-friction"
+      },
+      {
+        "id": "meeting-distillation->notes-from-chats",
+        "source": "meeting-distillation",
+        "target": "notes-from-chats"
+      },
+      {
+        "id": "office-hours-format->customer-advisory-cadence",
+        "source": "office-hours-format",
+        "target": "customer-advisory-cadence"
+      },
+      {
+        "id": "office-hours-format->support-inbox-patterns",
+        "source": "office-hours-format",
+        "target": "support-inbox-patterns"
+      },
+      {
+        "id": "office-hours-format->voice-of-customer-april",
+        "source": "office-hours-format",
+        "target": "voice-of-customer-april"
+      },
+      {
+        "id": "office-hours-format->field-notes-design-partners",
+        "source": "office-hours-format",
+        "target": "field-notes-design-partners"
+      },
+      {
+        "id": "onboarding-friction->activation-metrics",
+        "source": "onboarding-friction",
+        "target": "activation-metrics"
+      },
+      {
+        "id": "onboarding-friction->meeting-distillation",
+        "source": "onboarding-friction",
+        "target": "meeting-distillation"
+      },
+      {
+        "id": "onboarding-friction->trust-signals",
+        "source": "onboarding-friction",
+        "target": "trust-signals"
+      },
+      {
+        "id": "onboarding-friction->launch-week-checklist",
+        "source": "onboarding-friction",
+        "target": "launch-week-checklist"
+      },
+      {
+        "id": "retention-loop->activation-metrics",
+        "source": "retention-loop",
+        "target": "activation-metrics"
+      },
+      {
+        "id": "retention-loop->ambient-capture",
+        "source": "retention-loop",
+        "target": "ambient-capture"
+      },
+      {
+        "id": "retention-loop->graph-reading-ritual",
+        "source": "retention-loop",
+        "target": "graph-reading-ritual"
+      },
+      {
+        "id": "retention-loop->founder-os",
+        "source": "retention-loop",
+        "target": "founder-os"
+      },
+      {
+        "id": "ship-room-routine->launch-week-checklist",
+        "source": "ship-room-routine",
+        "target": "launch-week-checklist"
+      },
+      {
+        "id": "ship-room-routine->weekly-review-rhythm",
+        "source": "ship-room-routine",
+        "target": "weekly-review-rhythm"
+      },
+      {
+        "id": "ship-room-routine->founder-os",
+        "source": "ship-room-routine",
+        "target": "founder-os"
+      },
+      {
+        "id": "ship-room-routine->trust-signals",
+        "source": "ship-room-routine",
+        "target": "trust-signals"
+      },
+      {
+        "id": "support-inbox-patterns->office-hours-format",
+        "source": "support-inbox-patterns",
+        "target": "office-hours-format"
+      },
+      {
+        "id": "support-inbox-patterns->synthesis-support-signals",
+        "source": "support-inbox-patterns",
+        "target": "synthesis-support-signals"
+      },
+      {
+        "id": "support-inbox-patterns->voice-of-customer-april",
+        "source": "support-inbox-patterns",
+        "target": "voice-of-customer-april"
+      },
+      {
+        "id": "support-inbox-patterns->meeting-distillation",
+        "source": "support-inbox-patterns",
+        "target": "meeting-distillation"
+      },
+      {
+        "id": "pricing-notes->activation-metrics",
+        "source": "pricing-notes",
+        "target": "activation-metrics"
+      },
+      {
+        "id": "pricing-notes->trust-signals",
+        "source": "pricing-notes",
+        "target": "trust-signals"
+      },
+      {
+        "id": "pricing-notes->voice-of-customer-april",
+        "source": "pricing-notes",
+        "target": "voice-of-customer-april"
+      },
+      {
+        "id": "pricing-notes->synthesis-activation-and-trust",
+        "source": "pricing-notes",
+        "target": "synthesis-activation-and-trust"
+      },
+      {
+        "id": "product-council->founder-os",
+        "source": "product-council",
+        "target": "founder-os"
+      },
+      {
+        "id": "product-council->trellis-roadmap",
+        "source": "product-council",
+        "target": "trellis-roadmap"
+      },
+      {
+        "id": "product-council->hiring-product-engineer",
+        "source": "product-council",
+        "target": "hiring-product-engineer"
+      },
+      {
+        "id": "product-council->launch-week-checklist",
+        "source": "product-council",
+        "target": "launch-week-checklist"
+      },
+      {
+        "id": "article-calm-software->warm-product-language",
+        "source": "article-calm-software",
+        "target": "warm-product-language"
+      },
+      {
+        "id": "article-calm-software->trust-signals",
+        "source": "article-calm-software",
+        "target": "trust-signals"
+      },
+      {
+        "id": "article-calm-software->reading-list-systems",
+        "source": "article-calm-software",
+        "target": "reading-list-systems"
+      },
+      {
+        "id": "article-calm-software->assistant-voice-and-tone",
+        "source": "article-calm-software",
+        "target": "assistant-voice-and-tone"
+      },
+      {
+        "id": "book-slow-product->reading-list-systems",
+        "source": "book-slow-product",
+        "target": "reading-list-systems"
+      },
+      {
+        "id": "book-slow-product->founder-os",
+        "source": "book-slow-product",
+        "target": "founder-os"
+      },
+      {
+        "id": "book-slow-product->warm-product-language",
+        "source": "book-slow-product",
+        "target": "warm-product-language"
+      },
+      {
+        "id": "book-slow-product->product-council",
+        "source": "book-slow-product",
+        "target": "product-council"
+      },
+      {
+        "id": "citation-hygiene->research-queue",
+        "source": "citation-hygiene",
+        "target": "research-queue"
+      },
+      {
+        "id": "citation-hygiene->source-summary-local-first-paper",
+        "source": "citation-hygiene",
+        "target": "source-summary-local-first-paper"
+      },
+      {
+        "id": "citation-hygiene->doc-style-guide",
+        "source": "citation-hygiene",
+        "target": "doc-style-guide"
+      },
+      {
+        "id": "citation-hygiene->source-summary-privacy-report",
+        "source": "citation-hygiene",
+        "target": "source-summary-privacy-report"
+      },
+      {
+        "id": "customer-advisory-cadence->field-notes-design-partners",
+        "source": "customer-advisory-cadence",
+        "target": "field-notes-design-partners"
+      },
+      {
+        "id": "customer-advisory-cadence->voice-of-customer-april",
+        "source": "customer-advisory-cadence",
+        "target": "voice-of-customer-april"
+      },
+      {
+        "id": "customer-advisory-cadence->activation-metrics",
+        "source": "customer-advisory-cadence",
+        "target": "activation-metrics"
+      },
+      {
+        "id": "customer-advisory-cadence->office-hours-format",
+        "source": "customer-advisory-cadence",
+        "target": "office-hours-format"
+      },
+      {
+        "id": "field-notes-design-partners->customer-advisory-cadence",
+        "source": "field-notes-design-partners",
+        "target": "customer-advisory-cadence"
+      },
+      {
+        "id": "field-notes-design-partners->voice-of-customer-april",
+        "source": "field-notes-design-partners",
+        "target": "voice-of-customer-april"
+      },
+      {
+        "id": "field-notes-design-partners->ada-chen",
+        "source": "field-notes-design-partners",
+        "target": "ada-chen"
+      },
+      {
+        "id": "field-notes-design-partners->maple-clinic",
+        "source": "field-notes-design-partners",
+        "target": "maple-clinic"
+      },
+      {
+        "id": "reading-list-systems->research-queue",
+        "source": "reading-list-systems",
+        "target": "research-queue"
+      },
+      {
+        "id": "reading-list-systems->article-calm-software",
+        "source": "reading-list-systems",
+        "target": "article-calm-software"
+      },
+      {
+        "id": "reading-list-systems->book-slow-product",
+        "source": "reading-list-systems",
+        "target": "book-slow-product"
+      },
+      {
+        "id": "reading-list-systems->graph-reading-ritual",
+        "source": "reading-list-systems",
+        "target": "graph-reading-ritual"
+      },
+      {
+        "id": "research-queue->reading-list-systems",
+        "source": "research-queue",
+        "target": "reading-list-systems"
+      },
+      {
+        "id": "research-queue->citation-hygiene",
+        "source": "research-queue",
+        "target": "citation-hygiene"
+      },
+      {
+        "id": "research-queue->local-first-principles",
+        "source": "research-queue",
+        "target": "local-first-principles"
+      },
+      {
+        "id": "research-queue->weekly-review-rhythm",
+        "source": "research-queue",
+        "target": "weekly-review-rhythm"
+      },
+      {
+        "id": "source-summary-founder-interview->founder-os",
+        "source": "source-summary-founder-interview",
+        "target": "founder-os"
+      },
+      {
+        "id": "source-summary-founder-interview->product-council",
+        "source": "source-summary-founder-interview",
+        "target": "product-council"
+      },
+      {
+        "id": "source-summary-founder-interview->ada-chen",
+        "source": "source-summary-founder-interview",
+        "target": "ada-chen"
+      },
+      {
+        "id": "source-summary-founder-interview->hiring-product-engineer",
+        "source": "source-summary-founder-interview",
+        "target": "hiring-product-engineer"
+      },
+      {
+        "id": "source-summary-local-first-paper->local-first-principles",
+        "source": "source-summary-local-first-paper",
+        "target": "local-first-principles"
+      },
+      {
+        "id": "source-summary-local-first-paper->vault-layout",
+        "source": "source-summary-local-first-paper",
+        "target": "vault-layout"
+      },
+      {
+        "id": "source-summary-local-first-paper->citation-hygiene",
+        "source": "source-summary-local-first-paper",
+        "target": "citation-hygiene"
+      },
+      {
+        "id": "source-summary-local-first-paper->supabase-usage-notes",
+        "source": "source-summary-local-first-paper",
+        "target": "supabase-usage-notes"
+      },
+      {
+        "id": "source-summary-privacy-report->local-first-principles",
+        "source": "source-summary-privacy-report",
+        "target": "local-first-principles"
+      },
+      {
+        "id": "source-summary-privacy-report->trust-signals",
+        "source": "source-summary-privacy-report",
+        "target": "trust-signals"
+      },
+      {
+        "id": "source-summary-privacy-report->maple-clinic",
+        "source": "source-summary-privacy-report",
+        "target": "maple-clinic"
+      },
+      {
+        "id": "source-summary-privacy-report->citation-hygiene",
+        "source": "source-summary-privacy-report",
+        "target": "citation-hygiene"
+      },
+      {
+        "id": "source-summary-usage-study->activation-metrics",
+        "source": "source-summary-usage-study",
+        "target": "activation-metrics"
+      },
+      {
+        "id": "source-summary-usage-study->edge-function-retries",
+        "source": "source-summary-usage-study",
+        "target": "edge-function-retries"
+      },
+      {
+        "id": "source-summary-usage-study->river-studio",
+        "source": "source-summary-usage-study",
+        "target": "river-studio"
+      },
+      {
+        "id": "source-summary-usage-study->synthesis-activation-and-trust",
+        "source": "source-summary-usage-study",
+        "target": "synthesis-activation-and-trust"
+      },
+      {
+        "id": "synthesis-activation-and-trust->activation-metrics",
+        "source": "synthesis-activation-and-trust",
+        "target": "activation-metrics"
+      },
+      {
+        "id": "synthesis-activation-and-trust->trust-signals",
+        "source": "synthesis-activation-and-trust",
+        "target": "trust-signals"
+      },
+      {
+        "id": "synthesis-activation-and-trust->source-summary-usage-study",
+        "source": "synthesis-activation-and-trust",
+        "target": "source-summary-usage-study"
+      },
+      {
+        "id": "synthesis-activation-and-trust->pricing-notes",
+        "source": "synthesis-activation-and-trust",
+        "target": "pricing-notes"
+      },
+      {
+        "id": "synthesis-support-signals->support-inbox-patterns",
+        "source": "synthesis-support-signals",
+        "target": "support-inbox-patterns"
+      },
+      {
+        "id": "synthesis-support-signals->voice-of-customer-april",
+        "source": "synthesis-support-signals",
+        "target": "voice-of-customer-april"
+      },
+      {
+        "id": "synthesis-support-signals->trust-signals",
+        "source": "synthesis-support-signals",
+        "target": "trust-signals"
+      },
+      {
+        "id": "synthesis-support-signals->office-hours-format",
+        "source": "synthesis-support-signals",
+        "target": "office-hours-format"
+      },
+      {
+        "id": "trellis-roadmap->notes-from-chats",
+        "source": "trellis-roadmap",
+        "target": "notes-from-chats"
+      },
+      {
+        "id": "trellis-roadmap->trust-signals",
+        "source": "trellis-roadmap",
+        "target": "trust-signals"
+      },
+      {
+        "id": "trellis-roadmap->edge-function-retries",
+        "source": "trellis-roadmap",
+        "target": "edge-function-retries"
+      },
+      {
+        "id": "trellis-roadmap->product-council",
+        "source": "trellis-roadmap",
+        "target": "product-council"
+      },
+      {
+        "id": "trust-signals->pricing-notes",
+        "source": "trust-signals",
+        "target": "pricing-notes"
+      },
+      {
+        "id": "trust-signals->activation-metrics",
+        "source": "trust-signals",
+        "target": "activation-metrics"
+      },
+      {
+        "id": "trust-signals->synthesis-activation-and-trust",
+        "source": "trust-signals",
+        "target": "synthesis-activation-and-trust"
+      },
+      {
+        "id": "trust-signals->source-summary-privacy-report",
+        "source": "trust-signals",
+        "target": "source-summary-privacy-report"
+      },
+      {
+        "id": "vault-layout->local-first-principles",
+        "source": "vault-layout",
+        "target": "local-first-principles"
+      },
+      {
+        "id": "vault-layout->graph-reading-ritual",
+        "source": "vault-layout",
+        "target": "graph-reading-ritual"
+      },
+      {
+        "id": "vault-layout->notes-from-chats",
+        "source": "vault-layout",
+        "target": "notes-from-chats"
+      },
+      {
+        "id": "vault-layout->ambient-capture",
+        "source": "vault-layout",
+        "target": "ambient-capture"
+      },
+      {
+        "id": "voice-of-customer-april->pricing-notes",
+        "source": "voice-of-customer-april",
+        "target": "pricing-notes"
+      },
+      {
+        "id": "voice-of-customer-april->support-inbox-patterns",
+        "source": "voice-of-customer-april",
+        "target": "support-inbox-patterns"
+      },
+      {
+        "id": "voice-of-customer-april->trust-signals",
+        "source": "voice-of-customer-april",
+        "target": "trust-signals"
+      },
+      {
+        "id": "voice-of-customer-april->field-notes-design-partners",
+        "source": "voice-of-customer-april",
+        "target": "field-notes-design-partners"
+      },
+      {
+        "id": "weekly-review-rhythm->founder-os",
+        "source": "weekly-review-rhythm",
+        "target": "founder-os"
+      },
+      {
+        "id": "weekly-review-rhythm->research-queue",
+        "source": "weekly-review-rhythm",
+        "target": "research-queue"
+      },
+      {
+        "id": "weekly-review-rhythm->product-council",
+        "source": "weekly-review-rhythm",
+        "target": "product-council"
+      },
+      {
+        "id": "weekly-review-rhythm->ship-room-routine",
+        "source": "weekly-review-rhythm",
+        "target": "ship-room-routine"
+      },
+      {
+        "id": "assistant-voice-and-tone->warm-product-language",
+        "source": "assistant-voice-and-tone",
+        "target": "warm-product-language"
+      },
+      {
+        "id": "assistant-voice-and-tone->doc-style-guide",
+        "source": "assistant-voice-and-tone",
+        "target": "doc-style-guide"
+      },
+      {
+        "id": "assistant-voice-and-tone->notes-from-chats",
+        "source": "assistant-voice-and-tone",
+        "target": "notes-from-chats"
+      },
+      {
+        "id": "assistant-voice-and-tone->trust-signals",
+        "source": "assistant-voice-and-tone",
+        "target": "trust-signals"
+      },
+      {
+        "id": "doc-style-guide->warm-product-language",
+        "source": "doc-style-guide",
+        "target": "warm-product-language"
+      },
+      {
+        "id": "doc-style-guide->assistant-voice-and-tone",
+        "source": "doc-style-guide",
+        "target": "assistant-voice-and-tone"
+      },
+      {
+        "id": "doc-style-guide->citation-hygiene",
+        "source": "doc-style-guide",
+        "target": "citation-hygiene"
+      },
+      {
+        "id": "doc-style-guide->notes-from-chats",
+        "source": "doc-style-guide",
+        "target": "notes-from-chats"
+      },
+      {
+        "id": "warm-product-language->assistant-voice-and-tone",
+        "source": "warm-product-language",
+        "target": "assistant-voice-and-tone"
+      },
+      {
+        "id": "warm-product-language->doc-style-guide",
+        "source": "warm-product-language",
+        "target": "doc-style-guide"
+      },
+      {
+        "id": "warm-product-language->trust-signals",
+        "source": "warm-product-language",
+        "target": "trust-signals"
+      },
+      {
+        "id": "warm-product-language->article-calm-software",
+        "source": "warm-product-language",
+        "target": "article-calm-software"
+      }
+    ]
+  }
+}
