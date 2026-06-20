@@ -16,7 +16,7 @@ import type {
 import type { ExtractionPromptInput } from "@trellis/shared/extraction/buildPrompt";
 import { ExtractionValidationError } from "../debug";
 
-/** Same directory as the main bundle (`main.js`), where `extractionWorker.js` is emitted. */
+/** Same directory as the main bundle (`main.cjs`), where `extractionWorker.cjs` is emitted. */
 const mainBundleDir = path.dirname(fileURLToPath(import.meta.url));
 
 interface PendingRequest {
@@ -35,7 +35,7 @@ let readyPromise: Promise<void> | null = null;
 const pending = new Map<string, PendingRequest>();
 
 function resolveWorkerEntry(): string {
-  return path.join(mainBundleDir, "extractionWorker.js");
+  return path.join(mainBundleDir, "extractionWorker.cjs");
 }
 
 function rejectAllPending(error: Error): void {

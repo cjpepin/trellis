@@ -24,5 +24,26 @@ using (trellis.user_owns_workspace(workspace_id))
 with check (trellis.user_owns_workspace(workspace_id));
 
 -- Broadcast row changes to subscribed clients (notes + links refresh graph/index).
-alter publication supabase_realtime add table trellis.notes;
-alter publication supabase_realtime add table trellis.note_links;
+-- Idempotent: query-mode deploy re-runs all migration files without schema_migrations tracking.
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'trellis'
+      and tablename = 'notes'
+  ) then
+    alter publication supabase_realtime add table trellis.notes;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'trellis'
+      and tablename = 'note_links'
+  ) then
+    alter publication supabase_realtime add table trellis.note_links;
+  end if;
+end $$;

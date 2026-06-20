@@ -65,8 +65,8 @@ import { Settings } from "@/routes/Settings";
 import { Thoughts } from "@/routes/Thoughts";
 import { Wiki } from "@/routes/Wiki";
 import { PublicSiteRouter } from "@/routes/public/PublicSiteRouter";
-import { PortfolioDemoBanner } from "@/components/demo/PortfolioDemoBanner";
 import { isDemoMode } from "@/lib/demo/config";
+import { subscribePortfolioThemeSync, syncPortfolioThemeOnce } from "@/lib/demo/syncPortfolioTheme";
 import { useAuthStore } from "@/store/authStore";
 import { useChatStore } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
@@ -723,6 +723,11 @@ export default function App() {
     let cancelled = false;
 
     let cleanup: (() => void) | undefined;
+    let themeCleanup: (() => void) | undefined;
+
+    if (isDemoMode()) {
+      themeCleanup = subscribePortfolioThemeSync();
+    }
 
     void runInitialBootstrap({
       cancelled: () => cancelled,
@@ -746,6 +751,7 @@ export default function App() {
     return () => {
       cancelled = true;
       cleanup?.();
+      themeCleanup?.();
     };
   }, [
     applyBootstrapPayload,
@@ -757,6 +763,11 @@ export default function App() {
 
   useEffect(() => {
     if (!settings) {
+      return;
+    }
+
+    if (isDemoMode()) {
+      syncPortfolioThemeOnce();
       return;
     }
 
@@ -1142,7 +1153,6 @@ export default function App() {
 
     return (
       <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
-        {isDemoMode() ? <PortfolioDemoBanner /> : null}
         {usesTrellisHashRouter() ? (
           <HashRouter key={workspace?.id ?? "trellis-shell"}>{appShell}</HashRouter>
         ) : (

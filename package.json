@@ -6,11 +6,12 @@
   "engines": {
     "node": ">=20"
   },
-  "type": "module",
+  "main": "out/build/electron/main.cjs",
   "scripts": {
     "check": "tsc --noEmit",
     "dev": "pnpm --filter @trellis/desktop run dev",
     "dev:web": "pnpm --filter @trellis/web run dev",
+    "desktop:recording": "bash scripts/start-desktop-recording.sh",
     "build:test-app": "pnpm --filter @trellis/desktop run build:test-app",
     "build:web": "pnpm --filter @trellis/web run build",
     "build:web:hosted": "pnpm --filter @trellis/web run build:hosted",

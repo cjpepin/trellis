@@ -19,9 +19,17 @@ node "$ROOT_DIR/scripts/sync-web-demo-seed.mjs"
 echo "Building Trellis web demo with base path: $BASE_PATH"
 pnpm exec vite build --config config/vite.config.ts
 
+RENDERER_OUT="$ROOT_DIR/apps/web/out/build/renderer"
+OUTPUT_DIR="${1:-$ROOT_DIR/dist/web-demo}"
+
+if [[ ! -f "$RENDERER_OUT/index.html" ]]; then
+  echo "Missing renderer build at $RENDERER_OUT" >&2
+  exit 1
+fi
+
 mkdir -p "$OUTPUT_DIR"
 rm -rf "$OUTPUT_DIR"/*
-cp -R out/build/renderer/* "$OUTPUT_DIR/"
+cp -R "$RENDERER_OUT"/* "$OUTPUT_DIR/"
 
 cat <<EOF
 
