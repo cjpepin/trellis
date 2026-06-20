@@ -93,6 +93,14 @@ bash scripts/export-web-demo.sh
 
 Output: `dist/web-demo/`. Uses local IndexedDB only (`VITE_DEMO_MODE=true`); no Supabase credentials required.
 
+Capture showcase story-tab screenshots from the desktop app:
+
+```bash
+pnpm run desktop:recording
+```
+
+See `apps/portfolio/public/trellis/showcase/README.md` in the portfolio monorepo for export paths and options.
+
 ## Local extraction (env)
 
 Defaults and full detail are in **AGENTS.md** and `.env.example`. In short: local extraction is **on** by default; set `TRELLIS_FEATURE_LOCAL_EXTRACTION=0` to disable on-device note processing (no cloud fallback). Heuristic fallback in Supabase extraction is controlled with `TRELLIS_ENABLE_HEURISTIC_EXTRACTION_FALLBACK`.

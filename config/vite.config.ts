@@ -105,13 +105,18 @@ export default defineConfig(({ mode }) => ({
           electron({
             main: {
               entry: "apps/desktop/electron/main.ts",
+              onstart({ startup }) {
+                const env = { ...process.env };
+                delete env.ELECTRON_RUN_AS_NODE;
+                startup([".", "--no-sandbox"], { env });
+              },
               vite: {
                 define: electronMainEnvDefine(mode),
                 resolve: {
                   alias: projectAliases
                 },
                 build: {
-                  outDir: electronOutDir,
+                  outDir: path.join(repoRoot, electronOutDir),
                   rollupOptions: {
                     input: {
                       main: path.resolve(repoRoot, "apps/desktop/electron/main.ts"),
@@ -128,7 +133,8 @@ export default defineConfig(({ mode }) => ({
                       "node-llama-cpp"
                     ],
                     output: {
-                      entryFileNames: "[name].js"
+                      entryFileNames: "[name].cjs",
+                      format: "cjs"
                     }
                   }
                 }
@@ -141,7 +147,7 @@ export default defineConfig(({ mode }) => ({
                   alias: projectAliases
                 },
                 build: {
-                  outDir: electronOutDir,
+                  outDir: path.join(repoRoot, electronOutDir),
                   rollupOptions: {
                     output: {
                       entryFileNames: "preload.cjs"

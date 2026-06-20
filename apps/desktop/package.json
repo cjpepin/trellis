@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "../../out/build/electron/main.js",
+  "main": "../../out/build/electron/main.cjs",
   "scripts": {
     "postinstall": "electron-builder install-app-deps",
     "check": "cd ../.. && tsc --noEmit",

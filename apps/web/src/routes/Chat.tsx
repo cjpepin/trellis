@@ -505,6 +505,10 @@ export function Chat({
   );
 
   useEffect(() => {
+    if (!window.trellis?.extraction) {
+      return;
+    }
+
     return window.trellis.extraction.onJobUpdate((notification) => {
       setExtractionJobsBySession((current) => {
         if (notification.status === "pending" || notification.status === "running") {

@@ -1,4 +1,15 @@
-import type { TrellisBridge, ChatModel, MessageRecord } from "@trellis/contracts";
+import type {
+  TrellisBridge,
+  ChatModel,
+  ChatContextPacket,
+  MessageRecord,
+  ProviderKeyStatusSnapshot,
+  QueueSessionExtractionResult,
+  SaveNoteInput,
+  CreateStubInput,
+  DeleteNoteInput,
+  BuildChatContextInput,
+} from "@trellis/contracts";
 import {
   createDemoSession,
   deleteDemoSession,
@@ -7,9 +18,28 @@ import {
   replaceDemoMessages,
   updateDemoSession,
 } from "./localWorkspace";
-import { listDemoVaultIndex, readDemoVaultNote } from "./demoVault";
+import {
+  createDemoWorkspaceStub,
+  deleteDemoWorkspaceNote,
+  listDemoWorkspaceIndex,
+  readDemoWorkspaceNote,
+  writeDemoWorkspaceNote,
+} from "./demoWorkspaceStore";
 
 export const TRELLIS_DEMO_BRIDGE_MARK = Symbol.for("trellis.demoBridge");
+
+const demoUnavailable = (feature: string) => (): never => {
+  throw new Error(`${feature} is not available in the portfolio demo.`);
+};
+
+const emptyProviderKeys: ProviderKeyStatusSnapshot = {
+  statuses: [
+    { provider: "openai", configured: false, lastFour: null, updatedAt: null },
+    { provider: "anthropic", configured: false, lastFour: null, updatedAt: null },
+  ],
+  secureStorageAvailable: false,
+  persistenceMode: "encrypted",
+};
 
 export function attachDemoBridgeIfNeeded(): void {
   if (import.meta.env.VITE_DEMO_MODE !== "true") {
@@ -23,6 +53,17 @@ export function attachDemoBridgeIfNeeded(): void {
   if (globalWindow.trellis?.[TRELLIS_DEMO_BRIDGE_MARK]) {
     return;
   }
+
+  const skippedExtraction: QueueSessionExtractionResult = {
+    state: "ineligible",
+    job: null,
+  };
+
+  const idleExtractionStatus = {
+    mode: "local" as const,
+    selectedProvider: null,
+    providers: [],
+  };
 
   globalWindow.trellis = {
     [TRELLIS_DEMO_BRIDGE_MARK]: true,
@@ -44,20 +85,17 @@ export function attachDemoBridgeIfNeeded(): void {
       retryThoughtEnrichment: async () => undefined,
       getSessionNoteSlugs: async () => [],
       recordWikiOps: async () => undefined,
+      listWikiTouchSessions: async () => [],
+      getStrandProvenanceForFile: async () => null,
+      listStrandRevisions: async () => [],
       getStrandRevisionBody: async () => ({ body: "" }),
     },
     bucket: {
-      listIndex: (bucketId: string) => listDemoVaultIndex(bucketId),
-      readNote: (slug: string, bucketId: string) => readDemoVaultNote(slug, bucketId),
-      writeNote: async () => {
-        throw new Error("Note editing is read-only in the portfolio demo.");
-      },
-      createStub: async () => {
-        throw new Error("Creating notes is disabled in the portfolio demo.");
-      },
-      deleteNote: async () => {
-        throw new Error("Deleting notes is disabled in the portfolio demo.");
-      },
+      listIndex: (bucketId: string) => listDemoWorkspaceIndex(bucketId),
+      readNote: (slug: string, bucketId: string) => readDemoWorkspaceNote(slug, bucketId),
+      writeNote: (input: SaveNoteInput) => writeDemoWorkspaceNote(input),
+      createStub: (input: CreateStubInput) => createDemoWorkspaceStub(input),
+      deleteNote: (input: DeleteNoteInput) => deleteDemoWorkspaceNote(input),
       createFolder: async () => {
         throw new Error("Folder changes are disabled in the portfolio demo.");
       },
@@ -81,6 +119,44 @@ export function attachDemoBridgeIfNeeded(): void {
         throw new Error("Image import is disabled in the portfolio demo.");
       },
       readNoteAssetDataUrl: async () => null,
+    },
+    extraction: {
+      getRuntimeStatus: async () => idleExtractionStatus,
+      run: demoUnavailable("Extraction"),
+      queueSession: async () => skippedExtraction,
+      installLocalModel: async () => idleExtractionStatus,
+      cancelInstallLocalModel: async () => undefined,
+      onInstallProgress: () => () => undefined,
+      removeLocalModel: async () => idleExtractionStatus,
+      listDebugRuns: async () => [],
+      onJobUpdate: () => () => undefined,
+    },
+    chat: {
+      pickAttachment: async () => null,
+      buildContext: async (input: BuildChatContextInput): Promise<ChatContextPacket> => ({
+        mode: input.mode,
+        references: [],
+        sourceLabels: [],
+      }),
+      storeMemory: async () => [],
+      proposeNoteActions: async () => ({ actions: [], clarification: null }),
+      applyBucketOrganize: async () => ({ applied: false, message: "Not available in demo." }),
+      runLocalReply: demoUnavailable("Local chat"),
+      streamLocal: async () => undefined,
+      stream: async () => undefined,
+      getProviderKeyStatus: async () => emptyProviderKeys,
+      setProviderKey: async () => emptyProviderKeys,
+      deleteProviderKey: async () => emptyProviderKeys,
+    },
+    media: {
+      writeCache: demoUnavailable("Media cache"),
+      readDataUrl: async () => null,
+      pickImage: async () => null,
+      transcribe: demoUnavailable("Speech-to-text"),
+      synthesizeSpeech: demoUnavailable("Read aloud"),
+      synthesizeSpeechStream: async () => undefined,
+      cancelSynthesizeSpeechStream: async () => undefined,
+      generateImage: demoUnavailable("Image generation"),
     },
   } as unknown as TrellisBridge;
 }
